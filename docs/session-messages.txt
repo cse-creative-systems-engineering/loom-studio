@@ -1,0 +1,70 @@
+Shane's messages — Loom session, 2026-09-26
+============================================
+Ordered as sent. Two were delivered out-of-band (mid-turn) and are marked [OOB].
+Typos preserved verbatim.
+
+
+01. hllo
+
+02. hllo
+
+03. I need to build a desktop app that can build cutting edge graphical user
+    interfaces. can we discuss this
+
+04. this isnt going to be an AI UI builder.  its going to be an applicatoin
+    built by ai that builds UI's
+
+05. picture the old school form builder in visual studio.  a massive toolbox
+    with every possible component, including panels.  drag a panel to the
+    canvas and then drag and drop controls.  reposition them, resize, edit
+    properties, etc.  Thats what this is
+
+06. sure.  Remember that the application itself must be cutting edge, high
+    quality, and ultra-premium as well as what it produces must be the same.
+    Eventually we'll add an AI feature to the app where the user can chat
+    with an AI that hlps the user build
+
+07. [OOB] Also, its a desktop app that outputs web app UI and other desktop
+    app UI
+
+08. if you want to run the app again i could take a screenshot of it
+
+09. we need to run several adversarial agents.  One for improving the UI/UX,
+    one for improving the functionality, one for improving the quality of the
+    output product
+
+10. [OOB] for the adversarial agents, or for other tasks, perhaps we could
+    utilize the kanban board so that you're free to work on other areas of
+    the app
+
+11. i was able to see i when you ran it. not sure why you said it was empty
+
+12. lets continue working rather than just waiting.  we have a lot to get done
+
+13. can you run what we have so far so i can see it
+
+14. there's a major feature missing, there needs to be a small live preview
+    visible at all times that can be expanded to a larger view and then to a
+    full view
+
+15. also, the user should be able to click a controle that has been placed,
+    then hit the del key to delete it.
+
+16. cntrl z should undo, cntrl y should redo.  right click on elements should
+    bring up a context menu for further editing the components
+
+17. you have the preview overlappingthe design canvas.  it should be in its
+    own panel
+
+18. here's the image. instead of making the live preview always visible, lets
+    make it visible on demand. make it float in its own detached panel maybe?
+    [attached: editor screenshot]
+
+19. hello
+
+20. please continue
+
+21. where's this locatted on disk
+
+22. can you gather all messages i've sent you during this session and put them
+    in a single text block

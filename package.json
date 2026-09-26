@@ -1,0 +1,36 @@
+{
+  "name": "loom",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build:renderer": "vite build",
+    "build:main": "esbuild electron/main.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/main.cjs && esbuild electron/preload.cts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/preload.cjs && esbuild electron/verify.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/verify.cjs && esbuild electron/snapshot.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/snapshot.cjs && esbuild electron/probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/probe.cjs && esbuild electron/layout-probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/layout-probe.cjs && esbuild electron/preview-probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/preview-probe.cjs",
+    "build": "npm run build:main && npm run build:renderer",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify": "npm run build && electron dist/main/verify.cjs",
+    "verify:only": "electron dist/main/verify.cjs",
+    "shot": "npm run build && electron dist/main/snapshot.cjs",
+    "probe:layout": "npm run build && electron dist/main/layout-probe.cjs",
+    "probe:preview": "npm run build && electron dist/main/preview-probe.cjs"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.4.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

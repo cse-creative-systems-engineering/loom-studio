@@ -1,0 +1,119 @@
+/* Detached preview window. Reads as a companion surface, not a second app:
+   a slim bar, the artifact centred on a neutral backdrop, and nothing else. */
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body.preview-window {
+  background: #0a0c11;
+  overflow: hidden;
+  font-family: ui-sans-serif, -apple-system, 'Inter', 'Segoe UI', system-ui, sans-serif;
+  color: #e6e9ef;
+}
+
+.pvwin {
+  display: grid;
+  grid-template-rows: 30px 1fr;
+  height: 100%;
+}
+
+.pvwin-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 10px;
+  background: linear-gradient(180deg, #131725, #0e1119);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.pvwin-bar button { -webkit-app-region: no-drag; }
+
+.pvwin-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.pvwin-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pvwin-tag {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #6b7488;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  padding: 0 4px;
+  flex: none;
+}
+
+.pvwin-spacer { flex: 1; }
+
+.pvwin-zoom {
+  display: flex;
+  gap: 1px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  padding: 1px;
+}
+
+.pvwin-btn {
+  min-width: 20px;
+  height: 19px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #9aa4b8;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.pvwin-btn.wide { min-width: 34px; font-size: 10px; }
+.pvwin-btn:hover { background: #1a1f2e; color: #e6e9ef; }
+.pvwin-btn.on { color: #5b8cff; background: rgba(91, 140, 255, 0.12); }
+
+.pvwin-body {
+  overflow: auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  /* A neutral backdrop so the artifact's own theme is what you judge. */
+  background:
+    linear-gradient(45deg, #0c0f16 25%, transparent 25%) 0 0 / 14px 14px,
+    linear-gradient(-45deg, #0c0f16 25%, transparent 25%) 0 7px / 14px 14px,
+    linear-gradient(45deg, transparent 75%, #0c0f16 75%) 7px -7px / 14px 14px,
+    linear-gradient(-45deg, transparent 75%, #0c0f16 75%) -7px 0 / 14px 14px,
+    #0a0c11;
+}
+
+.pvwin-body.panning { cursor: grabbing; }
+
+.pvwin-stage {
+  width: 720px;
+  min-height: 460px;
+  background: #12151d;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.9);
+  flex: none;
+}
+
+/* Never show editor affordances in the output. */
+.pvwin-stage [data-loom-id],
+.pvwin-stage .loom-handle { outline: none !important; cursor: default !important; }

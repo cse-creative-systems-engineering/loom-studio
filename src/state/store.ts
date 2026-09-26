@@ -1,0 +1,446 @@
+/**
+ * Editor store.
+ *
+ * Holds the document, selection, and undo/redo history. Undo snapshots
+ * documents, which is exact and cheap at this scale — inverse-op replay is
+ * where GUI designers usually grow bugs.
+ *
+ * The store is the seam the future AI assistant will drive: it emits the SAME
+ * Op values a human drag produces, so "add a gauge bound to cpu" is an op,
+ * not a code path.
+ */
+
+import { apply, duplicateSubtree, parentOf } from '../model/ops'
+import { instantiate } from '../model/registry'
+import type { Document, Node, NodeId, Op, PropValue, TargetId } from '../model/types'
+import { serialize, validate, filenameFor } from '../model/persist'
+import { emitHtml, exportFilenameFor } from '../export/html'
+import '../model/toolbox'
+
+interface LoomHost {
+  save: (name: string, contents: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean }>
+  open: () => Promise<{ ok: boolean; path?: string; contents?: string; error?: string; canceled?: boolean }>
+  autosave: (name: string, contents: string) => Promise<{ ok: boolean; path?: string }>
+  readAutosave: (name: string) => Promise<{ ok: boolean; path?: string; contents?: string }>
+  /** Present on current hosts; older hosts fall back to `save`. */
+  exportHtml?: (name: string, contents: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean }>
+}
+
+export interface HistoryEntry {
+  label: string
+  before: Document
+  after: Document
+}
+
+const HISTORY_LIMIT = 200
+
+/**
+ * True when two node maps hold identical content.
+ *
+ * `apply()` is pure and returns a NEW document every time, so reference
+ * equality can never detect a no-op. This compares the substance instead.
+ */
+function nodeMapsEqual(a: Record<string, Node>, b: Record<string, Node>): boolean {
+  const ka = Object.keys(a)
+  const kb = Object.keys(b)
+  if (ka.length !== kb.length) return false
+  for (const k of ka) {
+    const x = a[k]
+    const y = b[k]
+    if (!y) return false
+    if (x.type !== y.type || x.flow !== y.flow) return false
+    if (x.children.length !== y.children.length) return false
+    for (let i = 0; i < x.children.length; i++) {
+      if (x.children[i] !== y.children[i]) return false
+    }
+    const px = x.props
+    const py = y.props
+    const pka = Object.keys(px)
+    const pkb = Object.keys(py)
+    if (pka.length !== pkb.length) return false
+    for (const p of pka) {
+      if (px[p] !== py[p]) return false
+    }
+  }
+  return true
+}
+
+export class EditorStore {
+  doc: Document
+  selection: NodeId[] = []
+  // Desktop-first: Loom produces desktop apps first, so gating badges
+  // flag web-only properties from the start rather than after a switch.
+  target: TargetId = 'desktop'
+  history: HistoryEntry[] = []
+  future: HistoryEntry[] = []
+  /** Unsaved changes exist. */
+  dirty = false
+  lastSavedPath: string | null = null
+
+  /**
+   * The document as of the last committed/sealed state. A drag pokes the live
+   * document without touching history; seal() then diffs against this to
+   * collapse the whole gesture into one undoable entry.
+   */
+  private sealed: Document
+
+  private listeners = new Set<() => void>()
+
+  constructor(initial?: Document) {
+    this.doc = initial ?? emptyDocument()
+    this.sealed = this.doc
+  }
+
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn)
+    return () => {
+      this.listeners.delete(fn)
+    }
+  }
+
+  private emit() {
+    for (const fn of this.listeners) fn()
+  }
+
+  private pushHistory(label: string, before: Document, after: Document) {
+    this.history.push({ label, before, after })
+    if (this.history.length > HISTORY_LIMIT) this.history.shift()
+    this.future = []
+    this.dirty = true
+  }
+
+  /** Apply one operation as a single undoable step. */
+  commit(op: Op, label: string): boolean {
+    const before = this.doc
+    const after = apply(before, op)
+    if (after === before) return false
+    this.doc = after
+    this.sealed = after
+    this.pushHistory(label, before, after)
+    this.pruneSelection()
+    this.emit()
+    return true
+  }
+
+  /** Apply several ops as ONE undoable step. */
+  commitAll(ops: Op[], label: string): boolean {
+    if (ops.length === 0) return false
+    const before = this.doc
+    let cur = before
+    for (const op of ops) cur = apply(cur, op)
+    if (cur === before) return false
+    this.doc = cur
+    this.sealed = cur
+    this.pushHistory(label, before, cur)
+    this.pruneSelection()
+    this.emit()
+    return true
+  }
+
+  /**
+   * Transient update used during a drag or resize.
+   *
+   * Mutates the document WITHOUT touching history, so a gesture stays at
+   * 60fps and collapses into one undoable step on seal. Nothing else may
+   * call this.
+   */
+  poke(op: Op) {
+    this.doc = apply(this.doc, op)
+    this.emit()
+  }
+
+  /**
+   * Collapse a transient interaction into one undoable entry.
+   *
+   * The no-op guard compares the NODE MAPS, not document identity: `apply()`
+   * returns a fresh object on every call, so `this.sealed === this.doc` was
+   * never true and every seal added a phantom undo entry — including for a
+   * gesture that changed nothing. Deep-comparing the serialized nodes is
+   * cheap at this size and is the only correct test.
+   */
+  seal(label: string) {
+    if (nodeMapsEqual(this.sealed.nodes, this.doc.nodes)) {
+      // Nothing actually changed; make sure `sealed` tracks the current
+      // object identity so the next comparison is against the right base.
+      this.sealed = this.doc
+      return
+    }
+    this.pushHistory(label, this.sealed, this.doc)
+    this.sealed = this.doc
+    this.emit()
+  }
+
+  undo() {
+    const entry = this.history.pop()
+    if (!entry) return
+    this.future.push(entry)
+    this.doc = entry.before
+    this.sealed = this.doc
+    this.pruneSelection()
+    this.emit()
+  }
+
+  redo() {
+    const entry = this.future.pop()
+    if (!entry) return
+    this.history.push(entry)
+    this.doc = entry.after
+    this.sealed = this.doc
+    this.pruneSelection()
+    this.emit()
+  }
+
+  select(ids: NodeId[]) {
+    this.selection = ids
+    this.emit()
+  }
+
+  setTarget(t: TargetId) {
+    this.target = t
+    this.emit()
+  }
+
+  /**
+   * Change the document's design theme.
+   *
+   * This is the payoff of the token layer: ONE field re-skins every node.
+   * Before tokens existed, re-theming meant editing each node's colours.
+   */
+  setTheme(name: string) {
+    this.doc = { ...this.doc, meta: { ...this.doc.meta, theme: name } }
+    this.sealed = this.doc
+    this.emit()
+  }
+
+  private pruneSelection() {
+    this.selection = this.selection.filter((id) => this.doc.nodes[id])
+  }
+
+  /* ---------------- operations the UI calls directly ---------------- */
+
+  /**
+   * Create a component under `parent`.
+   *
+   * This is the ONLY construction path — toolbox drops, the demo seeder, and
+   * any future AI operation all funnel here, so schema normalisation and
+   * history bookkeeping cannot be bypassed.
+   */
+  addComponent(
+    name: string,
+    parent: NodeId,
+    x = 0,
+    y = 0,
+    overrides: Record<string, PropValue> = {},
+    opts: { flow?: boolean } = {},
+  ): NodeId | undefined {
+    const id = `n${Math.random().toString(36).slice(2, 9)}`
+    const built = instantiate(name)
+    const node: Node = {
+      id,
+      type: name,
+      props: { ...built.props, ...overrides, x, y },
+      children: [],
+      flow: opts.flow ?? built.flow,
+      visible: true,
+      locked: false,
+    }
+    const ok = this.commit({ op: 'insert', parent, node }, `Add ${name}`)
+    if (ok) this.select([id])
+    return ok ? id : undefined
+  }
+
+  /** Create several components as ONE undoable step (fixtures, paste, AI batches). */
+  addMany(
+    items: Array<{ type: string; parent: NodeId; props?: Record<string, PropValue>; flow?: boolean }>,
+    label = 'Add components',
+  ) {
+    const ops: Op[] = []
+    const created: NodeId[] = []
+    for (const it of items) {
+      const id = `n${Math.random().toString(36).slice(2, 9)}`
+      const built = instantiate(it.type)
+      const node: Node = {
+        id,
+        type: it.type,
+        props: { ...built.props, ...(it.props ?? {}), x: 0, y: 0 },
+        children: [],
+        flow: it.flow ?? built.flow,
+        visible: true,
+        locked: false,
+      }
+      ops.push({ op: 'insert', parent: it.parent, node })
+      created.push(id)
+    }
+    this.commitAll(ops, label)
+    return created
+  }
+
+  /**
+   * Replace the whole document (an OPEN, not an edit).
+   *
+   * History is reset: undoing back into a document the user never authored in
+   * this session is disorienting, and the previous document is unreachable
+   * anyway once it is replaced.
+   */
+  loadDocument(doc: Document) {
+    this.doc = doc
+    this.sealed = doc
+    this.history = []
+    this.future = []
+    this.selection = []
+    this.dirty = false
+    this.emit()
+  }
+
+  /** Autosave target, derived from the document name. */
+  autosaveName(): string {
+    return `${filenameFor(this.doc.meta.name)}`
+  }
+
+  async save() {
+    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    if (!api) return { ok: false, error: 'no host bridge' }
+    const res = await api.save(this.autosaveName(), serialize(this.doc))
+    if (res.ok) {
+      this.dirty = false
+      this.lastSavedPath = res.path ?? null
+      this.emit()
+    }
+    return res
+  }
+
+  /** Standalone HTML filename, derived from the document name. */
+  exportFilename(): string {
+    return exportFilenameFor(this.doc.meta.name)
+  }
+
+  /** Render the document to a standalone HTML page (pure, deterministic). */
+  emitHtml(): string {
+    return emitHtml(this.doc)
+  }
+
+  /**
+   * Export via the host save dialog with an HTML filter.
+   *
+   * The HTML string is generated in the renderer (same preview path the user
+   * sees); the main process only writes the bytes. Falls back to `save` on
+   * hosts that predate the `doc:export-html` channel.
+   */
+  async exportHtmlFile() {
+    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    if (!api) return { ok: false, error: 'no host bridge' }
+    let html: string
+    try {
+      html = emitHtml(this.doc)
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+    const saver = api.exportHtml ?? api.save
+    return saver(this.exportFilename(), html)
+  }
+
+  async open() {
+    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    if (!api) return { ok: false as const, error: 'no host bridge' }
+    const res = await api.open()
+    if (!res.ok) return res
+    const parsed = validate(res.contents)
+    if (!parsed.doc) {
+      return { ok: false as const, error: 'invalid document', issues: parsed.issues }
+    }
+    this.loadDocument(parsed.doc)
+    this.lastSavedPath = res.path ?? null
+    this.emit()
+    return { ok: true as const, issues: parsed.issues }
+  }
+
+  /** Silent background save; failure is non-fatal by design. */
+  async autosave() {
+    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    if (!api || !this.dirty) return
+    await api.autosave(this.autosaveName(), serialize(this.doc))
+  }
+
+  async restoreAutosave() {
+    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    if (!api) return false
+    const res = await api.readAutosave(this.autosaveName())
+    if (!res.ok) return false
+    const parsed = validate(res.contents)
+    if (!parsed.doc) return false
+    this.loadDocument(parsed.doc)
+    // Restored work is unsaved work.
+    this.dirty = true
+    this.emit()
+    return true
+  }
+
+  setProp(id: NodeId, key: string, value: PropValue) {
+    this.commit({ op: 'setProp', id, key, value }, `Set ${key}`)
+  }
+
+  remove(ids: NodeId[]) {
+    // Locked nodes refuse deletion (unlock first). Filtering here covers
+    // every caller at once: Delete key, context menu, and future AI ops.
+    const doomed = ids.filter((id) => {
+      const n = this.doc.nodes[id]
+      return n && !n.locked
+    })
+    if (doomed.length === 0) return
+    // Only touch selection when something was actually deleted: clearing it
+    // on a refused op (removing the root) flips the inspector to "Nothing
+    // selected" while the document is untouched.
+    const ok = this.commitAll(
+      doomed.map((id): Op => ({ op: 'remove', id })),
+      doomed.length > 1 ? `Delete ${doomed.length} items` : 'Delete',
+    )
+    if (ok) this.select([])
+  }
+
+  /**
+   * Duplicate a node (and its subtree) beside itself, selecting the copy.
+   * One undoable step. The copy lands offset so it never hides the source.
+   * Used by Alt-drag; locked nodes and the root refuse.
+   */
+  duplicate(id: NodeId): NodeId | undefined {
+    const src = this.doc.nodes[id]
+    if (!src || src.locked || id === this.doc.root) return undefined
+    const parent = parentOf(this.doc, id)
+    if (!parent) return undefined
+    const index = this.doc.nodes[parent].children.indexOf(id)
+    const dup = duplicateSubtree(this.doc, id)
+    if (!dup) return undefined
+    const newId = dup.node.id
+    const ok = this.commit(
+      { op: 'insert', parent, index: index + 1, node: dup.node, tree: dup.tree },
+      `Duplicate ${src.type}`,
+    )
+    if (ok) this.select([newId])
+    return ok ? newId : undefined
+  }
+}
+
+export function emptyDocument(): Document {
+  const rootId = 'root'
+  // Build the root through the same schema path everything else uses, so the
+  // root is never a special case carrying a hand-written prop list.
+  // The root is a FREE canvas by default: children are absolutely positioned
+  // at their drop coordinates. Containers opt into flow individually.
+  const built = instantiate('Panel')
+  return {
+    version: 1,
+    meta: { name: 'Untitled', targets: ['web'], created: Date.now() },
+    root: rootId,
+    nodes: {
+      [rootId]: {
+        id: rootId,
+        type: 'Panel',
+        props: { ...built.props, x: 0, y: 0 },
+        children: [],
+        flow: false,
+        visible: true,
+        locked: false,
+      },
+    },
+  }
+}
