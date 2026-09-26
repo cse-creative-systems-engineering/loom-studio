@@ -861,3 +861,138 @@ input, select { font-family: inherit; font-size: 12px; }
   color: var(--ink-2);
   white-space: nowrap;
 }
+
+/* ------------------------------------------------------------------ *
+ * Effects panel
+ *
+ * The atmosphere layer gets its own visual treatment: toggles first, with
+ * their parameters nested underneath, so the common case (flip one on) is
+ * a single glance and the rare case (tune the blur) is one step deeper.
+ * ------------------------------------------------------------------ */
+
+.eff { padding: 14px 16px 18px; border-top: 1px solid var(--loom-border); }
+
+.eff h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--loom-text-muted);
+}
+
+.eff-count {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--loom-accent) 22%, transparent);
+  color: var(--loom-accent);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.eff-toggles { display: flex; flex-direction: column; gap: 2px; }
+
+.eff-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: var(--loom-radius-sm);
+  transition: background var(--loom-motion) var(--loom-ease);
+}
+.eff-row:hover { background: color-mix(in srgb, var(--loom-text-primary) 4%, transparent); }
+
+.eff-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.eff-label > span:first-child { font-size: 12px; font-weight: 500; color: var(--loom-text-primary); }
+.eff-label .dim {
+  font-size: 10.5px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eff-hint {
+  margin: 10px 2px 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.eff-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed color-mix(in srgb, var(--loom-border) 80%, transparent);
+}
+
+.eff-fields .field label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.eff-num {
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+}
+
+.eff-fields input[type='range'] {
+  width: 100%;
+  height: 3px;
+  margin: 6px 0 0;
+  border-radius: 999px;
+  appearance: none;
+  background: color-mix(in srgb, var(--loom-text-primary) 12%, transparent);
+}
+.eff-fields input[type='range']::-webkit-slider-thumb {
+  width: 13px;
+  height: 13px;
+  border: none;
+  border-radius: 50%;
+  appearance: none;
+  background: var(--loom-accent);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+}
+.eff-fields input[type='range']:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--loom-accent);
+  outline-offset: 2px;
+}
+
+.eff-color { display: flex; align-items: center; gap: 8px; }
+.eff-color input[type='color'] {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--loom-border);
+  border-radius: var(--loom-radius-sm);
+  background: none;
+  cursor: pointer;
+}
+.eff-color-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--loom-mono);
+  font-size: 11px;
+}
+
+.eff-reset {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 5px 10px;
+  border: 1px solid var(--loom-border);
+  border-radius: var(--loom-radius-sm);
+  background: none;
+  color: var(--loom-text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color var(--loom-motion) var(--loom-ease), border-color var(--loom-motion) var(--loom-ease);
+}
+.eff-reset:hover { color: var(--loom-danger); border-color: color-mix(in srgb, var(--loom-danger) 50%, transparent); }

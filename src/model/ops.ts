@@ -9,6 +9,11 @@
 
 import type { Document, Node, NodeId, Op, PropValue } from './types'
 import { normalizeProps } from './registry'
+// Effects are a pure data module (values in, style out) with no model
+// dependency, so importing it here does NOT invert the model->render
+// layering. Keeping the normaliser in one place is worth more than the
+// nominal purity of not importing it.
+import { normalizeEffects } from '../render/effects'
 
 let counter = 0
 
@@ -125,6 +130,26 @@ export function apply(doc: Document, op: Op): Document {
       const node = next.nodes[op.id]
       if (!node) return doc
       node.props[op.key] = op.value
+      return next
+    }
+
+    case 'setEffects': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      // Merge over the existing bag so a one-field toggle does not wipe the
+      // rest. Normalising here means a document can never hold a malformed
+      // bag, however it was written.
+      //
+      // A `null` in the patch means "this key did not exist before"; the
+      // normaliser must DELETE it rather than coerce it, otherwise an undo of
+      // the first-ever effect write leaves the key present-but-absent and the
+      // inverse no longer round-trips.
+      const merged: Record<string, unknown> = { ...(node.effects ?? {}) }
+      for (const [k, v] of Object.entries(op.patch)) {
+        if (v === null) delete merged[k]
+        else merged[k] = v
+      }
+      node.effects = normalizeEffects(merged)
       return next
     }
 
@@ -246,6 +271,19 @@ export function invert(doc: Document, op: Op): Op | undefined {
       return had
         ? { op: 'setProp', id: op.id, key: op.key, value: node.props[op.key] }
         : { op: 'setProp', id: op.id, key: op.key, value: null }
+    }
+    case 'setEffects': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      // The inverse restores the PRE-patch values for exactly the keys the
+      // patch touched, which is why the patch is merged rather than replacing.
+      const before: Record<string, unknown> = {}
+      const prev = (node.effects ?? {}) as unknown as Record<string, unknown>
+      for (const k of Object.keys(op.patch)) {
+        const v = prev[k]
+        before[k] = v === undefined ? null : v
+      }
+      return { op: 'setEffects', id: op.id, patch: before }
     }
     case 'setFlow': {
       const node = doc.nodes[op.id]

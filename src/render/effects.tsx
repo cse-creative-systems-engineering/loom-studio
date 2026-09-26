@@ -113,6 +113,14 @@ export function normalizeEffects(raw?: object): EffectValues {
   for (const k of Object.keys(w)) {
     const v = src[k]
     if (v === undefined) continue
+    // An explicit null means "unset this key", which is how an inverse
+    // expresses "it was not there before". Deleting beats defaulting: leaving
+    // the default in place would make undo of a first-write indistinguishable
+    // from a deliberate reset.
+    if (v === null) {
+      delete w[k]
+      continue
+    }
     const cur = w[k]
     if (typeof cur === 'boolean') {
       w[k] = v === true || v === 'true'

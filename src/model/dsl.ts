@@ -20,6 +20,7 @@
 
 import type { Document, Node, NodeId, PropValue } from './types'
 import { getComponent, normalizeProps } from './registry'
+import { normalizeEffects } from '../render/effects'
 // Import the TOOLBOX, not the raw catalogs: toolbox.ts is what pulls in every
 // catalog AND declares the core controls (Button, Panel, Heading, Label),
 // which live there rather than in catalog1/2. Importing only the catalogs
@@ -264,7 +265,9 @@ export function importDsl(raw: unknown): ImportResult {
       visible: true,
       locked: el.constraints?.locked === true,
       z: Number(a.z) || 0,
-      effects: el.effects,
+      // Normalise at the boundary: the DSL's effects are an untrusted partial
+      // bag, and a node must never hold a malformed one.
+      effects: el.effects ? normalizeEffects(el.effects) : undefined,
     }
     nodes[rootId].children.push(id)
   }
@@ -358,7 +361,8 @@ export function exportDsl(doc: Document): DslBundle {
       },
       content: { text: String(p.text ?? p.label ?? '') },
       styleTokens,
-      effects: node.effects,
+      // Outbound: widen the typed bag to the loose shape the DSL declares.
+      effects: node.effects as unknown as Record<string, unknown> | undefined,
       constraints: { snapGrid: doc.meta.snapGrid ?? 4, locked: node.locked === true },
       intent: breadcrumb.get(node.id) || undefined,
     })

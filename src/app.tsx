@@ -5,6 +5,9 @@ import { ancestry, parentOf } from './model/ops'
 import { snapMove as snapTo, artboardAnchors, type SnapBox } from './model/snap'
 import { componentsByCategory, getComponent, propSupported, unsupportedProps } from './model/registry'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
+import { EffectsPanel } from './effects-inspector'
+import { normalizeEffects } from './render/effects'
+import { Toggle } from './ui-primitives'
 import { ContextMenu, type MenuState } from './context-menu'
 import { THEME_NAMES, getTheme } from './render/theme'
 import './ui.css'
@@ -971,6 +974,19 @@ function Inspector({ s }: { s: EditorStore }) {
             })}
           </section>
         ))}
+
+        {/*
+          The atmosphere layer. Present but separate from the schema-driven
+          property groups because effects are not component props: they are a
+          shared vocabulary every component can opt into, so they get their own
+          panel generated from `EFFECT_FIELDS` rather than being repeated per
+          component definition.
+        */}
+        <EffectsPanel
+          effects={normalizeEffects(node.effects)}
+          onChange={(patch) => s.poke({ op: 'setEffects', id: node.id, patch })}
+          onCommit={() => s.seal('Effects')}
+        />
       </div>
     </aside>
   )
@@ -1096,20 +1112,6 @@ function NumField({
         onBlur={onCommit}
       />
     </div>
-  )
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      className={`toggle ${checked ? 'on' : ''}`}
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-    >
-      <span className="knob" />
-    </button>
   )
 }
 

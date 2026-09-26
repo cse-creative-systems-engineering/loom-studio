@@ -300,6 +300,96 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
     }
   }
 
+  /* ---- setEffects: one op, one undo step, exact inverse ----------- */
+
+  {
+    const es = new EditorStore()
+    const id = es.addComponent('Card', es.doc.root, 10, 10)
+    if (!id) {
+      ok('setEffects: card created', false)
+    } else {
+      const histBefore = es.history.length
+
+      // A multi-field patch must land as ONE history entry.
+      es.commit({ op: 'setEffects', id, patch: { glass: true, glassBlur: 30, aurora: true } }, 'Effects')
+      ok('setEffects is one history entry', es.history.length === histBefore + 1,
+        `${es.history.length - histBefore} entries`)
+      const bag = es.doc.nodes[id].effects
+      ok('setEffects applies every field in the patch',
+        bag?.glass === true && bag?.glassBlur === 30 && bag?.aurora === true,
+        JSON.stringify({ glass: bag?.glass, blur: bag?.glassBlur, aurora: bag?.aurora }))
+      ok('setEffects fills defaults for untouched fields',
+        bag?.grain === false && typeof bag?.auroraSpeed === 'number',
+        `grain=${bag?.grain}`)
+
+      // Undo restores the whole prior NODE, so a first-ever effect write undoes
+      // back to "no bag at all" rather than to a bag of defaults. That is the
+      // correct outcome and a meaningful distinction: the document distinguishes
+      // "never had effects" from "had effects, all off".
+      es.undo()
+      const afterUndo = es.doc.nodes[id].effects
+      ok('undo of a first effect write removes the bag entirely',
+        afterUndo === undefined, JSON.stringify(afterUndo)?.slice(0, 80))
+      ok('undo leaves the node otherwise intact',
+        es.doc.nodes[id].type === 'Card' && typeof es.doc.nodes[id].props.x === 'number')
+
+      es.redo()
+      ok('redo re-applies the effects',
+        es.doc.nodes[id].effects?.glass === true && es.doc.nodes[id].effects?.glassBlur === 30)
+
+      // A partial patch must not wipe unrelated fields.
+      es.commit({ op: 'setEffects', id, patch: { glassBlur: 12 } }, 'Blur')
+      ok('a partial patch preserves other effects',
+        es.doc.nodes[id].effects?.glass === true && es.doc.nodes[id].effects?.glassBlur === 12,
+        JSON.stringify({ glass: es.doc.nodes[id].effects?.glass, blur: es.doc.nodes[id].effects?.glassBlur }))
+
+      // Malformed input must be normalised, not stored raw.
+      es.commit({ op: 'setEffects', id, patch: { glassBlur: 'not-a-number', grain: 'true' } as never }, 'Bad')
+      const coerced = es.doc.nodes[id].effects
+      ok('a non-numeric value does not corrupt the bag',
+        typeof coerced?.glassBlur === 'number', `glassBlur=${coerced?.glassBlur}`)
+      ok('string booleans coerce', coerced?.grain === true, `grain=${coerced?.grain}`)
+
+      // A node with no bag must get a full one.
+      const bare = es.addComponent('Card', es.doc.root, 0, 0)
+      if (bare) {
+        ok('a node without a bag is untouched by default', es.doc.nodes[bare].effects === undefined)
+        es.commit({ op: 'setEffects', id: bare, patch: { shimmer: true } }, 'Shimmer')
+        ok('setting effects on a bare node fills the whole bag',
+          Object.keys(es.doc.nodes[bare].effects ?? {}).length > 15,
+          `${Object.keys(es.doc.nodes[bare].effects ?? {}).length} keys`)
+      }
+    }
+  }
+
+  /* ---- the effects inspector actually renders -------------------- */
+
+  {
+    const { renderToStaticMarkup: r } = await import('react-dom/server')
+    const { createElement: h } = await import('react')
+    const { EffectsPanel } = await import('../src/effects-inspector')
+    const { normalizeEffects: ne, DEFAULT_EFFECTS: DE } = await import('../src/render/effects')
+
+    const off = r(h(EffectsPanel, { effects: ne(), onChange: () => {}, onCommit: () => {} }))
+    for (const name of ['Glass', 'Aurora', 'Grain', 'Spotlight', 'Shimmer', 'Glow', 'Tilt', 'Chromatic']) {
+      if (!off.includes(name)) ok(`inspector offers the ${name} toggle`, false, 'missing')
+    }
+    ok('inspector lists all eight effect toggles',
+      ['Glass', 'Aurora', 'Grain', 'Spotlight', 'Shimmer', 'Glow', 'Tilt', 'Chromatic']
+        .every((n) => off.includes(n)))
+    ok('inspector shows the empty-state hint when nothing is on', off.includes('atmosphere layer'))
+    ok('inspector hides parameters when nothing is on', !off.includes('Saturation'))
+
+    const on = r(h(EffectsPanel, { effects: ne({ ...DE, glass: true }), onChange: () => {}, onCommit: () => {} }))
+    ok('inspector reveals parameters for an enabled effect', on.includes('Saturation') && on.includes('Inner glow'))
+    ok('inspector counts the active effects', on.includes('1 on'))
+    ok('inspector keeps unrelated parameters hidden', !on.includes('Softness'))
+
+    const two = r(h(EffectsPanel, { effects: ne({ ...DE, glass: true, aurora: true }), onChange: () => {}, onCommit: () => {} }))
+    ok('inspector counts two active effects', two.includes('2 on'))
+    ok('inspector offers a reset', two.includes('Reset all effects'))
+  }
+
   /* ---- the real bundle ------------------------------------------- */
 
   if (ATELIER_BUNDLE) {

@@ -11,6 +11,8 @@
  * operation set rather than emitting markup.
  */
 
+import type { EffectValues } from '../render/effects'
+
 export type NodeId = string
 
 export type PropValue = string | number | boolean | null
@@ -36,11 +38,11 @@ export interface Node {
   locked: boolean
   /**
    * Atmosphere layer (grain / glass / aurora / spotlight / shimmer / glow /
-   * tilt / chromatic). Declared once in `render/effects.ts`; the inspector
-   * generates controls from the same declaration. Ported from Atelier's
-   * effects bag, which was a better model than hard-coded CSS per component.
+   * tilt / chromatic). Typed rather than `Record<string, unknown>` because the
+   * inspector generates its controls from this declaration; optional so older
+   * files and fixtures load without it.
    */
-  effects?: Record<string, unknown>
+  effects?: EffectValues
   /**
    * Explicit z-order; higher paints later. Optional on purpose: fixtures,
    * older files, and hand-written documents may omit it, and `cloneNode`
@@ -107,6 +109,15 @@ export type Op =
    */
   | { op: 'resize'; id: NodeId; w: number; h: number }
   | { op: 'setProp'; id: NodeId; key: string; value: PropValue }
+  /**
+   * Set the whole atmosphere bag on a node.
+   *
+   * A distinct op rather than a `setProp` per effect field: toggling three
+   * related fields is one user action and must be ONE undo step, and the
+   * assistant needs to express "make this card feel like glass" atomically.
+   * `patch` is merged over the existing bag so a partial update keeps the rest.
+   */
+  | { op: 'setEffects'; id: NodeId; patch: Record<string, unknown> }
   | { op: 'setFlow'; id: NodeId; flow: boolean }
   | { op: 'setVisible'; id: NodeId; visible: boolean }
   | { op: 'setLocked'; id: NodeId; locked: boolean }
