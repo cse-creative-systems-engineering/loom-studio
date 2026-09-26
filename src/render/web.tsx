@@ -14,6 +14,7 @@ import React from 'react'
 import { getComponent } from '../model/registry'
 import { parentOf } from '../model/ops'
 import { typeStep, weightStep, resolveTheme, type Theme } from './theme'
+import { applyEffects, normalizeEffects } from './effects'
 import type { Document, Node, NodeId, PropValue } from '../model/types'
 
 export interface RenderCtx {
@@ -775,6 +776,49 @@ function renderPreviewNode(
   t: Theme,
 ): React.ReactElement {
   const style = styleFor(node, flowChild, t)
+
+  // The atmosphere layer must reach the OUTPUT, not just the editor. This is
+  // the most important wiring in the file: a premium card that exports as a
+  // flat rectangle is exactly the "output is a bootstrap template" bug.
+  const eff = applyEffects(normalizeEffects(node.effects), t, {}, node.id)
+  Object.assign(style, eff.style)
+  style.zIndex = node.z ?? 0
+  // Decoration layers ride INSIDE the node's own box, never beside it: a
+  // sibling wrapper would break the absolute-positioning contract that every
+  // free-positioned node depends on.
+  const layers = eff.layers
+  const content = renderPreviewBody(node, style, children, t, key)
+
+  if (!layers.length) return content
+
+  // Prepend the decoration layers INSIDE the element, preserving whatever
+  // children it already had. `cloneElement`'s variadic children REPLACE the
+  // original, so the existing kids are read back out and re-supplied.
+  if (content.type === React.Fragment) {
+    const kids = (content.props as { children?: React.ReactNode }).children
+    return (
+      <React.Fragment key={key}>
+        {layers}
+        {kids}
+      </React.Fragment>
+    )
+  }
+  const existing = (content.props as { children?: React.ReactNode }).children
+  return React.cloneElement(
+    content,
+    { key },
+    ...([layers, existing] as never[]),
+  )
+}
+
+/** The node's own element, with no effect decoration. */
+function renderPreviewBody(
+  node: Node,
+  style: React.CSSProperties,
+  children: React.ReactElement[],
+  t: Theme,
+  key: string | number | undefined,
+): React.ReactElement {
   const p = node.props
 
   switch (node.type) {
@@ -1904,6 +1948,15 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
   }
 
   const authored = styleFor(node, flowChild, t)
+
+  // The atmosphere layer: grain / glass / aurora / spotlight / shimmer / glow
+  // / tilt / chromatic, declared in render/effects.tsx and gated by target
+  // capability. Authoring shows the same effect the output will, because a
+  // preview that lies about atmosphere is worse than no preview.
+  const eff = applyEffects(normalizeEffects(node.effects), t, {}, id)
+  Object.assign(authored, eff.style)
+  authored.zIndex = node.z ?? 0
+
   if (node.visible === false) {
     // Ghost, not gone: hidden nodes stay manipulable while authoring.
     authored.opacity = 0.35
@@ -1936,6 +1989,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     const inner = isContainer ? children : authorInner(node, t)
     return (
       <div key={key} {...common}>
+        {eff.layers}
         {inner}
         {handles}
       </div>

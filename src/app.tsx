@@ -1,7 +1,8 @@
 import React from 'react'
 import { EditorStore } from './state/store'
-import type { Document, NodeId, PropValue } from './model/types'
+import type { Document, Node, NodeId, PropValue } from './model/types'
 import { ancestry, parentOf } from './model/ops'
+import { snapMove as snapTo, artboardAnchors, type SnapBox } from './model/snap'
 import { componentsByCategory, getComponent, propSupported, unsupportedProps } from './model/registry'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { ContextMenu, type MenuState } from './context-menu'
@@ -593,8 +594,12 @@ const SNAP_WITHIN = 6
  * Snap a dragged position to nearby sibling edges (left/top) and the parent
  * origin. Each axis snaps independently to the nearest candidate within
  * threshold. Returns the snapped point plus guide coordinates for display.
- * Sizes are deliberately ignored in v1: right/bottom/center snapping needs
- * measured boxes, not just document state.
+ *
+ * Delegates to the shared engine in model/snap.ts, which does the real work:
+ * all nine line pairs (left/centre/right x top/middle/bottom) against every
+ * sibling AND their descendants, gated on 2D proximity. The version this
+ * replaced only matched a node's ORIGIN against its immediate siblings, so
+ * right-edge, centre, and cross-container alignment simply did not work.
  */
 function snapMove(
   doc: Document,
@@ -602,40 +607,43 @@ function snapMove(
   x: number,
   y: number,
 ): { x: number; y: number; gx: number | null; gy: number | null } {
-  const parent = parentOf(doc, id)
-  const cx = [0]
-  const cy = [0]
-  if (parent) {
-    for (const sib of doc.nodes[parent]?.children ?? []) {
-      if (sib === id) continue
-      const p = doc.nodes[sib]?.props
-      if (typeof p?.x === 'number' && Number.isFinite(p.x)) cx.push(p.x)
-      if (typeof p?.y === 'number' && Number.isFinite(p.y)) cy.push(p.y)
-    }
+  const node = doc.nodes[id]
+  if (!node) return { x, y, gx: null, gy: null }
+
+  const box = (n: Node): SnapBox => ({
+    id: n.id,
+    x: Number(n.props.x) || 0,
+    y: Number(n.props.y) || 0,
+    w: Number(n.props.w) || Number(n.props.width) || 0,
+    h: Number(n.props.h) || Number(n.props.height) || 0,
+  })
+
+  // Candidates: every other node in the document, not just siblings, so a
+  // control can align to a guide inside a panel it is not a child of.
+  const others: SnapBox[] = []
+  for (const other of Object.values(doc.nodes)) {
+    if (other.id === id || other.id === doc.root) continue
+    if (other.visible === false) continue
+    if (isFlowChild(doc, other.id)) continue // flow children are parent-placed
+    others.push(box(other))
   }
-  let nx = x
-  let ny = y
-  let gx: number | null = null
-  let gy: number | null = null
-  let best = SNAP_WITHIN + 1
-  for (const c of cx) {
-    const d = Math.abs(x - c)
-    if (d <= SNAP_WITHIN && d < best) {
-      best = d
-      nx = c
-      gx = c
-    }
+
+  const r = snapTo(
+    { id, x, y, w: box(node).w, h: box(node).h },
+    others,
+    {
+      grid: doc.meta.snapGrid ?? 0,
+      threshold: SNAP_WITHIN,
+      anchors: artboardAnchors(doc.meta.artboard?.w ?? 0, doc.meta.artboard?.h ?? 0),
+    },
+  )
+
+  return {
+    x: r.x,
+    y: r.y,
+    gx: r.guides.find((g) => g.axis === 'x')?.at ?? null,
+    gy: r.guides.find((g) => g.axis === 'y')?.at ?? null,
   }
-  best = SNAP_WITHIN + 1
-  for (const c of cy) {
-    const d = Math.abs(y - c)
-    if (d <= SNAP_WITHIN && d < best) {
-      best = d
-      ny = c
-      gy = c
-    }
-  }
-  return { x: nx, y: ny, gx, gy }
 }
 
 function Canvas({

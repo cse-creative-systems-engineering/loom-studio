@@ -13,6 +13,9 @@ import { getTheme } from '../src/render/theme'
 import { snapMove, artboardAnchors, type SnapBox } from '../src/model/snap'
 import { clampZ } from '../src/model/ops'
 import { ATELIER_BUNDLE } from '../src/model/atelier-bundle.generated'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { renderNode } from '../src/render/web'
+import { EditorStore } from '../src/state/store'
 import '../src/model/toolbox'
 import { getComponent } from '../src/model/registry'
 
@@ -141,6 +144,70 @@ export function bundleTests(): Array<{ name: string; pass: boolean; detail: stri
   ok('z clamps negatives to zero', clampZ(-5) === 0)
   ok('z survives repeated bring-to-front', clampZ(clampZ(1_000_000) + 1) === 1_000_000)
   ok('z handles NaN', clampZ(Number.NaN) === 0)
+
+  /* ---- effects reach the RENDERED output, not just the unit -------- */
+
+  // Unit tests on applyEffects prove the maths; this proves the wiring. The
+  // bug this guards against is real and was shipped once: effects computed
+  // correctly but were never merged into the renderer, so a premium card
+  // exported as a flat rectangle.
+  {
+    const es = new EditorStore()
+    const cardId = es.addComponent('Card', es.doc.root, 40, 40)
+    if (!cardId) {
+      ok('effects: card created for render test', false)
+    } else {
+      // Enable effects that produce BOTH a style and a decoration layer.
+      es.commit({ op: 'setProp', id: cardId, key: 'x', value: 40 }, 'x')
+      const node = es.doc.nodes[cardId]
+      node.effects = { ...DEFAULT_EFFECTS, glass: true, glassBlur: 18, aurora: true, grain: true }
+
+      const author = renderToStaticMarkup(
+        renderNode({ doc: es.doc, mode: 'authoring', selected: new Set() }, cardId),
+      )
+      const preview = renderToStaticMarkup(
+        renderNode({ doc: es.doc, mode: 'preview', selected: new Set() }, cardId),
+      )
+
+      ok('effects reach the authoring render', author.includes('backdrop-filter'), 'no backdrop-filter in author markup')
+      ok('effects reach the OUTPUT render', preview.includes('backdrop-filter'), 'no backdrop-filter in preview markup')
+      ok('glass blur value is applied', preview.includes('blur(18px)'), 'blur(18px) missing from preview')
+      ok('aurora orbs render in the output', (preview.match(/radial-gradient/g) ?? []).length >= 3,
+        `${(preview.match(/radial-gradient/g) ?? []).length} radial gradients`)
+      ok('grain layer renders in the output', preview.includes('loom-grain'))
+      ok('effects do not leak editor attributes into the output',
+        !preview.includes('data-loom-id') && !preview.includes('data-loom-type'),
+        'editor attribute found in preview markup')
+    }
+  }
+
+  /* ---- effects do not fire on a node with no bag ------------------- */
+  {
+    const es = new EditorStore()
+    const b = es.addComponent('Button', es.doc.root, 10, 10)
+    if (b) {
+      const html = renderToStaticMarkup(
+        renderNode({ doc: es.doc, mode: 'preview', selected: new Set() }, b),
+      )
+      ok('a node with no effects stays clean',
+        !html.includes('backdrop-filter') && !html.includes('loom-grain'),
+        'effects appeared on a node with an empty bag')
+    }
+  }
+
+  /* ---- z-order reaches the output --------------------------------- */
+  {
+    const es = new EditorStore()
+    const a = es.addComponent('Card', es.doc.root, 0, 0)
+    const b = es.addComponent('Card', es.doc.root, 20, 20)
+    if (a && b) {
+      es.doc.nodes[a].z = 5
+      const html = renderToStaticMarkup(
+        renderNode({ doc: es.doc, mode: 'preview', selected: new Set() }, a),
+      )
+      ok('z-order reaches the output', html.includes('z-index:5'), 'z-index missing from preview')
+    }
+  }
 
   /* ---- the real bundle ------------------------------------------- */
 
