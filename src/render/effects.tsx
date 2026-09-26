@@ -100,16 +100,18 @@ export const DEFAULT_EFFECTS: EffectValues = {
 /**
  * Coerce an untrusted partial bag into a full, correctly-typed one.
  *
- * Written against a widened view of the values so each field is assigned
- * through its own narrow type; an indexed generic would collapse to `never`
- * and silently defeat the check.
+ * The parameter is deliberately loose (`object`-shaped) rather than
+ * `Record<string, unknown>`: a typed `EffectValues` has no index signature, so
+ * requiring one forces every caller into a cast. Accepting the wider shape and
+ * reading through a widened view keeps callers cast-free.
  */
-export function normalizeEffects(raw: Record<string, unknown> = {}): EffectValues {
+export function normalizeEffects(raw?: object): EffectValues {
   const out: EffectValues = { ...DEFAULT_EFFECTS }
   const w = out as unknown as Record<string, boolean | number | string>
+  const src = (raw ?? {}) as Record<string, unknown>
 
   for (const k of Object.keys(w)) {
-    const v = raw[k]
+    const v = src[k]
     if (v === undefined) continue
     const cur = w[k]
     if (typeof cur === 'boolean') {
@@ -124,7 +126,14 @@ export function normalizeEffects(raw: Record<string, unknown> = {}): EffectValue
   return out
 }
 
-/** Pointer state an effect may react to. Supplied by the canvas each frame. */
+/**
+ * Pointer state an effect may react to. Supplied by the canvas each frame.
+ *
+ * `magnetX`/`magnetY` are DISPLACEMENT, not an on/off: the canvas decides
+ * whether a magnet pull applies and passes the resolved offset. There is
+ * deliberately no `magnet` boolean in `EffectValues` — a half-wired flag that
+ * nothing can turn on is a prop that lies, and a prop that lies is a bug.
+ */
 export interface EffectInput {
   /** Pointer position relative to the element, or null when not hovering. */
   localX?: number

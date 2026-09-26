@@ -20,8 +20,8 @@ The effects port stays, but becomes **token-driven** rather than hard-coded.
 |---|-------|-------|
 | 1 | Foundations: scene tree, named ops, schema registry, transient manipulation | done |
 | 2 | Editor core: canvas, toolbox, inspector, resize, context menu, drop-into-container, lock, duplicate, reorder, delete/nudge keys | done |
-| 3 | Output quality: themes, effects layer, component quality | in progress |
-| 4 | Interchange: DSL import/export, token bundles | pending |
+| 3 | Output quality: themes, effects layer, component quality | done — effects live in both render paths |
+| 4 | Interchange: Atelier DSL import/export, token bundles | done — round-trips the real bundle |
 | 5 | Desktop backend: native widget compiler | pending |
 | 6 | AI assistant over the op set | pending |
 | 7 | Adversarial review rounds until clean | pending |
@@ -40,3 +40,23 @@ The effects port stays, but becomes **token-driven** rather than hard-coded.
 - Every fix gets a test. A fix without one is a guess with extra steps.
 - A component prop that does nothing is a bug, not a placeholder.
 - Report failures honestly, including my own.
+
+## Known gaps (as of 232/232)
+
+- **Screenshot capture is broken on this box.** `capturePage()` never
+  resolves, CDP `Page.captureScreenshot` hangs on attach, and `--headless
+  --screenshot` writes nothing. The window loads and paints; only capture
+  fails, so this is the Wayland compositor, not the app. Visual review
+  currently has to come from Shane or from DOM/computed-style probes.
+  `electron/effect-specimens.ts` generates the specimen page for when capture
+  works again.
+- **Effects are not yet exposed in the inspector.** They are stored per node,
+  imported/exported through the DSL, and rendered — but there is no UI to
+  toggle them. Until there is, a user cannot reach the feature.
+- **`magnet` is a transform input, not a prop.** It has no on/off flag, so
+  nothing can enable it. Deliberate for now; noted so it does not get
+  mistaken for a working feature.
+- **The desktop backend does not exist.** The registry has capability gating
+  (`DESKTOP_CAPABILITIES`) but no native emitter.
+- **No AI assistant surface.** The ops and the Atelier prompt packs are ready
+  to be grounded on; nothing consumes them yet.

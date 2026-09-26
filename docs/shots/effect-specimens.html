@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Loom — effect specimens</title>
+<style>
+
+@keyframes loom-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(8px, -12px) scale(1.05); }
+}
+@keyframes loom-shimmer-sweep {
+  0% { transform: translateX(-150%); }
+  100% { transform: translateX(150%); }
+}
+.loom-grain {
+  position: absolute; inset: 0; pointer-events: none; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");
+}
+.loom-spotlight {
+  position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+}
+.loom-shimmer {
+  position: absolute; inset: 0; border-radius: inherit; pointer-events: none; overflow: hidden;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 40px;
+  background: #0A0A0B; color: #EDEDEF;
+  font: 400 14px/1.6 Inter, system-ui, sans-serif;
+}
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.3px; }
+.lede { color: #8A8A8F; margin: 0 0 32px; }
+.grid {
+  display: grid; gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.cell { position: relative; }
+/* The card is the effect surface. */
+.card {
+  position: relative; overflow: hidden;
+  min-height: 150px; padding: 22px;
+  border-radius: 18px; border: 1px solid rgba(255,255,255,0.09);
+  background: #141417; color: #EDEDEF;
+  transition: transform 220ms cubic-bezier(0.2,0.8,0.3,1);
+}
+.card h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; letter-spacing: 0.2px; }
+.card p { margin: 0; color: #A1A1AA; font-size: 13px; }
+.e-grain { position:absolute; inset:0; pointer-events:none; mix-blend-mode:overlay; opacity:0.22;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E"); }
+.e-spotlight { position:absolute; inset:0; pointer-events:none;
+  background: radial-gradient(320px circle at var(--mx,50%) var(--my,50%), rgba(255,255,255,0.16), transparent 70%); }
+.e-shimmer { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+.e-shimmer::before { content:''; position:absolute; inset:-50%;
+  background: linear-gradient(105deg, transparent 42%, rgba(255,255,255,0.16) 50%, transparent 58%);
+  animation: loom-shimmer-sweep var(--shimmer-dur, 3s) linear infinite; }
+.e-aurora { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+.e-aurora i { position:absolute; border-radius:50%; mix-blend-mode:screen; opacity:0.55;
+  animation: loom-float var(--dur,7s) ease-in-out infinite; }
+.e-aurora i:nth-child(1) { left:8%; top:6%; width:60%; height:60%; filter:blur(22px);
+  background: radial-gradient(circle, #6366f1 0%, transparent 70%); }
+.e-aurora i:nth-child(2) { right:4%; top:28%; width:52%; height:52%; filter:blur(44px);
+  background: radial-gradient(circle, #8b5cf6 0%, transparent 70%); animation-delay:-2s; }
+.e-aurora i:nth-child(3) { left:28%; bottom:-4%; width:56%; height:56%; filter:blur(52px);
+  background: radial-gradient(circle, #ec4899 0%, transparent 70%); animation-delay:-4s; }
+.glass { backdrop-filter: blur(24px) saturate(160%); background: rgba(20,20,23,0.55); }
+.glow { box-shadow: 0 18px 50px -12px rgba(124,58,237,0.55); }
+.chromatic p { text-shadow: 1px 0 rgba(255,0,255,0.55), -1px 0 rgba(0,255,255,0.55); }
+.tilt { transform: perspective(800px) rotateY(0deg) rotateX(0deg); transform-style: preserve-3d; }
+.magnet { transition: transform 180ms cubic-bezier(0.2,0.8,0.3,1); }
+</style>
+</head><body>
+<h1>Effect specimens</h1>
+<p class="lede">Every atmosphere effect Loom can emit, one card each. Move the pointer over the tilt and magnet cards to see them respond.</p>
+<div class="grid">
+<div class="cell"><div class="card" style="">
+  
+  <h2>Effect</h2>
+  <p>No effects. The thing every other card is measured against.</p>
+</div></div>
+<div class="cell"><div class="card glass" style="backdrop-filter:blur(24px) saturate(160%);background:rgba(20,20,23,0.55)">
+  
+  <h2>Effect</h2>
+  <p>Frosted, saturated backdrop.</p>
+</div></div>
+<div class="cell"><div class="card" style="">
+  <div class="e-aurora"><i style="--dur:7s"></i><i></i><i></i></div>
+  <h2>Effect</h2>
+  <p>Three drifting colour orbs.</p>
+</div></div>
+<div class="cell"><div class="card" style="">
+  <div class="e-grain" style="opacity:0.22"></div>
+  <h2>Effect</h2>
+  <p>Overlay noise, so flat fills stop looking like plastic.</p>
+</div></div>
+<div class="cell"><div class="card" style="">
+  <div class="e-spotlight"></div>
+  <h2>Effect</h2>
+  <p>Cursor-following radial highlight.</p>
+</div></div>
+<div class="cell"><div class="card" style="">
+  <div class="e-shimmer" style="--shimmer-dur:2.4s"></div>
+  <h2>Effect</h2>
+  <p>A light sweep across the border.</p>
+</div></div>
+<div class="cell"><div class="card glow" style="box-shadow:0 18px 50px -12px #7C3AEDcc">
+  
+  <h2>Effect</h2>
+  <p>Coloured bloom underneath.</p>
+</div></div>
+<div class="cell"><div class="card tilt" style="">
+  
+  <h2>Effect</h2>
+  <p>3D tilt that follows the pointer.</p>
+</div></div>
+<div class="cell"><div class="card magnet" style="">
+  
+  <h2>Effect</h2>
+  <p>Pulls toward the cursor.</p>
+</div></div>
+<div class="cell"><div class="card chromatic" style="">
+  
+  <h2>Effect</h2>
+  <p>Split-fringe text shadow.</p>
+</div></div>
+<div class="cell"><div class="card glass glow chromatic" style="backdrop-filter:blur(26px) saturate(150%);background:rgba(20,20,23,0.55);box-shadow:0 18px 50px -12px #7c3aedcc">
+  <div class="e-aurora"><i style="--dur:7s"></i><i></i><i></i></div>
+  <div class="e-grain" style="opacity:0.15"></div>
+  <div class="e-spotlight"></div>
+  <div class="e-shimmer" style="--shimmer-dur:2s"></div>
+  <h2>Effect</h2>
+  <p>All seven at once. If this reads as mush, the defaults are wrong.</p>
+</div></div>
+</div>
+<script>
+// Spotlight follows the pointer; magnet and tilt transform the card.
+document.querySelectorAll('.card').forEach((card) => {
+  const spot = card.querySelector('.e-spotlight')
+  card.addEventListener('pointermove', (ev) => {
+    const r = card.getBoundingClientRect()
+    const x = ((ev.clientX - r.left) / r.width) * 100
+    const y = ((ev.clientY - r.top) / r.height) * 100
+    if (spot) { spot.style.setProperty('--mx', x + '%'); spot.style.setProperty('--my', y + '%') }
+    if (card.classList.contains('tilt')) {
+      card.style.transform = 'perspective(800px) rotateY(' + ((x - 50) / 12) + 'deg) rotateX(' + (-(y - 50) / 12) + 'deg)'
+    }
+    if (card.classList.contains('magnet')) {
+      card.style.transform = 'translate(' + ((x - 50) / 12) + 'px,' + ((y - 50) / 12) + 'px)'
+    }
+  })
+  card.addEventListener('pointerleave', () => { card.style.transform = '' })
+})
+</script>
+</body></html>

@@ -979,7 +979,7 @@ export async function runSelfTest(): Promise<string> {
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
-  for (const c of bundleTests()) {
+  for (const c of await bundleTests()) {
     checks.push({ name: c.name, pass: c.pass, detail: c.detail })
   }
 

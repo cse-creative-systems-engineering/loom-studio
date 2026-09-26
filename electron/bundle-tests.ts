@@ -19,7 +19,7 @@ import { EditorStore } from '../src/state/store'
 import '../src/model/toolbox'
 import { getComponent } from '../src/model/registry'
 
-export function bundleTests(): Array<{ name: string; pass: boolean; detail: string }> {
+export async function bundleTests(): Promise<Array<{ name: string; pass: boolean; detail: string }>> {
   const out: Array<{ name: string; pass: boolean; detail: string }> = []
   const ok = (name: string, pass: boolean, detail = '') => out.push({ name, pass, detail })
 
@@ -206,6 +206,97 @@ export function bundleTests(): Array<{ name: string; pass: boolean; detail: stri
         renderNode({ doc: es.doc, mode: 'preview', selected: new Set() }, a),
       )
       ok('z-order reaches the output', html.includes('z-index:5'), 'z-index missing from preview')
+    }
+  }
+
+  /* ---- effects reach a REAL browser, not just static markup -------- */
+
+  // The markup assertions above prove React emitted the right strings. This
+  // proves Chromium computed them into real styles on a real element, which is
+  // where a `backdrop-filter: blur()` typo or an invalid value would show up.
+  // Runs in the live renderer, so it measures `getComputedStyle` rather than
+  // trusting the source.
+  if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+    try {
+      const host = document.createElement('div')
+      host.style.cssText = 'position:fixed;left:-9999px;top:0;width:400px;height:300px;'
+      document.body.appendChild(host)
+
+      const { applyEffects: apply, normalizeEffects: norm, DEFAULT_EFFECTS: DEFAULTS } =
+        await import('../src/render/effects')
+      const { getTheme: theme } = await import('../src/render/theme')
+      const t = theme('midnight')
+
+      // glass must produce a real, accepted backdrop-filter.
+      const g = document.createElement('div')
+      host.appendChild(g)
+      const gOut = apply({ ...norm(DEFAULTS), glass: true, glassBlur: 24 }, t, {}, 'g')
+      Object.assign(g.style, gOut.style)
+      const gcs = getComputedStyle(g)
+      ok('chromium accepts the glass backdrop-filter', gcs.backdropFilter !== 'none' && gcs.backdropFilter !== '',
+        `backdrop-filter=${gcs.backdropFilter}`)
+      ok('glass blur radius is honoured by chromium', gcs.backdropFilter.includes('24px'),
+        `backdrop-filter=${gcs.backdropFilter}`)
+
+      // aurora must produce real, non-zero-sized orb elements. The layers are
+      // React elements, so they must be MOUNTED, not appended — passing them
+      // straight to append() silently does nothing, which is exactly the trap
+      // this check exists to catch.
+      const { createRoot } = await import('react-dom/client')
+      const { createElement } = await import('react')
+      const aOut = apply({ ...norm(DEFAULTS), aurora: true }, t, {}, 'a')
+      const orbHost = document.createElement('div')
+      orbHost.setAttribute('style', 'position:relative;width:300px;height:200px;')
+      host.appendChild(orbHost)
+      const rroot = createRoot(orbHost)
+      rroot.render(createElement('div', null, ...(aOut.layers as never[])))
+      // Let React commit and the browser lay the orbs out.
+      await new Promise((r) => requestAnimationFrame(() => r(null)))
+
+      // Select the orbs specifically, not any descendant div: the mount
+      // wrapper is a div too, and asserting on it measures nothing useful.
+      const orbs = orbHost.querySelectorAll(':scope > div > div')
+      ok('aurora renders its three orb elements', orbs.length === 3, `${orbs.length} orbs in the DOM`)
+      const first = orbs[0] as HTMLElement | undefined
+      if (first) {
+        const rect = first.getBoundingClientRect()
+        ok('aurora orbs have real layout size', rect.width > 0 && rect.height > 0,
+          `${Math.round(rect.width)}x${Math.round(rect.height)}`)
+        ok('aurora orbs are not interactive', getComputedStyle(first).pointerEvents === 'none',
+          `pointer-events=${getComputedStyle(first).pointerEvents}`)
+      } else {
+        ok('aurora orbs have real layout size', false, 'no first orb')
+        ok('aurora orbs are not interactive', false, 'no first orb')
+      }
+      rroot.unmount()
+
+      // The keyframes the layers reference must actually be defined, or the
+      // shimmer/aurora animations silently do nothing. Inject the real
+      // EFFECT_KEYFRAMES first, exactly as the renderer does, then look for
+      // them: this is what proves the export actually registers them.
+      const { EFFECT_KEYFRAMES: keyframes } = await import('../src/render/effects')
+      const kfStyle = document.createElement('style')
+      kfStyle.textContent = keyframes
+      document.head.appendChild(kfStyle)
+
+      const kf = Array.from(document.styleSheets)
+        .flatMap((sheet) => {
+          try {
+            return Array.from(sheet.cssRules)
+          } catch {
+            return []
+          }
+        })
+        .filter((r) => r.constructor.name === 'CSSKeyframesRule')
+      const names = kf.map((r) => (r as CSSRule & { name?: string }).name)
+      ok('effect keyframes are defined in the document',
+        names.includes('loom-shimmer-sweep') && names.includes('loom-float'),
+        `found: ${names.join(',') || 'none'}`)
+      kfStyle.remove()
+
+      host.remove()
+    } catch (e) {
+      ok('live effect measurement', false, String(e))
     }
   }
 
