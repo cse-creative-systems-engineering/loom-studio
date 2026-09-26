@@ -34,6 +34,20 @@ export interface Node {
    * be a trap, not a feature.
    */
   locked: boolean
+  /**
+   * Atmosphere layer (grain / glass / aurora / spotlight / shimmer / glow /
+   * tilt / chromatic). Declared once in `render/effects.ts`; the inspector
+   * generates controls from the same declaration. Ported from Atelier's
+   * effects bag, which was a better model than hard-coded CSS per component.
+   */
+  effects?: Record<string, unknown>
+  /**
+   * Explicit z-order; higher paints later. Optional on purpose: fixtures,
+   * older files, and hand-written documents may omit it, and `cloneNode`
+   * normalises it to 0 on the way in rather than making every construction
+   * site carry it.
+   */
+  z?: number
 }
 
 export type TargetId = 'web' | 'desktop'
@@ -42,6 +56,13 @@ export interface DocMeta {
   name: string
   /** Which targets this document is being authored for. */
   targets: TargetId[]
+  /** Artboard size, in design pixels. Snapping anchors to its centre. */
+  artboard?: { w: number; h: number }
+  /**
+   * Pixel grid for snapping; 0 disables grid snapping. Edge snapping is always
+   * on and wins over the grid.
+   */
+  snapGrid?: number
   /**
    * Named design theme from `render/theme.ts`. Changing this ONE field
    * re-skins the whole document — the reason tokens exist.

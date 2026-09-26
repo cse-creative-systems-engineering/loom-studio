@@ -182,7 +182,25 @@ function cloneNode(node: Node): Node {
     ...node,
     props: normalizeProps(node.type, node.props),
     children: [...node.children],
+    z: clampZ(node.z ?? 0),
   }
+}
+
+/**
+ * Keep z within a sane integer range.
+ *
+ * A naive "bring to front = max + 1" walks toward MAX_SAFE_INTEGER over a few
+ * hundred operations and the order silently breaks. Renormalising to 0..N-1 on
+ * every write makes that impossible.
+ */
+export function clampZ(z: number, count?: number): number {
+  if (!Number.isFinite(z)) return 0
+  const MAX = 1_000_000
+  let v = Math.round(z)
+  if (v < 0) v = 0
+  if (v > MAX) v = MAX
+  if (count !== undefined && v > count - 1) v = Math.max(0, count - 1)
+  return v
 }
 
 /* ------------------------------------------------------------------ *
