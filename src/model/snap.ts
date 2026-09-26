@@ -43,9 +43,18 @@ export interface SnapOptions {
   exclude?: Set<string>
   /** Extra static lines (e.g. the artboard centre). */
   anchors?: Array<{ axis: 'x' | 'y'; at: number }>
+  /**
+   * Only consider a neighbour whose OTHER axis overlaps the moving box by at
+   * least this many pixels. Without it, axis-only matching snaps a header to a
+   * panel 500px below it, which is technically "aligned" and visually absurd.
+   * Pass Infinity to disable the gate.
+   */
+  crossOverlap?: number
 }
 
 const DEFAULT_THRESHOLD = 6
+/** How much a neighbour must overlap the mover on the other axis to count. */
+const DEFAULT_CROSS_OVERLAP = 12
 
 /** Candidate lines on each axis for a box's own geometry. */
 function lines(box: SnapBox, axis: 'x' | 'y') {
@@ -77,6 +86,7 @@ export function snapMove(
   const threshold = opts.threshold ?? DEFAULT_THRESHOLD
   const grid = opts.grid ?? 0
   const exclude = opts.exclude ?? new Set<string>()
+  const crossOverlap = opts.crossOverlap ?? DEFAULT_CROSS_OVERLAP
 
   let bestX: { delta: number; at: number; label: string } | null = null
   let bestY: { delta: number; at: number; label: string } | null = null
@@ -84,7 +94,18 @@ export function snapMove(
   for (const other of others) {
     if (exclude.has(other.id)) continue
 
+    // Gate on 2D proximity before matching lines: a neighbour that is nowhere
+    // near the mover vertically cannot sensibly constrain its horizontal edge.
+    const xOverlap = Math.min(moving.x + moving.w, other.x + other.w) - Math.max(moving.x, other.x)
+    const yOverlap = Math.min(moving.y + moving.h, other.y + other.h) - Math.max(moving.y, other.y)
+    const nearInY = yOverlap >= crossOverlap
+    const nearInX = xOverlap >= crossOverlap
+
     for (const axis of ['x', 'y'] as const) {
+      // For the x axis, require vertical proximity (and vice versa).
+      if (axis === 'x' && !nearInY) continue
+      if (axis === 'y' && !nearInX) continue
+
       const mine = lines(moving, axis)
       const theirs = lines(other, axis)
       for (const m of mine) {

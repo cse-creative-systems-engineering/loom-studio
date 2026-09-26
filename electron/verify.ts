@@ -52,7 +52,10 @@ async function run() {
 
 app.whenReady().then(() => {
   void run().catch((e) => {
+    // Print the real stack: "Cannot read properties of null" without a frame is
+    // useless, and guessing at it is how bugs get "fixed" in the wrong place.
     console.error('SELFTEST-THREW', e)
+    if (e instanceof Error && e.stack) console.error(e.stack)
     app.exit(1)
   })
 })

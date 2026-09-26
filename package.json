@@ -7,8 +7,10 @@
   "scripts": {
     "dev": "vite",
     "build:renderer": "vite build",
-    "build:main": "esbuild electron/main.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/main.cjs && esbuild electron/preload.cts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/preload.cjs && esbuild electron/verify.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/verify.cjs && esbuild electron/snapshot.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/snapshot.cjs && esbuild electron/probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/probe.cjs && esbuild electron/layout-probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/layout-probe.cjs && esbuild electron/preview-probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/preview-probe.cjs",
-    "build": "npm run build:main && npm run build:renderer",
+    "build:main": "esbuild electron/main.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/main.cjs && esbuild electron/preload.cts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/preload.cjs && esbuild electron/verify.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/verify.cjs && esbuild electron/selftest.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/selftest.cjs && esbuild electron/embed-bundle.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/embed-bundle.cjs && esbuild electron/snapshot.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/snapshot.cjs && esbuild electron/probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/probe.cjs && esbuild electron/layout-probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/layout-probe.cjs && esbuild electron/preview-probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/preview-probe.cjs",
+    "build": "npm run build:main && npm run embed:bundle && npm run build:renderer",
+    "embed:bundle": "electron dist/main/embed-bundle.cjs",
+    "test:bundle": "npm run build && electron dist/main/selftest.cjs",
     "start": "npm run build && electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify": "npm run build && electron dist/main/verify.cjs",

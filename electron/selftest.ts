@@ -18,6 +18,7 @@ import { PreviewStage } from '../src/preview'
 import { seedDemo } from '../src/demo'
 import { reparentProbe } from './reparent-probe'
 import { layoutProbe } from './layout-probe-renderer'
+import { bundleTests } from './bundle-tests'
 import { getTheme, resolveTheme } from '../src/render/theme'
 import { serialize, validate, filenameFor, MAX_TREE_DEPTH } from '../src/model/persist'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -974,6 +975,12 @@ export async function runSelfTest(): Promise<string> {
     check('loader repairs flag garbage with issues', hv.doc !== null && hv.doc.nodes.a.visible === true &&
       hv.doc.nodes.a.locked === false && hv.issues.some((i) => i.path.includes('$.nodes.a.visible')) &&
       hv.doc.nodes.b.visible === true && hv.doc.nodes.b.locked === false)
+  }
+
+  // Interchange, effects, tokens, snap, and z-clamp — the layers added after
+  // the Atelier bundle review.
+  for (const c of bundleTests()) {
+    checks.push({ name: c.name, pass: c.pass, detail: c.detail })
   }
 
   const passed = checks.filter((c) => c.pass).length
