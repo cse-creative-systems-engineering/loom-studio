@@ -68,10 +68,21 @@ async function run() {
     step('preview shows the document content', typeof text === 'string' && (text as string).includes('Telemetry Console'),
       String(text).slice(0, 80))
 
+    // Frameless contract: just the built UI plus a floating control pill —
+    // no header bar, no window decorations inside the page.
+    const chrome = await pv.webContents.executeJavaScript(
+      `({ float: Boolean(document.querySelector('.pvwin-float')), bar: Boolean(document.querySelector('.pvwin-bar')),
+         close: Boolean(document.querySelector('.pvwin-float [title="Close preview"]')) })`,
+      true,
+    ) as { float: boolean; bar: boolean; close: boolean }
+    step('preview has floating controls', chrome.float === true)
+    step('preview has no header bar', chrome.bar === false)
+    step('floating controls can close', chrome.close === true)
+
     // Live update through the dedicated update channel: rename, push,
     // preview must follow WITHOUT a new window and WITHOUT focusing.
-    // Replace ALL occurrences: the first is meta.name (preview bar), later
-    // ones are node text (stage) — asserting the stage proves content flows.
+    // Replace ALL occurrences (meta.name plus node text) — asserting the
+    // stage proves content flows.
     const renamed = (docJson as string).split('Telemetry Console').join('Renamed Live')
     const hasUpdate = await win.webContents.executeJavaScript('Boolean(window.loomPreview.update)', true)
     step('preview update channel exists', hasUpdate === true)

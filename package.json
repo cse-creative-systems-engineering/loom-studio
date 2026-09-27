@@ -17,7 +17,8 @@
     "verify:only": "electron dist/main/verify.cjs",
     "shot": "npm run build && electron dist/main/snapshot.cjs",
     "probe:layout": "npm run build && electron dist/main/layout-probe.cjs",
-    "probe:preview": "npm run build && electron dist/main/preview-probe.cjs"
+    "probe:preview": "npm run build && electron dist/main/preview-probe.cjs",
+    "probe:drag": "npm run build && node electron/cdp-drag.mjs"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

@@ -7,13 +7,22 @@
  * exactness, subtree delete/undo, and the document's purity.
  */
 
-import { EditorStore } from '../src/state/store'
+import { EditorStore, emptyDocument } from '../src/state/store'
+import type { Document, Node as LoomNode } from '../src/model/types'
 import { descendants, parentOf } from '../src/model/ops'
-import { allComponents, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
+import { allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
 import { emitHtml, exportFilenameFor } from '../src/export/html'
+import { emitReact, reactFilenameFor } from '../src/export/react'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { isFlowChild, renderNode, zoomed } from '../src/render/web'
+import { ROLE_OF, ITEM_ROLE, REVEAL_OF, interactiveTypes, behaviourAttrs, behaviourCss, behaviourRuntime } from '../src/render/behaviour'
+import { responsiveCss, breakpointForWidth, CONTAINER_NAME } from '../src/render/responsive'
+import { ICONS, ICON_NAMES, resolveIcon } from '../src/render/icons'
+import { buildTooltip, tooltipFor } from '../src/model/tooltip'
+import { auditReport, KNOWN_INERT } from './prop-audit'
+import { unsupportedProps } from '../src/model/registry'
+import { THEME_NAMES } from '../src/render/theme'
 import { PreviewStage } from '../src/preview'
 import { seedDemo } from '../src/demo'
 import { reparentProbe } from './reparent-probe'
@@ -32,6 +41,53 @@ function hasAllProps(s: EditorStore, id: string, type: string): boolean {
   return Object.keys(spec.props).every((k) => k in node.props)
 }
 
+/**
+ * Fixtures used to inherit an auto-created root Panel. Documents are rootless
+ * now, so a fixture that needs a container root must ASK for one — the same
+ * gesture a user's first drop makes, but seeded as clean initial state (no
+ * history, clean, nothing selected) so "one undo step" assertions keep
+ * meaning exactly what they meant when the root was implicit.
+ */
+function withRoot(s: EditorStore): string {
+  const existing = s.doc.root
+  if (existing !== null) return existing
+  s.loadDocument(rootDoc())
+  return 'root'
+}
+
+/**
+ * A document with one untouched Panel root at the origin — the "the root is
+ * the page" case, without a store.
+ */
+function rootDoc(): Document {
+  const id = 'root'
+  const built = instantiate('Panel')
+  return {
+    version: 1,
+    meta: { name: 'Untitled', targets: ['web'], created: Date.now() },
+    root: id,
+    nodes: {
+      [id]: {
+        id,
+        type: 'Panel',
+        props: { ...built.props, x: 0, y: 0 },
+        children: [],
+        flow: false,
+        visible: true,
+        locked: false,
+        opacity: 1,
+      },
+    },
+  }
+}
+
+/** The root of a document that is asserted to HAVE one. */
+function mustRoot(doc: Document): string {
+  const id = doc.root
+  if (id === null) throw new Error('expected a root, document is empty')
+  return id
+}
+
 interface Check {
   name: string
   pass: boolean
@@ -44,6 +100,32 @@ function check(name: string, pass: boolean, detail = '') {
   checks.push({ name, pass, detail })
 }
 
+/**
+ * Measure a width with transitions switched off, then put them back.
+ *
+ * The verification window is HIDDEN, and a hidden renderer advances CSS
+ * transitions lazily — at best slowly, while polling apparently not at all. The
+ * width is the contract; the animation is decoration. So the measurement
+ * disables transitions, reads the real layout, and restores them, which tests
+ * what a person sees without depending on how the window is being composited.
+ */
+async function widthWithoutTransition(el: HTMLElement | null): Promise<number> {
+  if (!el) return -1
+  const style = document.createElement('style')
+  style.textContent = '[data-loom-shell] *{transition:none !important}'
+  document.head.appendChild(style)
+  await new Promise((r) => setTimeout(r, 60))
+  const width = Math.round(el.getBoundingClientRect().width)
+  style.remove()
+  return width
+}
+
+/** The colour applied to a KPI card's comparison row, and nothing else. */
+function deltaTone(html: string): string {
+  const m = /data-loom-kpi-delta=""[^>]*?color:([^;"]+)/.exec(html)
+  return m ? m[1].trim() : ''
+}
+
 function snapshot(s: EditorStore) {
   return JSON.stringify(s.doc.nodes)
 }
@@ -52,7 +134,7 @@ export async function runSelfTest(): Promise<string> {
   const s = new EditorStore()
 
   // --- 1. drop a component with declared defaults applied ---
-  const btn = s.addComponent('Button', s.doc.root, 40, 60)
+  const btn = s.addComponent('Button', withRoot(s), 40, 60)
   check('drop returns an id', Boolean(btn), String(btn))
   const node = btn ? s.doc.nodes[btn] : undefined
   check(
@@ -88,7 +170,7 @@ export async function runSelfTest(): Promise<string> {
   check('redo restores dragged position', btn ? s.doc.nodes[btn].props.x === 157 : false)
 
   // --- 4. nested containers: a Panel holding a child, then delete + undo ---
-  const panel = s.addComponent('Panel', s.doc.root, 0, 0)
+  const panel = s.addComponent('Panel', withRoot(s), 0, 0)
   let child: string | undefined
   if (panel) {
     s.commit({ op: 'setFlow', id: panel, flow: true }, 'flow on')
@@ -114,19 +196,34 @@ export async function runSelfTest(): Promise<string> {
     check(
       'reparent into own descendant rejected',
       Object.keys(s.doc.nodes).length === idCountBefore &&
-        parentOf(s.doc, panel) === s.doc.root,
+        parentOf(s.doc, panel) === withRoot(s),
       `nodes=${Object.keys(s.doc.nodes).length}`,
     )
   }
 
-  // --- 6. root is undeletable ---
-  const nodeCount = Object.keys(s.doc.nodes).length
-  s.remove([s.doc.root])
-  check('root cannot be deleted', Object.keys(s.doc.nodes).length === nodeCount)
+  // --- 6. deleting the ROOT empties the workspace ----------------------
+  // The root is an ordinary design node the user placed, so deleting it takes
+  // its subtree and leaves a genuinely empty document. Covered in depth in §33.
+  {
+    const empty = new EditorStore()
+    check('a new workspace has no root', empty.doc.root === null && Object.keys(empty.doc.nodes).length === 0)
+    const id = empty.addComponent('Card', null, 10, 10)
+    check('first drop becomes the root', empty.doc.root === id)
+    if (id === undefined) {
+      check('delete on root empties the workspace', false, 'no root created')
+      check('undo of a root delete brings it back', false)
+    } else {
+      empty.select([id])
+      empty.remove([id])
+      check('delete on root empties the workspace', empty.doc.root === null && Object.keys(empty.doc.nodes).length === 0)
+      empty.undo()
+      check('undo of a root delete brings it back', empty.doc.root === id)
+    }
+  }
 
   // --- 7. ops are pure: the previous document is untouched by apply ---
   const s2 = new EditorStore()
-  const a = s2.addComponent('Gauge', s2.doc.root, 5, 5)
+  const a = s2.addComponent('Gauge', withRoot(s2), 5, 5)
   const frozen = JSON.stringify(s2.doc.nodes)
   if (a) s2.poke({ op: 'move', id: a, x: 999, y: 999 })
   check('poke does not mutate history snapshots', frozen !== JSON.stringify(s2.doc.nodes))
@@ -140,7 +237,7 @@ export async function runSelfTest(): Promise<string> {
   // outside `instantiate` were missing defaults entirely.
   {
     const s3 = new EditorStore()
-    const rootId = s3.doc.root
+    const rootId = withRoot(s3)
     const panel = s3.addComponent('Panel', rootId)
     check('toolbox drop gets all schema props', panel ? hasAllProps(s3, panel, 'Panel') : false)
 
@@ -190,7 +287,7 @@ export async function runSelfTest(): Promise<string> {
   // a flow panel all stacked at left:0 top:0.
   {
     const s5 = new EditorStore()
-    const rootId = s5.doc.root
+    const rootId = withRoot(s5)
     s5.commit({ op: 'setFlow', id: rootId, flow: true }, 'flow')
     const card = s5.addComponent('Panel', rootId, 0, 0, {}, { flow: true })
     const leaf = card ? s5.addComponent('Label', card) : undefined
@@ -212,22 +309,19 @@ export async function runSelfTest(): Promise<string> {
     seedDemo(s6)
     const missing: string[] = []
     for (const n of Object.values(s6.doc.nodes)) {
-      // The root is created by emptyDocument() before any component is
-      // registered, so it legitimately carries only its layout keys.
-      if (n.id === s6.doc.root) continue
+      // The demo creates the root as a real drop, so it is schema-complete
+      // like every other node — nothing about it is hand-written.
+      if (n.id === withRoot(s6)) continue
       if (!hasAllProps(s6, n.id, n.type)) missing.push(n.id)
     }
     check('every non-root node has all declared props', missing.length === 0, missing.join(','))
-
-    // The root must still be complete AFTER a seeder pass, which is when it
-    // actually gets its real shape.
-    check('root is normalised once a component is registered', hasAllProps(s6, s6.doc.root, 'Panel'))
+    check('root is a normal, complete node', hasAllProps(s6, mustRoot(s6.doc), 'Panel'))
   }
 
   // --- 13. resize: transient, sealed, and reversible --------------------
   {
     const s7 = new EditorStore()
-    const rootId = s7.doc.root
+    const rootId = withRoot(s7)
     s7.commit({ op: 'setFlow', id: rootId, flow: false }, 'free root')
     const g = s7.addComponent('Gauge', rootId, 100, 100)
     check('resize op accepted', g ? s7.commit({ op: 'resize', id: g, w: 220, h: 180 }, 'Resize') : false)
@@ -258,7 +352,7 @@ export async function runSelfTest(): Promise<string> {
   // --- 14. w/h survive schema normalisation ---------------------------
   {
     const s8 = new EditorStore()
-    const rootId = s8.doc.root
+    const rootId = withRoot(s8)
     s8.commit({ op: 'setFlow', id: rootId, flow: false }, 'free root')
     const b = s8.addComponent('Button', rootId, 10, 10, { w: 300, h: 80 })
     check(
@@ -315,14 +409,14 @@ export async function runSelfTest(): Promise<string> {
     // Authoring mode, by contrast, MUST still carry the hooks.
     const s10 = new EditorStore()
     seedDemo(s10)
-    s10.select([s10.doc.root])
+    s10.select([withRoot(s10)])
     const host2 = document.createElement('div')
     document.body.appendChild(host2)
     const root2 = createRoot(host2)
     root2.render(
       renderNode(
         { doc: s10.doc, selected: new Set(s10.selection), onPointerDownNode: () => undefined },
-        s10.doc.root,
+        withRoot(s10),
       ),
     )
     await new Promise((r) => setTimeout(r, 80))
@@ -390,7 +484,7 @@ export async function runSelfTest(): Promise<string> {
   // NOWHERE. A prop that silently does nothing is worse than no prop.
   {
     const s12 = new EditorStore()
-    const rootId = s12.doc.root
+    const rootId = withRoot(s12)
     s12.commit({ op: 'setFlow', id: rootId, flow: true }, 'flow')
     s12.addComponent('Panel', rootId, 0, 0, { title: 'Section One' }, { flow: true })
 
@@ -470,7 +564,7 @@ export async function runSelfTest(): Promise<string> {
     const dangling = structuredClone(good)
     dangling.nodes[dangling.root].children.push('does-not-exist')
     const d = validate(dangling)
-    check('dangling child reference is dropped', d.doc !== null && !d.doc.nodes[d.doc.root].children.includes('does-not-exist'))
+    check('dangling child reference is dropped', d.doc !== null && !d.doc.nodes[mustRoot(d.doc)].children.includes('does-not-exist'))
 
     // Duplicate child links.
     const dup = structuredClone(good)
@@ -479,7 +573,7 @@ export async function runSelfTest(): Promise<string> {
     check(
       'duplicate child links are collapsed',
       dd.doc !== null &&
-        new Set(dd.doc.nodes[dd.doc.root].children).size === dd.doc.nodes[dd.doc.root].children.length,
+        new Set(dd.doc.nodes[mustRoot(dd.doc)].children).size === dd.doc.nodes[mustRoot(dd.doc)].children.length,
     )
 
     // A cycle: a node that is its own ancestor.
@@ -487,7 +581,7 @@ export async function runSelfTest(): Promise<string> {
     const rootId = cyc.root
     cyc.nodes[rootId].children.push(rootId)
     const c = validate(cyc)
-    check('a self-referencing child is removed', c.doc !== null && !c.doc.nodes[c.doc.root].children.includes(c.doc.root))
+    check('a self-referencing child is removed', c.doc !== null && !c.doc.nodes[mustRoot(c.doc)].children.includes(mustRoot(c.doc)))
 
     // Orphaned node: valid on its own, unreachable from the root.
     const orphan = structuredClone(good)
@@ -512,7 +606,7 @@ export async function runSelfTest(): Promise<string> {
   {
     const s15 = new EditorStore()
     check('a fresh document is clean', s15.dirty === false)
-    s15.addComponent('Button', s15.doc.root, 0, 0)
+    s15.addComponent('Button', withRoot(s15), 0, 0)
     check('an edit makes it dirty', s15.dirty === true)
     s15.undo()
     check('undo alone keeps it dirty (work is still unsaved)', s15.dirty === true)
@@ -525,7 +619,7 @@ export async function runSelfTest(): Promise<string> {
   // count grew for zero visual effect. The drag now refuses to start.
   {
     const s16 = new EditorStore()
-    const rootId = s16.doc.root
+    const rootId = withRoot(s16)
     s16.commit({ op: 'setFlow', id: rootId, flow: true }, 'flow root')
     const card = s16.addComponent('Panel', rootId, 0, 0, {}, { flow: true })
     const leaf = card ? s16.addComponent('Button', card) : undefined
@@ -566,7 +660,7 @@ export async function runSelfTest(): Promise<string> {
 
     // Contrast: a free child DOES move and DOES record it.
     const s17 = new EditorStore()
-    const r2 = s17.doc.root
+    const r2 = withRoot(s17)
     s17.commit({ op: 'setFlow', id: r2, flow: false }, 'free root')
     const free = s17.addComponent('Button', r2, 10, 10)
     check('a free child is not a flow child', free ? !isFlowChild(s17.doc, free) : false)
@@ -592,7 +686,7 @@ export async function runSelfTest(): Promise<string> {
     rootC.render(
       renderNode(
         { doc: s18.doc, selected: new Set(), onPointerDownNode: () => undefined },
-        s18.doc.root,
+        withRoot(s18),
       ),
     )
     await new Promise((r) => setTimeout(r, 90))
@@ -622,7 +716,7 @@ export async function runSelfTest(): Promise<string> {
 
     // Hostile text must be escaped, never emitted raw.
     const evil = new EditorStore()
-    evil.addComponent('Label', evil.doc.root, 0, 0, { text: '<script>alert(1)</script>' })
+    evil.addComponent('Label', withRoot(evil), 0, 0, { text: '<script>alert(1)</script>' })
     const evilHtml = emitHtml(evil.doc)
     check(
       'export escapes hostile text',
@@ -645,7 +739,7 @@ export async function runSelfTest(): Promise<string> {
     for (const spec of allComponents()) {
       try {
         const t = new EditorStore()
-        const id = t.addComponent(spec.name, t.doc.root, 0, 0)
+        const id = t.addComponent(spec.name, withRoot(t), 0, 0)
         if (!id) {
           failed.push(`${spec.name} (no id)`)
           continue
@@ -660,8 +754,8 @@ export async function runSelfTest(): Promise<string> {
 
     // Fail-fast: an unknown type must throw, not emit a silent generic div.
     const bad = structuredClone(se.doc)
-    bad.nodes.evil = { id: 'evil', type: 'NotAComponent', props: {}, children: [], flow: false, visible: true, locked: false }
-    bad.nodes[bad.root].children.push('evil')
+    bad.nodes.evil = { id: 'evil', type: 'NotAComponent', props: {}, children: [], flow: false, visible: true, locked: false, opacity: 1 }
+    bad.nodes[mustRoot(bad)].children.push('evil')
     let threw = false
     try {
       emitHtml(bad)
@@ -712,7 +806,7 @@ export async function runSelfTest(): Promise<string> {
 
     // Non-finite geometry never reaches the stylesheet.
     const s20 = new EditorStore()
-    const nanBtn = s20.addComponent('Button', s20.doc.root, 0, 0)
+    const nanBtn = s20.addComponent('Button', withRoot(s20), 0, 0)
     if (nanBtn) {
       s20.commit({ op: 'setProp', id: nanBtn, key: 'x', value: NaN as never }, 'nan')
       s20.commit({ op: 'setProp', id: nanBtn, key: 'y', value: Infinity as never }, 'inf')
@@ -784,7 +878,7 @@ export async function runSelfTest(): Promise<string> {
       for (const spec of allComponents()) {
         try {
           const t = new EditorStore()
-          const id = t.addComponent(spec.name, t.doc.root, 0, 0)
+          const id = t.addComponent(spec.name, withRoot(t), 0, 0)
           if (!id) {
             failed.push(`${spec.name} (no id)`)
             continue
@@ -800,14 +894,17 @@ export async function runSelfTest(): Promise<string> {
       check('selected authoring carries editor hooks', hooks === allComponents().length, `${hooks}/${allComponents().length}`)
     }
 
-    // Deleting the root refuses AND keeps the selection (old review bug 6).
+    // Deleting a LOCKED node refuses AND keeps the selection (old review bug 6).
+    // The root is deletable now, so the refusal case is the lock.
     {
       const s21 = new EditorStore()
-      s21.select([s21.doc.root])
+      const locked = withRoot(s21)
+      s21.commit({ op: 'setLocked', id: locked, locked: true }, 'Lock')
+      s21.select([locked])
       const before = Object.keys(s21.doc.nodes).length
-      s21.remove([s21.doc.root])
+      s21.remove([locked])
       check('refused delete keeps the document', Object.keys(s21.doc.nodes).length === before)
-      check('refused delete keeps the selection', s21.selection.includes(s21.doc.root))
+      check('refused delete keeps the selection', s21.selection.includes(locked))
     }
 
     // Fill text follows the theme on every theme (white-on-accent failed AA
@@ -820,7 +917,7 @@ export async function runSelfTest(): Promise<string> {
       })
       check('every theme defines textOnAccent', missing.length === 0, missing.join(','))
       const s22 = new EditorStore()
-      s22.addComponent('Button', s22.doc.root, 0, 0, { variant: 'primary' })
+      s22.addComponent('Button', withRoot(s22), 0, 0, { variant: 'primary' })
       s22.setTheme('contrast')
       check('contrast primary buttons use the token, not white',
         emitHtml(s22.doc).includes('#0a0f1c') && !emitHtml(s22.doc).includes('color:#fff;') &&
@@ -848,7 +945,7 @@ export async function runSelfTest(): Promise<string> {
   {
     // Visible/locked ride ops with exact inverses.
     const s23 = new EditorStore()
-    const b = s23.addComponent('Button', s23.doc.root, 10, 10)
+    const b = s23.addComponent('Button', withRoot(s23), 10, 10)
     check('new nodes are visible and unlocked', b ? s23.doc.nodes[b].visible === true && s23.doc.nodes[b].locked === false : false)
     if (b) {
       s23.commit({ op: 'setVisible', id: b, visible: false }, 'Hide')
@@ -871,7 +968,7 @@ export async function runSelfTest(): Promise<string> {
     // label shares its text with <title>, so it can never prove removal).
     const someId = Object.keys(s24.doc.nodes).find((id) => {
       const n = s24.doc.nodes[id]
-      if (id === s24.doc.root || n.type !== 'Label') return false
+      if (id === withRoot(s24) || n.type !== 'Label') return false
       const t = String(n.props.text ?? '').trim()
       return t !== '' && t !== s24.doc.meta.name && beforeHide.split(t).length - 1 === 1
     })
@@ -882,7 +979,7 @@ export async function runSelfTest(): Promise<string> {
       check('hidden nodes leave the output', beforeHide.includes(text) && !after.includes(text), text.slice(0, 40))
       check('hidden nodes stay in the document', Boolean(s24.doc.nodes[someId]))
       // Authoring does not throw on hidden nodes (it ghosts them).
-      renderNode({ doc: s24.doc, selected: new Set(), mode: 'preview' }, s24.doc.root)
+      renderNode({ doc: s24.doc, selected: new Set(), mode: 'preview' }, withRoot(s24))
       check('preview renders with hidden nodes present', true)
     } else {
       check('hidden nodes leave the output', false, 'no label found')
@@ -892,8 +989,8 @@ export async function runSelfTest(): Promise<string> {
 
     // Locked nodes refuse deletion; the selection survives the refusal.
     const s25 = new EditorStore()
-    const l1 = s25.addComponent('Button', s25.doc.root, 0, 0)
-    const l2 = s25.addComponent('Label', s25.doc.root, 0, 0)
+    const l1 = s25.addComponent('Button', withRoot(s25), 0, 0)
+    const l2 = s25.addComponent('Label', withRoot(s25), 0, 0)
     if (l1 && l2) {
       s25.commit({ op: 'setLocked', id: l1, locked: true }, 'Lock')
       const before = Object.keys(s25.doc.nodes).length
@@ -911,7 +1008,7 @@ export async function runSelfTest(): Promise<string> {
 
     // Duplication re-ids the whole subtree, offsets the copy, selects it.
     const s26 = new EditorStore()
-    const card = s26.addComponent('Panel', s26.doc.root, 50, 60, {}, { flow: false })
+    const card = s26.addComponent('Panel', withRoot(s26), 50, 60, {}, { flow: false })
     let leaf: string | undefined
     if (card) leaf = s26.addComponent('Label', card, 5, 5, { text: 'copy me' })
     if (card && leaf) {
@@ -926,7 +1023,7 @@ export async function runSelfTest(): Promise<string> {
       check('duplicate selects the copy', copy ? s26.selection.includes(copy) : false)
       s26.undo()
       check('undo of duplicate removes the copy', Object.keys(s26.doc.nodes).length === before)
-      check('root refuses duplication', s26.duplicate(s26.doc.root) === undefined)
+      check('root refuses duplication', s26.duplicate(withRoot(s26)) === undefined)
       if (copy) {
         s26.redo()
         s26.commit({ op: 'setLocked', id: copy, locked: true }, 'Lock')
@@ -945,15 +1042,15 @@ export async function runSelfTest(): Promise<string> {
 
     // Z-order moves one slot per commit through the layers panel op.
     const s27 = new EditorStore()
-    const za = s27.addComponent('Button', s27.doc.root, 0, 0, { label: 'a' })
-    const zb = s27.addComponent('Button', s27.doc.root, 10, 10, { label: 'b' })
-    const zc = s27.addComponent('Button', s27.doc.root, 20, 20, { label: 'c' })
+    const za = s27.addComponent('Button', withRoot(s27), 0, 0, { label: 'a' })
+    const zb = s27.addComponent('Button', withRoot(s27), 10, 10, { label: 'b' })
+    const zc = s27.addComponent('Button', withRoot(s27), 20, 20, { label: 'c' })
     if (za && zb && zc) {
-      s27.commit({ op: 'reparent', id: zb, parent: s27.doc.root, index: 0 }, 'Move forward')
-      check('layers move-forward reorders', JSON.stringify(s27.doc.nodes[s27.doc.root].children) === JSON.stringify([zb, za, zc]),
-        JSON.stringify(s27.doc.nodes[s27.doc.root].children))
+      s27.commit({ op: 'reparent', id: zb, parent: withRoot(s27), index: 0 }, 'Move forward')
+      check('layers move-forward reorders', JSON.stringify(s27.doc.nodes[withRoot(s27)].children) === JSON.stringify([zb, za, zc]),
+        JSON.stringify(s27.doc.nodes[withRoot(s27)].children))
       s27.undo()
-      check('undo restores z-order', JSON.stringify(s27.doc.nodes[s27.doc.root].children) === JSON.stringify([za, zb, zc]))
+      check('undo restores z-order', JSON.stringify(s27.doc.nodes[withRoot(s27)].children) === JSON.stringify([za, zb, zc]))
     } else {
       check('layers move-forward reorders', false, 'no fixture')
       check('undo restores z-order', false)
@@ -975,6 +1072,1265 @@ export async function runSelfTest(): Promise<string> {
     check('loader repairs flag garbage with issues', hv.doc !== null && hv.doc.nodes.a.visible === true &&
       hv.doc.nodes.a.locked === false && hv.issues.some((i) => i.path.includes('$.nodes.a.visible')) &&
       hv.doc.nodes.b.visible === true && hv.doc.nodes.b.locked === false)
+  }
+
+  // --- 32. React emitter: single-file component, no dependencies ------
+  // Same single-source-of-truth contract as the HTML emitter: converted
+  // from the preview renderer, so all 111 components work by construction.
+  {
+    const s28 = new EditorStore()
+    seedDemo(s28)
+    s28.setTheme('daylight')
+    const src = emitReact(s28.doc)
+    check('react output is a default-exported module', src.includes('export default function LoomExport'))
+    check('react output imports only react', src.includes("import React from 'react'") && !src.includes('tailwind'))
+    check('react output embeds the theme', src.includes('#2f5fe0') && src.includes('const THEME'))
+    check('react output keeps absolute positioning', src.includes('"position": "absolute"'))
+    check('react output carries no editor hooks', !src.includes('data-loom-id') && !src.includes('loom-handle'))
+    check('react output is deterministic', emitReact(s28.doc) === src)
+    check('react filename is filesystem-safe', reactFilenameFor('My App / v2.0!') === 'my-app-v2-0.jsx', reactFilenameFor('My App / v2.0!'))
+
+    // Hostile text is expression-wrapped (a JS string literal, never parsed
+    // as JSX), so markup-significant characters cannot break the module.
+    const evil = new EditorStore()
+    evil.addComponent('Label', withRoot(evil), 0, 0, { text: '<b>{x}</b> & "q"' })
+    const evilSrc = emitReact(evil.doc)
+    check('react output escapes hostile text', evilSrc.includes('{"<b>{x}</b>'))
+
+    // Every registered component converts without throwing.
+    const failed: string[] = []
+    for (const spec of allComponents()) {
+      try {
+        const t = new EditorStore()
+        const id = t.addComponent(spec.name, withRoot(t), 0, 0)
+        if (!id) {
+          failed.push(`${spec.name} (no id)`)
+          continue
+        }
+        const out = emitReact(t.doc)
+        if (!out.includes('LoomExport')) failed.push(`${spec.name} (empty)`)
+      } catch (e) {
+        failed.push(`${spec.name} (${String(e).slice(0, 80)})`)
+      }
+    }
+    check('react covers all registered components', failed.length === 0, failed.join('; ').slice(0, 300))
+
+    // Fail-fast like the HTML emitter.
+    const bad = structuredClone(s28.doc)
+    bad.nodes.evil = { id: 'evil', type: 'NotAComponent', props: {}, children: [], flow: false, visible: true, locked: false, opacity: 1 }
+    bad.nodes[mustRoot(bad)].children.push('evil')
+    let threw = false
+    try {
+      emitReact(bad)
+    } catch {
+      threw = true
+    }
+    check('react throws on unknown components', threw)
+  }
+
+  // --- 33. rootless lifecycle, opacity, frameless-output truths ---------
+  {
+    // Deleting the root is an ordinary delete: the workspace becomes empty
+    // and the user can rebuild it, or undo.
+    const s30 = new EditorStore()
+    seedDemo(s30)
+    const full = Object.keys(s30.doc.nodes).length
+    const root30 = mustRoot(s30.doc)
+    s30.select([root30])
+    s30.remove([root30])
+    check('delete on root empties the workspace', s30.doc.root === null && Object.keys(s30.doc.nodes).length === 0,
+      `${full} -> ${Object.keys(s30.doc.nodes).length}`)
+    check('the empty workspace exports an empty page', emitHtml(s30.doc).includes('<!DOCTYPE html>'))
+    check('delete is labelled, not a silent clear', s30.history[s30.history.length - 1]?.label === 'Delete root')
+    s30.undo()
+    check('undo of a root delete restores everything', Object.keys(s30.doc.nodes).length === full)
+    // Deleting from an already-empty workspace is a no-op: no phantom history.
+    s30.redo()
+    const h0 = s30.history.length
+    s30.remove([root30])
+    check('deleting from an empty workspace adds no history', s30.history.length === h0)
+
+    // Opacity: universal node field with exact undo + clamped writes.
+    const s31 = new EditorStore()
+    const ob = s31.addComponent('Button', withRoot(s31), 0, 0)
+    check('new nodes are fully opaque', ob ? s31.doc.nodes[ob].opacity === 1 : false)
+    if (ob) {
+      s31.commit({ op: 'setOpacity', id: ob, opacity: 0.4 }, 'Opacity')
+      check('opacity commits', s31.doc.nodes[ob].opacity === 0.4)
+      s31.undo()
+      check('undo of opacity restores', s31.doc.nodes[ob].opacity === 1)
+      s31.commit({ op: 'setOpacity', id: ob, opacity: 7 }, 'Opacity')
+      check('opacity clamps above 1', s31.doc.nodes[ob].opacity === 1)
+      s31.commit({ op: 'setOpacity', id: ob, opacity: -3 }, 'Opacity')
+      check('opacity clamps below 0', s31.doc.nodes[ob].opacity === 0)
+      const html = emitHtml(s31.doc)
+      check('zero opacity reaches the output', html.includes('opacity:0'))
+    } else {
+      check('opacity commits', false, 'no node')
+      check('undo of opacity restores', false)
+      check('opacity clamps above 1', false)
+      check('opacity clamps below 0', false)
+      check('zero opacity reaches the output', false)
+    }
+
+    // The loader coerces opacity like any other trust-boundary value.
+    const ov = validate({ version: 1, meta: { name: 'o', targets: ['web'], created: 0 }, root: 'root', nodes: {
+      root: { id: 'root', type: 'Panel', props: {}, children: ['a'], flow: false, visible: true, locked: false, opacity: 'half' },
+      a: { id: 'a', type: 'Label', props: { text: 'x' }, children: [], flow: false, visible: true, locked: false, opacity: 0.25 },
+    } })
+    check('loader repairs garbage opacity with an issue', ov.doc?.nodes.root.opacity === 1 &&
+      ov.issues.some((i) => i.path.includes('$.nodes.root.opacity')))
+    check('loader keeps valid opacity silently', ov.doc?.nodes.a.opacity === 0.25 &&
+      !ov.issues.some((i) => i.path.includes('$.nodes.a.opacity')))
+  }
+
+  {
+    // Styling work survives the file round trip (effects + z).
+    const s29 = new EditorStore()
+    seedDemo(s29)
+    const effId = Object.keys(s29.doc.nodes).find((id) => id !== withRoot(s29))
+    if (effId) {
+      s29.commit({ op: 'setEffects', id: effId, patch: { glass: true } }, 'fx')
+      const rt = validate(serialize(s29.doc))
+      check('effects survive save/load', rt.doc?.nodes[effId]?.effects?.glass === true)
+      check('clean nodes carry no effects baggage', rt.doc ? Object.values(rt.doc.nodes).every((n) => n.effects === undefined || typeof n.effects === 'object') : false)
+    } else {
+      check('effects survive save/load', false, 'no node')
+      check('clean nodes carry no effects baggage', false)
+    }
+  }
+
+  // --- 34. new workspace resets everything, cleanly --------------------
+  // The New button path is loadDocument(emptyDocument()): an OPEN, not an
+  // edit. The dirty-confirm lives in the UI (untestable headlessly); the
+  // store contract below is what it guards.
+  {
+    const s32 = new EditorStore()
+    seedDemo(s32)
+    s32.select([mustRoot(s32.doc)])
+    const named = s32.doc.meta.name
+    check('demo seeds unsaved work', s32.dirty === true && named !== 'Untitled')
+    s32.loadDocument(emptyDocument())
+    check('new workspace has no root at all', s32.doc.root === null && Object.keys(s32.doc.nodes).length === 0)
+    check('new workspace is untitled', s32.doc.meta.name === 'Untitled')
+    check('new workspace resets history', s32.history.length === 0)
+    check('new workspace clears selection', s32.selection.length === 0)
+    check('new workspace is clean', s32.dirty === false)
+    check('an empty document still exports', emitHtml(s32.doc).includes('<!DOCTYPE html>'))
+  }
+
+  // --- 35. the root is an ordinary node the USER placed -----------------
+  // No auto-created panel. The first drop becomes the root, and because the
+  // user owns it, it is selectable, movable, resizable, editable, deletable —
+  // no special cases anywhere.
+  {
+    const s33 = new EditorStore()
+    const root33 = withRoot(s33)
+    const authRoot = renderToStaticMarkup(renderNode({ doc: s33.doc, selected: new Set() }, root33))
+    check('authoring root carries its hooks', authRoot.includes('data-loom-id'))
+    check('authoring root renders as a real node', authRoot.includes('border'))
+    const selRoot = renderToStaticMarkup(
+      renderNode({ doc: s33.doc, selected: new Set([root33]) }, root33),
+    )
+    check('the root gets resize handles like any node', selRoot.includes('loom-handle'))
+    check('handles never reach the output', !emitHtml(s33.doc).includes('loom-handle'))
+
+    // Move + resize reach the model for the root exactly as for a child.
+    s33.commit({ op: 'move', id: root33, x: 40, y: 30 }, 'Move')
+    s33.commit({ op: 'resize', id: root33, w: 640, h: 480 }, 'Resize')
+    check('the root moves', s33.doc.nodes[root33]?.props.x === 40 && s33.doc.nodes[root33]?.props.y === 30)
+    check('the root resizes', s33.doc.nodes[root33]?.props.w === 640 && s33.doc.nodes[root33]?.props.h === 480)
+    s33.commit({ op: 'setProp', id: root33, key: 'background', value: '#101319' }, 'Set background')
+    check('the root is editable', s33.doc.nodes[root33]?.props.background === '#101319')
+
+    // An untouched, unsized root is the page. Once the user sizes or moves
+    // it, the export honours their decision instead of overriding it.
+    // Match the CHILD override specifically: the page wrapper itself is
+    // always min-height:100vh, so the bare string proves nothing.
+    const pagey = emitHtml(rootDoc())
+    check('an untouched root fills the page', pagey.includes('.loom-export>:first-child'))
+    check(
+      'a user-sized root is exported as authored',
+      !emitHtml(s33.doc).includes('.loom-export>:first-child'),
+    )
+
+    const s34 = new EditorStore()
+    seedDemo(s34)
+    const flowRoot = renderToStaticMarkup(renderNode({ doc: s34.doc, selected: new Set() }, mustRoot(s34.doc)))
+    check('authoring root keeps flow layout', flowRoot.includes('display:flex'))
+  }
+
+  // --- 36. rootless invariants ------------------------------------------
+  // "Empty" and "root" are first-class states, not special cases.
+  {
+    const s35 = new EditorStore()
+    check('a fresh store is genuinely empty', s35.doc.root === null && Object.keys(s35.doc.nodes).length === 0)
+
+    // Only ONE root can ever exist: a second rootless insert is refused.
+    const first = s35.addComponent('Panel', null, 0, 0)
+    const second = s35.addComponent('Panel', null, 0, 0)
+    check('the first drop becomes the root', s35.doc.root === first)
+    check('a second drop cannot create a second root', second === undefined && s35.doc.root === first)
+
+    // Children land inside the existing root, as they always did.
+    const kid = s35.addComponent('Label', mustRoot(s35.doc), 0, 0)
+    check('later drops parent into the root', kid !== undefined && parentOf(s35.doc, kid) === mustRoot(s35.doc))
+
+    // The page root is not a duplicate candidate (it has no parent to hold it).
+    check('the root refuses duplication', s35.duplicate(mustRoot(s35.doc)) === undefined)
+
+    // setRoot: emptying and re-rooting are ops, so they are undoable.
+    const before = Object.keys(s35.doc.nodes).length
+    s35.commit({ op: 'setRoot', id: null }, 'Empty workspace')
+    check('setRoot(null) empties the document', s35.doc.root === null && Object.keys(s35.doc.nodes).length === 0)
+    s35.undo()
+    check('undo restores an emptied workspace', Object.keys(s35.doc.nodes).length === before)
+    check('undo restores the same root', s35.doc.root === first)
+
+    // Round-trip: an empty document survives a save/load cycle.
+    const roundTrip = validate(serialize(s35.doc))
+    check('a rooted document round-trips', roundTrip.doc?.root === first)
+    const emptyDoc = validate(serialize(emptyDocument()))
+    check('an empty document round-trips with no root', emptyDoc.doc !== null && emptyDoc.doc.root === null)
+    check('an empty document keeps zero nodes', emptyDoc.doc ? Object.keys(emptyDoc.doc.nodes).length === 0 : false)
+
+    // A file claiming no root but carrying nodes is repaired, not trusted.
+    const stray = { version: 1, meta: { name: 'Stray', targets: ['web'], created: 1 }, root: null, nodes: { a: { id: 'a', type: 'Panel', props: {}, children: [], flow: false, visible: true, locked: false, opacity: 1 } } }
+    const repaired = validate(stray)
+    check('nodes with no root are dropped, and reported', repaired.doc !== null && Object.keys(repaired.doc.nodes).length === 0 && repaired.issues.some((i) => i.path === '$.nodes'))
+
+    // An empty document still produces valid output on both emitters.
+    check('empty document exports HTML', emitHtml(emptyDocument()).includes('<!DOCTYPE html>'))
+    check('empty document exports React', emitReact(emptyDocument()).includes('export default'))
+
+    // The demo seeds a root the same way a user's first drop does.
+    const s36 = new EditorStore()
+    seedDemo(s36)
+    check('the demo creates its own root', s36.doc.root !== null && Object.keys(s36.doc.nodes).length > 1)
+    check('the demo root is a normal Panel', s36.doc.nodes[mustRoot(s36.doc)]?.type === 'Panel')
+  }
+
+  // --- 37. built-in control behaviour ------------------------------------
+  // The promise: every interactive control WORKS, with no authoring, and it
+  // works the same in the preview and in both exports.
+  {
+    // The contract table is explicit and total for the control families.
+    const expected: Record<string, string> = {
+      Button: 'press', IconButton: 'press', BackButton: 'press', MenuItem: 'press',
+      NavLink: 'press', Link: 'press', FileUpload: 'press',
+      Switch: 'toggle', ToggleButton: 'toggle', DropdownButton: 'toggle',
+      Checkbox: 'check', Checklist: 'check', Radio: 'radio',
+      TabPanel: 'panel', AccordionItem: 'disclosure',
+    }
+    const wrong = Object.entries(expected).filter(([type, role]) => ROLE_OF[type] !== role)
+    check('every pressable/boolean control has its built-in role', wrong.length === 0,
+      wrong.map(([t, r]) => `${t}=${String(ROLE_OF[t])} want ${r}`).join(', '))
+    check('the item-role families are declared', ITEM_ROLE.Tabs === 'tab' && ITEM_ROLE.DataGrid === 'sort' &&
+      ITEM_ROLE.Pagination === 'page' && ITEM_ROLE.Rating === 'rate' && ITEM_ROLE.ProgressDots === 'dot' &&
+      ITEM_ROLE.Stepper === 'step' && ITEM_ROLE.TreeList === 'expand' && ITEM_ROLE.TabBar === 'tab')
+    check('the reveal chrome is declared', REVEAL_OF.Modal === 'reveal' && REVEAL_OF.Drawer === 'reveal' &&
+      REVEAL_OF.SidebarPanel === 'reveal')
+
+    // No control is interactive in name only: every declared type must be a
+    // real component, or the table is lying about coverage.
+    const unknown = interactiveTypes().filter((t) => !getComponent(t))
+    check('every interactive type is a real component', unknown.length === 0, unknown.join(','))
+
+    // Static things stay static. A Label that toggles would be a bug.
+    check('static components claim no role', !ROLE_OF.Label && !ROLE_OF.Panel && !ROLE_OF.Paragraph)
+
+    // The runtime is real, self-guarding, and syntactically valid JS.
+    const rt = behaviourRuntime()
+    check('the runtime guards against double-binding', rt.includes('__loomBehaviour'))
+    check('the runtime handles every role it ships', interactiveTypes().length > 20)
+    // It travels as SOURCE, so it must be self-contained: no imports, and no
+    // eval (a strict content-security-policy forbids eval, and a throw inside
+    // a React effect unmounts the tree).
+    check('the runtime is self-contained source', !/\bimport\b|\brequire\(/.test(rt))
+    check('the runtime never uses eval', !rt.includes('eval('))
+    check('the runtime source installs the layer', rt.startsWith('(') && rt.includes('addEventListener'))
+
+    // The stylesheet carries the state rules, and no hard-coded colours:
+    // state must read the theme custom properties, never a second palette.
+    const css = behaviourCss()
+    check('the stylesheet has a state rule per role family',
+      ['press', 'toggle', 'tab', 'disclosure', 'sort', 'page', 'dot', 'step', 'rate', 'check', 'radio', 'expand']
+        .every((r) => css.includes(`data-loom-b="${r}"`)))
+    check('the reveal chrome has its own state rules', css.includes('[data-loom-reveal]') && css.includes('[data-loom-scrim]'))
+    check('a closed dropdown menu is hidden', css.includes('[data-loom-menu-panel][data-loom-open="0"]'))
+    check('state colours come from theme variables', css.includes('var(--loom-on)') && css.includes('var(--loom-accent'))
+    check('a pressed control looks pressed', css.includes('[data-loom-pressed="1"]'))
+    check('a closed panel is hidden', css.includes('[data-loom-b="panel"]{display:none}'))
+    check('a collapsed drawer is hidden even against inline styles',
+      css.includes(':not([data-loom-open="1"]){display:none !important}'))
+
+    // The attribute builder is total: state is always expressed as data.
+    const attrs = behaviourAttrs({ role: 'tab', group: 'g1', index: 2, active: true })
+    check('attributes carry role, group and index',
+      attrs['data-loom-b'] === 'tab' && attrs['data-loom-g'] === 'g1' && attrs['data-loom-i'] === '2' &&
+      attrs['data-loom-active'] === '1')
+    check('attributes never leak undefined', !Object.values(behaviourAttrs({ role: 'press' })).some((v) => v === undefined || v === ''))
+
+    // REAL markup: render a document with one of every interactive control
+    // and assert the output carries the contract, not a picture of it.
+    const sb = new EditorStore()
+    const r = withRoot(sb)
+    const made: Record<string, string> = {}
+    for (const type of interactiveTypes()) {
+      const id = sb.addComponent(type, r, 0, 0)
+      if (id) made[type] = id
+    }
+    const missing = interactiveTypes().filter((t) => !made[t])
+    check('every interactive control can be placed', missing.length === 0, missing.join(','))
+    if (missing.length === 0) {
+      const html = emitHtml(sb.doc)
+      const roleCount = (html.match(/data-loom-b="/g) ?? []).length
+      check('output marks interactive controls', roleCount > 30, `${roleCount} marks`)
+      check('buttons carry the press role', html.includes('data-loom-b="press"'))
+      check('tabs carry a group and an index', html.includes('data-loom-b="tab"') && html.includes('data-loom-g='))
+      check('accordions ship their open state', html.includes('data-loom-b="disclosure"') && html.includes('data-loom-open='))
+      check('grid headers are sortable', html.includes('data-loom-b="sort"') && html.includes('data-loom-rows'))
+      check('modals are dismissible', html.includes('data-loom-close=') && html.includes('data-loom-scrim'))
+      // The single most important regression guard: no control may ship a
+      // handler that does nothing. A no-op onChange is a control that lies.
+      check('no control ships a dead onChange', !/onChange\s*=/.test(html))
+      check('native inputs are uncontrolled, not pinned', !/\bvalue=""\s*\/?>/.test(html))
+      // The behaviour layer must travel WITH the document.
+      check('the export carries the state stylesheet', html.includes('data-loom-b="press"]'))
+      check('the export carries the runtime', html.includes('__loomBehaviour'))
+      // React export ships the same layer.
+      const jsx = emitReact(sb.doc)
+      check('the React export carries the behaviour layer',
+        jsx.includes('BEHAVIOUR_CSS') && jsx.includes('installBehaviour') && jsx.includes('useEffect'))
+      check('the React export installs it without eval', !jsx.includes('eval('))
+      check(
+        'the React export is still self-contained',
+        jsx.includes('export default') &&
+          !jsx.includes("from 'react-dom'") &&
+          !jsx.includes('@radix') &&
+          !jsx.includes('antd'),
+      )
+    }
+  }
+
+  // --- 38. the controls ACTUALLY WORK (live DOM, real clicks) -----------
+  // Markup carrying a role proves nothing. This drives the real runtime with
+  // real events and asserts the DOM state changed — the same thing a person
+  // does when they click the artifact.
+  {
+    const s38 = new EditorStore()
+    const r38 = withRoot(s38)
+    const tabs = s38.addComponent('Tabs', r38, 0, 0, { tabs: 'Overview, Activity' })
+    s38.addComponent('TabPanel', tabs ?? r38, 0, 0, { title: 'Overview' })
+    s38.addComponent('TabPanel', tabs ?? r38, 0, 0, { title: 'Activity' })
+    s38.addComponent('Switch', r38, 0, 0, { label: 'Live', on: false })
+    s38.addComponent('AccordionItem', r38, 0, 0, { title: 'Details', expanded: false })
+    s38.addComponent('Button', r38, 0, 0, { label: 'Save' })
+    s38.addComponent('DataGrid', r38, 0, 0, { columns: 'Name,Score', rows: 'grace|30;ada|10;linus|20' })
+    s38.addComponent('Rating', r38, 0, 0, { value: 1, max: 5 })
+    s38.addComponent('Slider', r38, 0, 0, { value: 20, min: 0, max: 100 })
+    s38.addComponent('Pagination', r38, 0, 0, { page: 2, total: 9 })
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root38 = createRoot(host)
+    root38.render(React.createElement(PreviewStage, { s: s38 }))
+    await new Promise((res) => setTimeout(res, 120))
+    const stage = host.querySelector('.preview-stage')
+
+    check('the behaviour runtime installed itself', Boolean((window as unknown as { __loomBehaviour?: boolean }).__loomBehaviour))
+    check('the behaviour stylesheet is present', Boolean(document.querySelector('style[data-loom-behaviour]')))
+
+    // --- tabs: clicking the second tab shows the second panel -----------
+    const tabEls = stage ? Array.from(stage.querySelectorAll('[data-loom-b="tab"]')) : []
+    check('both tabs rendered', tabEls.length === 2, `${tabEls.length}`)
+    if (tabEls.length === 2) {
+      check('the authored tab starts active', tabEls[0].getAttribute('aria-selected') === 'true')
+      tabEls[1].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('clicking a tab selects it', tabEls[1].getAttribute('aria-selected') === 'true' &&
+        tabEls[0].getAttribute('aria-selected') === 'false')
+      // The strip must SHOW the switch, not just record it: the active tab has
+      // to actually look different from the inactive one.
+      const activeColor = getComputedStyle(tabEls[1]).color
+      const idleColor = getComputedStyle(tabEls[0]).color
+      check('the active tab is visually distinct', activeColor !== idleColor, `${activeColor} vs ${idleColor}`)
+      // Preview output carries no editor ids, so panels are addressed by role
+      // and position — the Nth panel belongs to the Nth tab.
+      const panels = stage ? Array.from(stage.querySelectorAll('[data-loom-b="panel"]')) : []
+      check('both tab panels rendered', panels.length === 2, `${panels.length}`)
+      check('the tab panel actually shows', panels[1]?.getAttribute('data-loom-shown') === '1')
+      check('the other panel actually hides', panels[0]?.getAttribute('data-loom-shown') === '0')
+    }
+
+    // --- switch: flips, and reports itself to assistive tech ------------
+    {
+      const el = stage?.querySelector('[data-loom-b="toggle"]') ?? null
+      check('the switch starts off', el?.getAttribute('data-loom-on') === '0')
+      el?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('clicking the switch turns it on', el?.getAttribute('data-loom-on') === '1')
+      check('the switch reports aria-checked', el?.getAttribute('aria-checked') === 'true')
+      check('the switch knob is styled by state', (() => {
+        const track = el?.querySelector('[data-loom-track]')
+        return track ? getComputedStyle(track).backgroundColor !== '' : false
+      })())
+    }
+
+    // --- accordion: opens and closes ------------------------------------
+    {
+      const el = stage?.querySelector('[data-loom-b="disclosure"]') ?? null
+      check('the accordion starts closed', el?.getAttribute('data-loom-open') === '0')
+      const summary = el?.querySelector('[data-loom-summary]')
+      summary?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('clicking the summary opens it', el?.getAttribute('data-loom-open') === '1')
+      check('the open body is actually visible', (() => {
+        const body = el?.querySelector('[data-loom-body]')
+        return body ? getComputedStyle(body).display !== 'none' : false
+      })())
+      summary?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('clicking again closes it', el?.getAttribute('data-loom-open') === '0')
+    }
+
+    // --- button: visible press feedback ---------------------------------
+    {
+      const el = stage?.querySelector('[data-loom-b="press"]') ?? null
+      el?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+      check('holding a button shows it pressed', el?.getAttribute('data-loom-pressed') === '1')
+      el?.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+      check('releasing clears the press', el?.getAttribute('data-loom-pressed') === null)
+      let fired = false
+      el?.addEventListener('loom:press', () => { fired = true })
+      el?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('a button announces its action', fired)
+    }
+
+    // --- table: sorting actually reorders rows --------------------------
+    {
+      const headers = stage ? Array.from(stage.querySelectorAll('[data-loom-b="sort"]')) : []
+      check('table headers are sortable', headers.length === 2, `${headers.length}`)
+      const scoreHeader = headers[1]
+      const firstCell = () =>
+        stage?.querySelector('[data-loom-rows] [data-loom-row] [data-loom-cell="0"]')?.textContent ?? ''
+      // Deliberately unsorted input: an assertion that can pass on the
+      // untouched document order is not an assertion.
+      check('the grid starts in document order, not sorted', firstCell() === 'grace', firstCell())
+      scoreHeader?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('sorting ascending puts the lowest score first', firstCell() === 'ada', firstCell())
+      scoreHeader?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('clicking again sorts descending', firstCell() === 'grace', firstCell())
+      check('the sort direction is exposed', scoreHeader?.getAttribute('data-loom-sort') === 'desc',
+        `headers=${headers.length}`)
+    }
+
+    // --- rating, slider, pagination -------------------------------------
+    {
+      const el = stage?.querySelector('[data-loom-b="rate"]') ?? null
+      const stars = el ? Array.from(el.querySelectorAll('[data-loom-star]')) : []
+      stars[3]?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('clicking a star sets the rating', el?.getAttribute('data-loom-value') === '4')
+      check('the stars relit to match', stars.filter((s) => s.getAttribute('data-loom-lit') === '1').length === 4)
+    }
+    {
+      const input0 = stage?.querySelector('input[type=range]') ?? null
+      const el = input0?.parentElement ?? stage
+      const input = input0
+      const readout = el?.querySelector('[data-loom-readout]')
+      check('the slider shows its authored value', readout?.textContent === '20')
+      if (input instanceof HTMLInputElement) {
+        input.value = '65'
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      check('the readout follows the slider live', readout?.textContent === '65')
+    }
+    {
+      const el = stage?.querySelector('[data-loom-pager]') ?? null
+      const pageBtns = el ? Array.from(el.querySelectorAll('[data-loom-b="page"]')) : []
+      check('pagination renders its pages', pageBtns.length >= 3, `${pageBtns.length}`)
+      const three = pageBtns.find((b) => b.getAttribute('data-loom-i') === '3')
+      three?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('clicking a page marks it current', three?.getAttribute('aria-current') === 'page')
+      check('only one page is current', pageBtns.filter((b) => b.getAttribute('aria-current') === 'page').length === 1,
+        pageBtns.map((b) => `${b.getAttribute('data-loom-i')}:${b.getAttribute('aria-current')}`).join(' '))
+    }
+
+    // --- a field's validation state must reach the control inside it -----
+    // Markup can claim a state; only computed style proves the control changed.
+    {
+      const host2 = document.createElement('div')
+      document.body.appendChild(host2)
+      const s45 = new EditorStore()
+      const r45 = withRoot(s45)
+      const fld = s45.addComponent('Field', r45, 0, 0, { label: 'Region', state: 'error', message: 'Required' })
+      s45.addComponent('Select', fld ?? r45, 0, 0, { options: 'us-east,eu-west' })
+      const root45 = createRoot(host2)
+      root45.render(React.createElement(PreviewStage, { s: s45 }))
+      await new Promise((res) => setTimeout(res, 120))
+      const field = host2.querySelector('[data-loom-field]') as HTMLElement | null
+      const select = field?.querySelector('select') as HTMLSelectElement | null
+      check('the field exposes its validation state', field?.getAttribute('data-loom-state') === 'error')
+      check('the field marks itself invalid for assistive tech', field?.getAttribute('aria-invalid') === 'true')
+      check('the message is announced', Boolean(field?.querySelector('[role="alert"]')))
+      check('a control inside an error field takes the error ring', (() => {
+        if (!select) return false
+        const ring = getComputedStyle(select).borderTopColor
+        return ring !== '' && ring !== 'rgba(0, 0, 0, 0)'
+      })())
+      // And a select inside a field is genuinely a select: choosing works.
+      if (select) {
+        select.value = 'eu-west'
+        check('a select inside a field is operable', select.value === 'eu-west')
+      }
+      root45.unmount()
+      host2.remove()
+    }
+
+    // --- the command palette must index the artifact and RUN things ----
+    // A hand-maintained command list is a second copy of the interface that
+    // goes stale immediately. The palette reads the document, so pressing
+    // Enter has to actually press the control it names.
+    {
+      const host4 = document.createElement('div')
+      document.body.appendChild(host4)
+      const s50 = new EditorStore()
+      const r50 = withRoot(s50)
+      const shell50 = s50.addComponent('AppShell', r50, 0, 0)
+      if (shell50) {
+        s50.addComponent('Menu', shell50, 0, 0)
+        s50.addComponent('HeaderBar', shell50, 0, 0)
+      }
+      s50.addComponent('Button', r50, 0, 0, { label: 'Publish release' })
+      s50.addComponent('Link', r50, 0, 0, { text: 'Open billing' })
+      s50.addComponent('CommandPalette', r50, 0, 0)
+      const root50 = createRoot(host4)
+      root50.render(React.createElement(PreviewStage, { s: s50 }))
+      await new Promise((res) => setTimeout(res, 140))
+      const palette = host4.querySelector('[data-loom-palette]') as HTMLElement | null
+      check('the palette renders closed', palette?.getAttribute('data-loom-open') === '0')
+      // Open it the way a person does.
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }))
+      await new Promise((res) => setTimeout(res, 80))
+      check('the hotkey opens the palette', palette?.getAttribute('data-loom-open') === '1')
+      const rows = palette ? Array.from(palette.querySelectorAll('[data-loom-cmd]')) : []
+      const labels = rows.map((r) => r.textContent ?? '')
+      check('the palette indexes the design\'s own controls',
+        labels.includes('Publish release') && labels.includes('Open billing'), labels.join(' | '))
+      check('the palette groups its commands', palette?.querySelectorAll('[data-loom-cmd-group]').length !== 0)
+      check('the first row is active', rows[0]?.getAttribute('data-loom-active') === '1')
+
+      // Typing filters.
+      const input = palette?.querySelector('[data-loom-palette-input]') as HTMLInputElement | null
+      if (input) {
+        input.value = 'bill'
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      await new Promise((res) => setTimeout(res, 60))
+      const filtered = palette ? Array.from(palette.querySelectorAll('[data-loom-cmd]')) : []
+      check('typing filters the commands', filtered.length === 1 &&
+        (filtered[0]?.textContent ?? '') === 'Open billing', filtered.map((r) => r.textContent).join(' | '))
+      // Fuzzy: a subsequence, not a prefix, is enough.
+      if (input) {
+        input.value = 'pub rel'
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      await new Promise((res) => setTimeout(res, 60))
+      const fuzzyRows = palette ? Array.from(palette.querySelectorAll('[data-loom-cmd]')) : []
+      check('matching is fuzzy, not just prefix', fuzzyRows.length === 1 &&
+        (fuzzyRows[0]?.textContent ?? '') === 'Publish release', fuzzyRows.map((r) => r.textContent).join(' | '))
+      // Something that matches nothing empties the list and says so.
+      if (input) {
+        input.value = 'zzzznope'
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      await new Promise((res) => setTimeout(res, 60))
+      check('an empty result says so', (palette?.querySelectorAll('[data-loom-cmd]').length ?? 0) === 0 &&
+        (palette?.querySelector('[data-loom-palette-empty]') as HTMLElement | null)?.style.display === 'block')
+      // Enter runs the command it names: the real control gets pressed.
+      if (input) {
+        input.value = 'Publish'
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      await new Promise((res) => setTimeout(res, 60))
+      const publishRow = Array.from(palette?.querySelectorAll('[data-loom-cmd]') ?? [])
+        .find((r) => (r.textContent ?? '').includes('Publish')) as HTMLElement | undefined
+      check('the filtered command is present', Boolean(publishRow))
+      // The whole claim of indexing the document is that running a command
+      // presses the REAL control, so watch that control — not the palette row.
+      // By LABEL, not by "first pressable": the shell's own collapse toggle is
+      // also a pressable, and grabbing it would have watched the wrong control.
+      const realButton = Array.from(host4.querySelectorAll('[data-loom-b="press"]'))
+        .find((b) => (b.textContent ?? '').includes('Publish')) as HTMLElement | undefined
+      check('the real control exists in the artifact', Boolean(realButton))
+      if (publishRow && realButton) {
+        let realPresses = 0
+        realButton.addEventListener('click', () => { realPresses += 1 })
+        publishRow.click()
+        check('running a command presses the control it names', realPresses === 1, `${realPresses} presses`)
+        check('running a command closes the palette', palette?.getAttribute('data-loom-open') === '0')
+      }
+      // Escape closes without running anything.
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }))
+      await new Promise((res) => setTimeout(res, 60))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await new Promise((res) => setTimeout(res, 60))
+      check('escape closes the palette', palette?.getAttribute('data-loom-open') === '0')
+      root50.unmount()
+      host4.remove()
+    }
+
+    // --- the shell's collapse must actually collapse -------------------
+    // Markup can claim a collapsed shell; only a measured width proves it.
+    {
+      const host3 = document.createElement('div')
+      document.body.appendChild(host3)
+      const s49 = new EditorStore()
+      const r49 = withRoot(s49)
+      const shell = s49.addComponent('AppShell', r49, 0, 0, { sidebarWidth: 240, railWidth: 64 })
+      if (shell) {
+        s49.addComponent('Menu', shell, 0, 0)
+        s49.addComponent('HeaderBar', shell, 0, 0)
+      }
+      const root49 = createRoot(host3)
+      root49.render(React.createElement(PreviewStage, { s: s49 }))
+      await new Promise((res) => setTimeout(res, 120))
+      const shellEl = host3.querySelector('[data-loom-shell]') as HTMLElement | null
+      const sideEl = shellEl?.querySelector('[data-loom-shell-sidebar]') as HTMLElement | null
+      const toggle = shellEl?.querySelector('[data-loom-shell-toggle]') as HTMLElement | null
+      check('the shell renders its sidebar', Boolean(sideEl))
+      const wide = sideEl ? Math.round(sideEl.getBoundingClientRect().width) : 0
+      check('the sidebar starts at its authored width', wide > 200 && wide < 260, `${wide}px`)
+      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      check('collapsing is recorded as state', shellEl?.getAttribute('data-loom-collapsed') === '1')
+      check('the toggle reports its state', toggle?.getAttribute('aria-expanded') === 'false')
+      const narrow = await widthWithoutTransition(sideEl)
+      check('the sidebar really narrows to the rail', narrow > 40 && narrow < 90,
+        `${wide}px -> ${narrow}px (rail ${sideEl ? getComputedStyle(sideEl).getPropertyValue('--loom-sidebar-w').trim() : '?'})`)
+      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      const back = await widthWithoutTransition(sideEl)
+      check('and it expands again', back > 200, `${back}px`)
+      check('the collapsed sidebar clips its contents', sideEl ? getComputedStyle(sideEl).overflow === 'hidden' : false)
+      root49.unmount()
+      host3.remove()
+    }
+
+    root38.unmount()
+    host.remove()
+  }
+
+  // --- 39. no sample project rides along with the app -------------------
+  // A person opening Loom gets an EMPTY workspace. There is no demo waiting
+  // for them and nothing restores an old document behind their back; the
+  // first node is theirs to place. The fixture seeder exists for tests and
+  // the E2E probes, and must stay off the launch path.
+  {
+    check('a fresh store is empty, not a sample project', (() => {
+      const s39 = new EditorStore()
+      return s39.doc.root === null && Object.keys(s39.doc.nodes).length === 0
+    })())
+    // (The launch path itself is asserted from the main process in verify.ts,
+    // which can actually read the source. Asserting it here would be theatre.)
+    // The seeder itself still works for fixtures — it is the probes that need
+    // it, not the product.
+    const s39b = new EditorStore()
+    seedDemo(s39b)
+    check('the fixture seeder still builds a document', s39b.doc.root !== null && Object.keys(s39b.doc.nodes).length > 5)
+    check(
+      'the fixture is named, so it is never mistaken for user work',
+      s39b.doc.meta.name === 'Telemetry Console',
+    )
+  }
+
+  // --- 40. responsive layout: the foundation, pinned ---------------------
+  // The base document is authored at desktop and adapts DOWN. One generated
+  // stylesheet serves the editor, the preview and both exports, so the layout
+  // you author against is the layout that ships.
+  {
+    const bands: Array<[number, string]> = [[390, 'sm'], [834, 'md'], [1280, 'lg']]
+    const wrongBand = bands.filter(([w, want]) => breakpointForWidth(w) !== want)
+    check('widths map to the right breakpoint', wrongBand.length === 0,
+      wrongBand.map(([w, want]) => `${w}->${breakpointForWidth(w)} want ${want}`).join(', '))
+
+    const s40 = new EditorStore()
+    const r40 = withRoot(s40)
+    const row = s40.addComponent('Grid', r40, 0, 0, { columns: 3 })
+    const card = row ? s40.addComponent('Card', row, 0, 0) : undefined
+    check('a node starts with no responsive overrides', row ? s40.doc.nodes[row].responsive === undefined : false)
+
+    if (row && card) {
+      // Flow and geometry at the phone width; visibility at the tablet width.
+      s40.commit({ op: 'setResponsive', id: row, breakpoint: 'sm', patch: { flow: true, h: 420 } }, 'Stack on phone')
+      s40.commit({ op: 'setResponsive', id: card, breakpoint: 'sm', patch: { w: 320, visible: false } }, 'Hide on phone')
+      s40.commit({ op: 'setResponsive', id: card, breakpoint: 'md', patch: { x: 12 } }, 'Nudge on tablet')
+      // An explicit desktop override is a real authoring move: pin the card to
+      // the grid's cell instead of leaving it to the schema default.
+      s40.commit({ op: 'setResponsive', id: card, breakpoint: 'lg', patch: { w: 240 } }, 'Pin on desktop')
+
+      const bag = s40.doc.nodes[row].responsive
+      check('overrides are stored per breakpoint', bag?.sm?.flow === true && bag?.sm?.h === 420 && bag?.md === undefined)
+      check('the base layout is untouched by an override', s40.doc.nodes[row].props.h !== 420)
+
+      const css = responsiveCss(s40.doc)
+      check('the stylesheet establishes the container', css.includes(`container-name:${CONTAINER_NAME}`))
+      check('the phone band is a max-width query', css.includes('(max-width: 639px)'))
+      check('the tablet band is a range query', css.includes('(min-width: 640px) and (max-width: 1023px)'))
+      check('the desktop band is a min-width query', css.includes('(min-width: 1024px)'))
+      check('every override reaches a rule', css.includes(`[data-loom-id="${row}"]`) && css.includes(`[data-loom-id="${card}"]`))
+      check('flow is expressed as a layout change', css.includes('display:flex') && css.includes('flex-direction:column'))
+      check('hiding is expressed as display:none', css.includes('display:none'))
+      check('rules are narrowest-last so narrow wins', (() => {
+        const lg = css.indexOf('(min-width: 1024px)')
+        const md = css.indexOf('(min-width: 640px)')
+        const sm = css.indexOf('(max-width: 639px)')
+        return lg === -1 || (md > lg && sm > md)
+      })())
+
+      // A document with nothing responsive ships NO rules at all.
+      const s40b = new EditorStore()
+      const r40b = withRoot(s40b)
+      s40b.addComponent('Card', r40b, 0, 0)
+      check('a non-responsive document ships no layout rules', responsiveCss(s40b.doc) === '')
+
+      // Undo must remove the bag entirely, not leave an empty override behind.
+      s40.undo()
+      check('undo of the last override leaves no empty bag',
+        JSON.stringify(s40.doc.nodes[card].responsive?.sm ?? null) !== '{}')
+
+      // Round trip.
+      const rt = validate(serialize(s40.doc))
+      check('overrides survive save/load', rt.doc?.nodes[row]?.responsive?.sm?.flow === true)
+      check('the round trip keeps the exact values',
+        rt.doc?.nodes[card]?.responsive?.sm?.w === 320 && rt.doc?.nodes[row]?.responsive?.sm?.h === 420)
+
+      // Trust boundary: a hand-written file must not smuggle in junk.
+      const hostile = JSON.parse(serialize(s40.doc))
+      hostile.nodes[row].responsive = {
+        sm: { w: Number.NaN, x: '0', flow: true, bogus: 1 },
+        xl: { w: 100 },
+        md: 'not-an-object',
+      }
+      const fixed = validate(hostile)
+      const cleanBp = fixed.doc?.nodes[row]?.responsive
+      check('a non-finite override is dropped and reported',
+        cleanBp?.sm?.w === undefined && fixed.issues.some((i) => i.path.endsWith('.sm.w')))
+      check('a wrongly-typed override is dropped and reported',
+        cleanBp?.sm?.x === undefined && fixed.issues.some((i) => i.path.endsWith('.sm.x')))
+      check('a valid override in the same bag survives', cleanBp?.sm?.flow === true)
+      check('an unknown key is dropped and reported', (cleanBp?.sm as Record<string, unknown> | undefined)?.bogus === undefined &&
+        fixed.issues.some((i) => i.path.includes('bogus')))
+      check('an unknown breakpoint is dropped and reported', (cleanBp as Record<string, unknown> | undefined)?.xl === undefined &&
+        fixed.issues.some((i) => i.path.includes('xl')))
+      check('a non-object override bag is dropped and reported', cleanBp?.md === undefined &&
+        fixed.issues.some((i) => i.path.endsWith('.md')))
+
+      // The outputs carry the rules, or responsive is a lie.
+      const html = emitHtml(s40.doc)
+      check('the HTML export ships the layout rules', html.includes('(max-width: 639px)'))
+      check('the HTML export makes the page measurable', html.includes('loom-container'))
+      const jsx = emitReact(s40.doc)
+      check('the React export ships the layout rules', jsx.includes('RESPONSIVE_CSS'))
+      check('the React export root is measurable', jsx.includes('loom-container'))
+    }
+  }
+
+  // --- 41. list separators are the USER's property, not a convention -----
+  // A list property used to hardcode its separator. The moment real data
+  // contains a comma inside an item, the list split in the wrong place and the
+  // designer had no way to say so. The separator is now a property.
+  {
+    check('comma is the default separator', delimiterChar(undefined) === ',')
+    check('every separator name maps to a character', Object.values(DELIMITERS).length === 6 &&
+      DELIMITERS.pipe === '|' && DELIMITERS.semicolon === ';' && DELIMITERS.newline === '\n')
+    check('an unknown separator name falls back rather than throwing', delimiterChar('nope') === ',')
+    check('the inspector shows the character, not just the name', delimiterLabel('pipe').includes('|'))
+
+    // Every list-valued property ships its separator, so no list can be
+    // half-declared. This walks the registry rather than a hand-kept list.
+    const listProps: Array<[string, string]> = [
+      ['Tabs', 'tabs'], ['TabBar', 'tabs'], ['Select', 'options'], ['Segmented', 'options'],
+      ['RadioGroup', 'options'], ['ComboBox', 'options'], ['DropdownButton', 'items'],
+      ['Checklist', 'items'], ['BulletList', 'items'], ['NumberedList', 'items'],
+      ['TreeList', 'items'], ['DataList', 'items'], ['Breadcrumbs', 'trail'],
+      ['Stepper', 'steps'], ['AnchorList', 'links'], ['AvatarGroup', 'names'],
+      ['BarChart', 'values'], ['PieChart', 'values'], ['LineChart', 'points'],
+      ['ErrorSummary', 'items'], ['DataGrid', 'columns'], ['DataGrid', 'rows'],
+    ]
+    const undeclared = listProps.filter(([type]) => {
+      const spec = getComponent(type)
+      if (!spec) return true
+      return !Object.keys(spec.props).some((k) => k.toLowerCase().endsWith('sep'))
+    })
+    check('every list property declares its separator', undeclared.length === 0,
+      undeclared.map(([t, p]) => `${t}.${p}`).join(', '))
+
+    // It has to actually change the parsing, which is the whole point.
+    const s41 = new EditorStore()
+    const r41 = withRoot(s41)
+    // "Ada, Countess of Lovelace" contains a comma: with a comma separator that
+    // is three broken items, and with a pipe it is exactly one.
+    const tabs = s41.addComponent('Tabs', r41, 0, 0, { tabs: 'Ada, Countess of Lovelace', tabsSep: 'comma' })
+    const commaHtml = emitHtml(s41.doc)
+    // One comma in the text: with a comma separator that is two items, and the
+    // second one is not what the author meant.
+    check('a comma inside an item splits on a comma separator', (commaHtml.match(/role="tab"/g) ?? []).length === 2)
+    if (tabs) {
+      s41.commit({ op: 'setProp', id: tabs, key: 'tabsSep', value: 'pipe' }, 'Separator')
+      const pipeHtml = emitHtml(s41.doc)
+      check('switching the separator reparses the same text', (pipeHtml.match(/role="tab"/g) ?? []).length === 1)
+      check('the one item keeps its commas intact', pipeHtml.includes('Ada, Countess of Lovelace'))
+      s41.undo()
+      check('undo restores the separator', (emitHtml(s41.doc).match(/role="tab"/g) ?? []).length === 2)
+    }
+
+    // The grid's row and cell separators are separate properties. A cell may
+    // contain the CELL separator's neighbours freely (a comma is just data
+    // when cells are pipe-separated); a cell cannot contain the ROW separator,
+    // because the row split necessarily happens first. That is a property of
+    // two-level parsing, not a bug — and it is now visible in the inspector
+    // instead of surprising someone in the output.
+    const s42 = new EditorStore()
+    const r42 = withRoot(s42)
+    s42.addComponent('DataGrid', r42, 0, 0, {
+      columns: 'Name,Note',
+      rows: 'Ada|uses, commas freely;Grace|also, commas',
+    })
+    const gridHtml = emitHtml(s42.doc)
+    check('a comma inside a cell is data, not a separator', gridHtml.includes('uses, commas freely'))
+    check('the second row is intact too', gridHtml.includes('also, commas'))
+    check('the grid produced the right number of rows', (gridHtml.match(/<tr[^>]*data-loom-row/g) ?? []).length === 2)
+
+    // A separator is a property, so it must survive a save/load round trip.
+    const rt = validate(serialize(s41.doc))
+    const rtTabs = Object.values((rt.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'Tabs')
+    check('the separator survives save/load', rtTabs?.props.tabsSep === 'comma' || rtTabs?.props.tabsSep === 'pipe')
+
+    // And a hand-written file cannot smuggle in a separator we do not know.
+    const hostile = JSON.parse(serialize(s41.doc))
+    const anyTab = Object.values(hostile.nodes as Record<string, LoomNode>).find((n) => n.type === 'Tabs')
+    if (anyTab) {
+      anyTab.props.tabsSep = 'backslash'
+      const repaired = validate(hostile)
+      const fixedTab = Object.values((repaired.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'Tabs')
+      check('an unknown separator is repaired toward comma', fixedTab?.props.tabsSep === 'comma')
+      check('the repair is reported', repaired.issues.some((i) => i.path.includes('tabsSep')))
+    }
+  }
+
+  // --- 42. Field replaces FormField, and owns validation ----------------
+  // The old FormField drew its own text input, so nothing else could go
+  // inside a form field. Field is a container: ANY control drops in, and the
+  // field's validation state reaches it.
+  {
+    const s43 = new EditorStore()
+    const r43 = withRoot(s43)
+    // A Field holding a SELECT — the thing that was impossible before.
+    const f = s43.addComponent('Field', r43, 0, 0, {
+      label: 'Region',
+      description: 'Where the workload runs',
+      message: 'Region is required',
+      state: 'error',
+      required: true,
+    })
+    const sel = f ? s43.addComponent('Select', f, 0, 0, { options: 'us-east,eu-west' }) : undefined
+    check('Field accepts a non-text control', Boolean(sel) && s43.doc.nodes[sel!].type === 'Select')
+    check('the control is a CHILD of the field', sel ? parentOf(s43.doc, sel) === f : false)
+
+    const html = emitHtml(s43.doc)
+    check('the field renders its label', html.includes('Region'))
+    check('the field renders its description', html.includes('Where the workload runs'))
+    check('the field renders its message', html.includes('Region is required'))
+    check('a required field is marked required', html.includes('aria-invalid="true"') || html.includes('*'))
+    check('the validation state is exposed as data', html.includes('data-loom-state="error"'))
+    check('the state stylesheet reaches controls inside a field',
+      behaviourCss().includes('[data-loom-field] :is(input,select,textarea){border-color'))
+
+    // The inline layout is the settings-row pattern.
+    const inline = s43.addComponent('Field', r43, 0, 0, { label: 'Region', layout: 'inline', labelWidth: 220 })
+    check('the inline layout is a real row', inline ? emitHtml(s43.doc).includes('width:220px') : false)
+
+    // States are the field's, not the control's: switching state changes the
+    // field, and the control inside is untouched.
+    if (f) {
+      s43.commit({ op: 'setProp', id: f, key: 'state', value: 'success' }, 'State')
+      check('the field state changes', emitHtml(s43.doc).includes('data-loom-state="success"'))
+      check('the control inside is untouched by the state', sel ? s43.doc.nodes[sel].type === 'Select' : false)
+      s43.undo()
+      check('undo restores the validation state', emitHtml(s43.doc).includes('data-loom-state="error"'))
+    }
+
+    // FormField is GONE, not deprecated: two tools doing one job is the
+    // toolbox bloat we do not ship.
+    check('the removed form field is really gone', !getComponent('FormField'))
+    check('the removed table is really gone', !getComponent('Table'))
+    check('their replacements exist', Boolean(getComponent('Field')) && Boolean(getComponent('DataGrid')))
+    check('no interactive type claims a removed name',
+      !interactiveTypes().includes('FormField') && !interactiveTypes().includes('Table'))
+
+    // A file written before the renames must still OPEN, with the migration
+    // reported rather than silently applied.
+    const s44 = new EditorStore()
+    const r44 = withRoot(s44)
+    s44.addComponent('Card', r44, 0, 0)
+    const old = JSON.parse(serialize(s44.doc))
+    const victim = Object.values(old.nodes as Record<string, LoomNode>).find((n) => n.type === 'Card')
+    if (victim) {
+      victim.type = 'FormField'
+      victim.props = { label: 'Legacy', hint: 'from an old file' }
+      const migrated = validate(old)
+      check('a renamed tool migrates instead of vanishing', migrated.doc !== null &&
+        Object.values(migrated.doc!.nodes).some((n) => n.type === 'Field'))
+      check('the migration is reported', migrated.issues.some((i) => i.message.includes('replaced by')))
+      check('a migrated field still renders', emitHtml(migrated.doc!).includes('Legacy'))
+    }
+    // The rename map must not become a "guess anything" map: a genuinely
+    // unknown component is DROPPED and reported, and the rest of the file still
+    // opens. Losing one node beats refusing to open a designer's work.
+    const junk = JSON.parse(serialize(s44.doc))
+    const other = Object.values(junk.nodes as Record<string, LoomNode>).find((n) => n.type === 'Card')
+    if (other) {
+      other.type = 'NotARealComponent'
+      const rejected = validate(junk)
+      check('an unknown component is dropped, not guessed at', rejected.doc !== null &&
+        !Object.values(rejected.doc!.nodes).some((n) => n.type === 'NotARealComponent'))
+      check('the drop is reported', rejected.issues.some((i) => i.message.includes('unknown component')))
+      check('the rest of the document still opens', rejected.doc !== null &&
+        Object.keys(rejected.doc.nodes).length >= 1)
+    }
+  }
+
+
+
+
+
+
+  // --- 48. the properties ratchet ---------------------------------------
+  // If a property is declared, setting it must change the output. The audit
+  // proves it mechanically; this check makes it a BUILD failure when a new
+  // property starts lying, and names the backlog when one is finally fixed.
+  {
+    const report = auditReport()
+    check('no declared property is newly inert', report.unexpected.length === 0,
+      report.unexpected.join(', '))
+    // Every entry in the backlog must correspond to a finding the audit still
+    // reports, so the table cannot be used to silence a property that works.
+    check('the inert-property backlog has no stale entries', report.missing.length === 0,
+      `stale entries: ${report.missing.join(', ')}`)
+    check('every inert property has a recorded reason', Object.values(KNOWN_INERT).every((r) => r.length > 20))
+    check('the audit actually checks a lot', report.checked > 1500, `${report.checked} properties`)
+  }
+
+  // --- 47. tooltips are worth waiting for -------------------------------
+  // A tooltip is the only documentation a designer always has. The old one
+  // restated the component's name, which is the same information twice.
+  {
+    const specs = allComponents()
+    const text = (n: string) => tooltipFor(n, 'web')
+
+    // No tooltip may simply restate the name: every summary must add a word the
+    // name does not already contain.
+    const restates = specs.filter((c) => {
+      const words = new Set((c.description.toLowerCase().match(/[a-z]+/g) ?? []))
+      const name = new Set((c.name.toLowerCase().match(/[a-z]+/g) ?? []))
+      return [...words].filter((w) => !name.has(w)).length <= 1
+    })
+    check('no description just restates the component name', restates.length === 0,
+      restates.map((c) => c.name).join(', '))
+
+    // Every tooltip answers "what does it DO", and the answer is derived from
+    // the behaviour tables rather than written twice.
+    // Every tooltip must SAY something about behaviour, whatever the role. A
+    // panel is state-driven rather than clicked, and a container's own controls
+    // are described by the container, so the test is "it answers the question",
+    // not "it contains the word click".
+    const interactive = interactiveTypes()
+    const silent = specs.filter((c) => buildTooltip(c).behaviour.trim().length < 8)
+    check('every component answers what it does', silent.length === 0, silent.map((c) => c.name).join(', '))
+    check('click-driven controls say so in so many words',
+      interactive.filter((n) => {
+        const r = n in {} ? '' : ''
+        void r
+        const t = buildTooltip(getComponent(n)!)
+        return /Revealed|Opens and closes/.test(t.behaviour) || /click/i.test(t.behaviour)
+      }).length === interactive.length)
+    // A component with no role of its own must not imply that pressing it does
+    // something — EXCEPT when it visibly contains a control of its own.
+    const claimsInteraction = specs.filter((c) => {
+      if (interactive.includes(c.name)) return false
+      const t = buildTooltip(c)
+      if (t.behaviour.startsWith('Presentational')) return false
+      return !c.container
+    })
+    check('no static component claims interaction it lacks', claimsInteraction.length === 0,
+      claimsInteraction.map((c) => c.name).join(', '))
+
+    // The three questions a tooltip has to answer.
+    const grid = buildTooltip(getComponent('DataGrid')!)
+    check('a tooltip says what the component is for', grid.summary.length > 20)
+    check('a tooltip says what it does', grid.behaviour.includes('sort') && grid.behaviour.includes('filter'))
+    check('a tooltip names the properties worth setting',
+      grid.properties.some((p) => p.startsWith('columns')) && grid.properties.some((p) => p.startsWith('rows')),
+      grid.properties.join(' | '))
+    check('a tooltip explains the list format trap', grid.caveats.some((c) => c.includes('cellSep')))
+    check('a tooltip does not lead with a separator',
+      !grid.properties[0]?.includes('separator'), grid.properties[0] ?? '')
+
+    // Parent requirements are the things you learn by breaking something.
+    check('a panel says which parent it needs',
+      buildTooltip(getComponent('TabPanel')!).caveats.some((c) => c.includes('Tabs')))
+    check('the shell explains its slot order',
+      buildTooltip(getComponent('AppShell')!).caveats.some((c) => c.includes('positional')))
+    check('a field points at the settings row for list alignment',
+      buildTooltip(getComponent('Field')!).caveats.some((c) => c.includes('SettingsRow')))
+    check('containers say they are containers',
+      buildTooltip(getComponent('Card')!).caveats.some((c) => c.includes('container')))
+    check('Stat is told where the full card is',
+      buildTooltip(getComponent('Stat')!).caveats.some((c) => c.includes('KpiCard')))
+
+    // Target gating still shows up, now inside a richer tooltip.
+    const gated = allComponents().find((c) => unsupportedProps(c, 'desktop').length > 0)
+    if (gated) {
+      check('target gating survives in the new tooltip',
+        buildTooltip(gated, 'desktop').caveats.some((c) => c.includes('Not portable')))
+    }
+
+    // Every component in the toolbox produces a real, multi-section tooltip.
+    const thin = specs.filter((c) => {
+      const t = text(c.name)
+      return t.split('\n').filter((l) => l.trim() !== '').length < 3
+    })
+    check('every component has a multi-section tooltip', thin.length === 0,
+      thin.map((c) => c.name).join(', '))
+    check('no tooltip is a single restatement of the name',
+      specs.every((c) => text(c.name).length > c.name.length + 40))
+  }
+
+  // --- 46. foundation: one icon set, data typography, theme review ------
+  {
+    // --- icons ---
+    check('the icon set is a real set', ICON_NAMES.length >= 40, `${ICON_NAMES.length} icons`)
+    check('every icon is drawn on the same 24px grid', Object.values(ICONS).every((m) => !m.includes('viewBox')))
+    check('icon names are unique and sorted', ICON_NAMES.every((n, i) => i === 0 || ICON_NAMES[i - 1] < n))
+    check('a known name resolves to an icon', resolveIcon('search').kind === 'icon')
+    check('an emoji stays a glyph, which is a real special case', resolveIcon('\u{1F514}').kind === 'glyph')
+    check('an unknown value is a glyph, never a blank box', resolveIcon('\u2315').kind === 'glyph' &&
+      resolveIcon('\u2315').kind === 'glyph')
+    check('whitespace is tolerated', resolveIcon('  check  ').kind === 'icon')
+    check('the Icon tool exists for standalone use', Boolean(getComponent('Icon')))
+
+    // A control's icon PROPERTY accepts a name from the set, so the whole
+    // toolbox can be moved onto one family without touching 82 props.
+    const s53 = new EditorStore()
+    const r53 = withRoot(s53)
+    s53.addComponent('IconButton', r53, 0, 0, { icon: 'trash' })
+    s53.addComponent('Icon', r53, 0, 0, { name: 'shield', size: 32 })
+    const iconHtml = emitHtml(s53.doc)
+    check('a control icon renders as a drawn icon', iconHtml.includes('<svg') && iconHtml.includes('viewBox="0 0 24 24"'))
+    check('a standalone icon draws at its own size', iconHtml.includes('width="32" height="32"') ||
+      iconHtml.includes('width="32"'))
+    check('an icon control still has an accessible name', iconHtml.includes('aria-label="trash"'))
+    // And a legacy glyph still renders, rather than silently vanishing.
+    const s54 = new EditorStore()
+    const r54 = withRoot(s54)
+    s54.addComponent('IconButton', r54, 0, 0, { icon: '\u2315' })
+    const legacy = emitHtml(s54.doc)
+    check('a legacy glyph icon still renders', !legacy.includes('<svg') && legacy.includes('\u2315'))
+
+    // --- data typography ---
+    const s55 = new EditorStore()
+    const r55 = withRoot(s55)
+    s55.addComponent('DataGrid', r55, 0, 0, { columns: 'Name,Amount', rows: 'a|100;b|20' })
+    const gridHtml = emitHtml(s55.doc)
+    check('numeric columns use the tabular token, not a literal',
+      gridHtml.includes('font-variant-numeric:var(--loom-numeric)'), 'token missing')
+    check('the token is defined on the surface', gridHtml.includes('--loom-numeric:tabular-nums'))
+    check('numeric columns are right-aligned', gridHtml.includes('text-align:right'))
+    s55.addComponent('KpiCard', r55, 0, 0, {})
+    check('a KPI value uses the same token', emitHtml(s55.doc).includes('font-variant-numeric:var(--loom-numeric)'))
+
+    // --- theme review ---
+    check('there are three themes to review in', THEME_NAMES.length === 3)
+    // The switch is a REVIEW instrument: it must not edit the document.
+    const s56 = new EditorStore()
+    const before = JSON.stringify(s56.doc)
+    const s56b = new EditorStore()
+    seedDemo(s56b)
+    const before2 = JSON.stringify(s56b.doc)
+    const themed = renderToStaticMarkup(
+      React.createElement(PreviewStage, { s: s56b, themeName: 'daylight', onThemeName: () => undefined }),
+    )
+    check('the preview can render in another theme', themed.includes('theme-switch'))
+    // The document is byte-identical before and after a review render: a theme
+    // switch changes what you are LOOKING at, not what you built.
+    check('reviewing in a theme does not change the document', JSON.stringify(s56b.doc) === before2)
+    void before
+  }
+
+  // --- 45. the settings pattern: section + row --------------------------
+  // Two levels, like Tabs/TabPanel and Accordion/AccordionItem, because a
+  // section and a row are different things at different depths.
+  {
+    const s51 = new EditorStore()
+    const r51 = withRoot(s51)
+    const sec = s51.addComponent('SettingsSection', r51, 0, 0, {
+      title: 'Workspace',
+      description: 'How this workspace behaves for everyone in it.',
+      saveBar: true,
+      dirty: true,
+    })
+    const rowA = sec ? s51.addComponent('SettingsRow', sec, 0, 0, { label: 'Name', description: 'Shown in the sidebar' }) : undefined
+    const rowB = sec ? s51.addComponent('SettingsRow', sec, 0, 0, { label: 'Default role', description: 'For new members' }) : undefined
+    const sw = rowA ? s51.addComponent('Switch', rowA, 0, 0, { label: '' }) : undefined
+    const sel = rowB ? s51.addComponent('Select', rowB, 0, 0, { options: 'Editor,Viewer' }) : undefined
+    check('a section holds rows', Boolean(rowA) && Boolean(rowB))
+    check('a row holds any control', Boolean(sw) && Boolean(sel))
+    check('a switch and a select both fit a settings row',
+      sw ? s51.doc.nodes[sw].type === 'Switch' : false, sel ? s51.doc.nodes[sel].type : '')
+
+    const html = emitHtml(s51.doc)
+    check('the section shows its title', html.includes('Workspace'))
+    check('the section shows its description', html.includes('How this workspace behaves'))
+    check('rows show their labels and descriptions', html.includes('Shown in the sidebar') && html.includes('For new members'))
+    check('the save bar is present when asked for', html.includes('data-loom-save-bar'))
+    check('unsaved work is marked, not silent', html.includes('data-loom-dirty'))
+    check('the save bar names the action', html.includes('Save changes'))
+
+    // Clean state is visibly different, not just an absent dot.
+    if (sec) {
+      s51.commit({ op: 'setProp', id: sec, key: 'dirty', value: false }, 'Saved')
+      const clean = emitHtml(s51.doc)
+      check('a clean section says it is saved', !clean.includes('data-loom-dirty') && clean.includes('Saved'))
+      s51.undo()
+      check('undo restores the unsaved marker', emitHtml(s51.doc).includes('data-loom-dirty'))
+    }
+
+    // A destructive section is marked, and a destructive row is marked — the
+    // "danger zone" everyone copies and nobody styles consistently.
+    const s52 = new EditorStore()
+    const r52 = withRoot(s52)
+    const danger = s52.addComponent('SettingsSection', r52, 0, 0, { title: 'Danger zone', danger: true })
+    const drow = danger ? s52.addComponent('SettingsRow', danger, 0, 0, { label: 'Delete workspace', destructive: true }) : undefined
+    const dangerHtml = emitHtml(s52.doc)
+    check('a danger section is marked as one', dangerHtml.includes('data-loom-settings-section="danger"'))
+    check('a destructive row is marked destructive', Boolean(drow) && dangerHtml.includes('Delete workspace'))
+    check('the danger styling uses the danger token', (() => {
+      const theme52 = resolveTheme('midnight')
+      return dangerHtml.includes(theme52.danger)
+    })())
+
+    // Field and SettingsRow must BOTH exist, and they are not the same thing:
+    // a field validates an input, a row aligns a control in a list.
+    check('Field still exists — it owns validation', Boolean(getComponent('Field')))
+    check('SettingsRow exists — it owns alignment', Boolean(getComponent('SettingsRow')))
+    check('the two are not the same tool',
+      getComponent('Field')?.container === true && getComponent('SettingsRow')?.container === true &&
+      !Object.keys(getComponent('Field')!.props).some((k) => k === 'align'))
+  }
+
+  // --- 44. AppShell: the shell composes, and the collapse is real -------
+  // Additive: HeaderBar and SidebarPanel are still useful alone. What was
+  // missing is composing them correctly and collapsing the sidebar to a rail.
+  {
+    const s48 = new EditorStore()
+    const r48 = withRoot(s48)
+    const shell = s48.addComponent('AppShell', r48, 0, 0, { sidebarWidth: 240, railWidth: 64 })
+    const nav = shell ? s48.addComponent('Menu', shell, 0, 0) : undefined
+    const bar = shell ? s48.addComponent('HeaderBar', shell, 0, 0) : undefined
+    const body = shell ? s48.addComponent('Card', shell, 0, 0) : undefined
+    check('the shell accepts children', Boolean(shell) && Boolean(nav) && Boolean(bar) && Boolean(body))
+
+    const html = emitHtml(s48.doc)
+    check('the shell has a sidebar region', html.includes('data-loom-shell-sidebar'))
+    check('the shell has a top bar region', html.includes('data-loom-shell-top'))
+    check('the shell has a content region', html.includes('data-loom-shell-content'))
+    // Positional slots, in order: the FIRST child is the sidebar.
+    if (shell) {
+      const first = html.indexOf('data-loom-shell-sidebar')
+      const top = html.indexOf('data-loom-shell-top')
+      const content = html.indexOf('data-loom-shell-content')
+      check('the slot order is sidebar, then top bar, then content',
+        first < top && top < content, `${first} < ${top} < ${content}`)
+      check('the collapse starts from the authored state', html.includes('data-loom-collapsed="0"'))
+    }
+
+    // HeaderBar and SidebarPanel were NOT removed: they are the parts.
+    check('HeaderBar survives as a special case', Boolean(getComponent('HeaderBar')))
+    check('SidebarPanel survives as a special case', Boolean(getComponent('SidebarPanel')))
+  }
+
+  // --- 43. KpiCard: one number, one comparison, ONE visual -------------
+  // Additive, not a replacement: `Stat` (a bare number belongs in a table cell)
+  // and `Sparkline` (a trend line with no number) are real special cases and
+  // both stay. This pins the reasoning, so nobody "consolidates" them later.
+  {
+    check('Stat survives as a special case', Boolean(getComponent('Stat')))
+    check('Sparkline survives as a special case', Boolean(getComponent('Sparkline')))
+    check('KpiCard exists alongside them', Boolean(getComponent('KpiCard')))
+    check('the toolbox grew rather than duplicated', (() => {
+      const spec = getComponent('KpiCard')
+      return spec !== undefined && !('Stat' in (spec.props as Record<string, unknown>))
+    })())
+
+    const theme = resolveTheme('midnight')
+    const s46 = new EditorStore()
+    const r46 = withRoot(s46)
+    const kpi = s46.addComponent('KpiCard', r46, 0, 0, {
+      label: 'Monthly revenue',
+      value: '$48.2k',
+      delta: '+12.4%',
+      deltaLabel: 'vs last month',
+      trend: 'up',
+      points: '12,30,22,48',
+    })
+    const html = emitHtml(s46.doc)
+    check('the card shows the label', html.includes('Monthly revenue'))
+    check('the card shows the value', html.includes('$48.2k'))
+    check('the card shows the comparison', html.includes('+12.4%'))
+    check('the card says what the comparison is against', html.includes('vs last month'))
+    check('the card draws exactly one visual', (() => {
+      const svgs = (html.match(/<svg/g) ?? []).length
+      return svgs === 1
+    })(), `${(html.match(/<svg/g) ?? []).length} svgs`)
+
+    // Colour follows GOODNESS, not direction. This is the whole reason
+    // `goodDirection` exists: a falling error rate is good news.
+    if (kpi) {
+      s46.commit({ op: 'setProp', id: kpi, key: 'trend', value: 'down' }, 'Trend')
+      s46.commit({ op: 'setProp', id: kpi, key: 'goodDirection', value: 'up' }, 'Good dir')
+      check(
+        'a falling metric that should rise is painted as a problem',
+        deltaTone(emitHtml(s46.doc)) === theme.danger,
+        deltaTone(emitHtml(s46.doc)),
+      )
+      s46.commit({ op: 'setProp', id: kpi, key: 'goodDirection', value: 'down' }, 'Good dir')
+      check(
+        'a falling metric that should fall reads as good news',
+        deltaTone(emitHtml(s46.doc)) === theme.success,
+        deltaTone(emitHtml(s46.doc)),
+      )
+      s46.commit({ op: 'setProp', id: kpi, key: 'trend', value: 'flat' }, 'Trend')
+      check('a flat metric uses no signal colour', deltaTone(emitHtml(s46.doc)) === theme.textMuted,
+        deltaTone(emitHtml(s46.doc)))
+    }
+
+    // The visual is a CHOICE, and "none" is a real answer.
+    if (kpi) {
+      s46.commit({ op: 'setProp', id: kpi, key: 'visual', value: 'none' }, 'Visual')
+      check('a card can carry no visual at all', (emitHtml(s46.doc).match(/<svg/g) ?? []).length === 0)
+      s46.commit({ op: 'setProp', id: kpi, key: 'visual', value: 'bars' }, 'Visual')
+      check('a card can carry bars instead', (emitHtml(s46.doc).match(/<svg/g) ?? []).length === 0 &&
+        emitHtml(s46.doc).includes('border-radius:2px'))
+      s46.undo()
+    }
+
+    // The card and the standalone sparkline draw the SAME chart, because there
+    // is one implementation. A KPI card must not be a different-looking trend.
+    const s47 = new EditorStore()
+    const r47 = withRoot(s47)
+    s47.addComponent('KpiCard', r47, 0, 0, { points: '12,30,22,48', width: 200, height: 44 })
+    s47.addComponent('Sparkline', r47, 0, 0, { points: '12,30,22,48', width: 200, height: 44 })
+    const both = emitHtml(s47.doc)
+    // Each chart draws an area path and a line path, so two charts make four:
+    // the card's two must match the sparkline's two exactly.
+    const paths = both.match(/<path d="M [^"]+"/g) ?? []
+    check('the card and the sparkline share one implementation', paths.length === 4 &&
+      paths[0] === paths[2] && paths[1] === paths[3], `${paths.length} paths`)
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

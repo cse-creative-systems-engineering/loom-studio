@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('loomHost', {
    */
   save: (name: string, contents: string) => ipcRenderer.invoke('doc:save', name, contents),
   exportHtml: (name: string, contents: string) => ipcRenderer.invoke('doc:export-html', name, contents),
+  exportReact: (name: string, contents: string) => ipcRenderer.invoke('doc:export-react', name, contents),
   open: () => ipcRenderer.invoke('doc:open'),
   autosave: (name: string, contents: string) =>
     ipcRenderer.invoke('doc:write-recent', name, contents),

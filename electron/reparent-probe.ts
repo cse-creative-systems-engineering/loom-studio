@@ -12,14 +12,14 @@ import type { Document, Op } from '../src/model/types'
 
 function mk(kids: string[], extra: Record<string, string[]> = {}): Document {
   const nodes: Document['nodes'] = {
-    r: { id: 'r', type: 'Panel', props: {}, children: kids, flow: true, visible: true, locked: false },
-    a: { id: 'a', type: 'Label', props: {}, children: [], flow: false, visible: true, locked: false },
-    b: { id: 'b', type: 'Label', props: {}, children: [], flow: false, visible: true, locked: false },
-    c: { id: 'c', type: 'Label', props: {}, children: [], flow: false, visible: true, locked: false },
-    p1: { id: 'p1', type: 'Panel', props: {}, children: [], flow: true, visible: true, locked: false },
+    r: { id: 'r', type: 'Panel', props: {}, children: kids, flow: true, visible: true, locked: false, opacity: 1 },
+    a: { id: 'a', type: 'Label', props: {}, children: [], flow: false, visible: true, locked: false, opacity: 1 },
+    b: { id: 'b', type: 'Label', props: {}, children: [], flow: false, visible: true, locked: false, opacity: 1 },
+    c: { id: 'c', type: 'Label', props: {}, children: [], flow: false, visible: true, locked: false, opacity: 1 },
+    p1: { id: 'p1', type: 'Panel', props: {}, children: [], flow: true, visible: true, locked: false, opacity: 1 },
   }
   for (const [id, cs] of Object.entries(extra)) {
-    nodes[id] = { id, type: 'Panel', props: {}, children: cs, flow: true, visible: true, locked: false }
+    nodes[id] = { id, type: 'Panel', props: {}, children: cs, flow: true, visible: true, locked: false, opacity: 1 }
   }
   return { version: 1, meta: { name: 't', targets: ['web'], created: 0 }, root: 'r', nodes }
 }

@@ -45,7 +45,9 @@ function createWindow() {
   if (devUrl) {
     void win.loadURL(devUrl)
   } else {
-    // LOOM_DEMO=1 seeds a representative scene so the canvas is never empty.
+    // LOOM_DEMO=1 is a TEST HOOK for the E2E probes, not a product setting: a
+    // person launching Loom normally gets an empty workspace and places their
+    // own first node. Nothing here ever seeds a document on its own.
     const demo = process.env.LOOM_DEMO === '1'
     void win.loadFile(
       path.join(here, '../renderer/index.html'),
@@ -103,6 +105,11 @@ function openPreview(doc: unknown) {
     minHeight: 240,
     backgroundColor: '#0a0c11',
     show: false,
+    // Frameless: the preview IS the built UI, with no OS chrome and no
+    // in-window header. A floating pill (drag region) carries zoom/pin/close
+    // so the window stays movable; the title remains for task switchers and
+    // test harnesses that find the window by name.
+    frame: false,
     title: 'Loom — Live Preview',
     alwaysOnTop: true,
     // Skip the taskbar: this is a companion surface, not a second app.
@@ -208,6 +215,24 @@ app.whenReady().then(() => {
       title: 'Export standalone HTML',
       defaultPath: path.join(app.getPath('documents'), suggestedName || 'untitled.html'),
       filters: [{ name: 'HTML document', extensions: ['html'] }],
+    })
+    if (canceled || !filePath) return { ok: false, canceled: true }
+    try {
+      await fs.writeFile(filePath, contents, 'utf8')
+      return { ok: true, path: filePath }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('doc:export-react', async (_e, suggestedName: string, contents: string) => {
+    // Standalone React module export. Same trust shape as the HTML export.
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: 'no window' }
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Export React component',
+      defaultPath: path.join(app.getPath('documents'), suggestedName || 'untitled.jsx'),
+      filters: [{ name: 'React component', extensions: ['jsx'] }],
     })
     if (canceled || !filePath) return { ok: false, canceled: true }
     try {

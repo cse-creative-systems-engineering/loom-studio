@@ -17,7 +17,37 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { renderNode } from '../src/render/web'
 import { EditorStore } from '../src/state/store'
 import '../src/model/toolbox'
-import { getComponent } from '../src/model/registry'
+import { getComponent, instantiate } from '../src/model/registry'
+
+/**
+ * Fixtures used to inherit an auto-created root Panel. Documents are rootless
+ * now, so a fixture that needs a container root asks for one, seeded as clean
+ * initial state (no history) so step counts keep their meaning.
+ */
+function withRoot(s: EditorStore): string {
+  const existing = s.doc.root
+  if (existing !== null) return existing
+  const id = 'root'
+  const built = instantiate('Panel')
+  s.loadDocument({
+    version: 1,
+    meta: { name: 'Untitled', targets: ['web'], created: Date.now() },
+    root: id,
+    nodes: {
+      [id]: {
+        id,
+        type: 'Panel',
+        props: { ...built.props, x: 0, y: 0 },
+        children: [],
+        flow: false,
+        visible: true,
+        locked: false,
+        opacity: 1,
+      },
+    },
+  })
+  return id
+}
 
 export async function bundleTests(): Promise<Array<{ name: string; pass: boolean; detail: string }>> {
   const out: Array<{ name: string; pass: boolean; detail: string }> = []
@@ -153,7 +183,7 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
   // exported as a flat rectangle.
   {
     const es = new EditorStore()
-    const cardId = es.addComponent('Card', es.doc.root, 40, 40)
+    const cardId = es.addComponent('Card', withRoot(es), 40, 40)
     if (!cardId) {
       ok('effects: card created for render test', false)
     } else {
@@ -184,7 +214,7 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
   /* ---- effects do not fire on a node with no bag ------------------- */
   {
     const es = new EditorStore()
-    const b = es.addComponent('Button', es.doc.root, 10, 10)
+    const b = es.addComponent('Button', withRoot(es), 10, 10)
     if (b) {
       const html = renderToStaticMarkup(
         renderNode({ doc: es.doc, mode: 'preview', selected: new Set() }, b),
@@ -198,8 +228,8 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
   /* ---- z-order reaches the output --------------------------------- */
   {
     const es = new EditorStore()
-    const a = es.addComponent('Card', es.doc.root, 0, 0)
-    const b = es.addComponent('Card', es.doc.root, 20, 20)
+    const a = es.addComponent('Card', withRoot(es), 0, 0)
+    const b = es.addComponent('Card', withRoot(es), 20, 20)
     if (a && b) {
       es.doc.nodes[a].z = 5
       const html = renderToStaticMarkup(
@@ -304,7 +334,7 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
 
   {
     const es = new EditorStore()
-    const id = es.addComponent('Card', es.doc.root, 10, 10)
+    const id = es.addComponent('Card', withRoot(es), 10, 10)
     if (!id) {
       ok('setEffects: card created', false)
     } else {
@@ -351,7 +381,7 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
       ok('string booleans coerce', coerced?.grain === true, `grain=${coerced?.grain}`)
 
       // A node with no bag must get a full one.
-      const bare = es.addComponent('Card', es.doc.root, 0, 0)
+      const bare = es.addComponent('Card', withRoot(es), 0, 0)
       if (bare) {
         ok('a node without a bag is untouched by default', es.doc.nodes[bare].effects === undefined)
         es.commit({ op: 'setEffects', id: bare, patch: { shimmer: true } }, 'Shimmer')
@@ -450,18 +480,31 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
           nonEmpty.some((n) => n.effects && Object.keys(n.effects).length > 5))
 
         // Export back out and re-import: the contract must be stable.
+        // The importer's wrapper Panel is a real node now (documents are
+        // rootless, so the root is user-owned and must survive export), so the
+        // count is the 8 imported elements PLUS that root.
+        const expectCount = 9
         const back = exportDsl(doc)
-        ok('export produces the same element count', back.elements?.length === 8, `${back.elements?.length}`)
+        ok('export includes the user-owned root', back.elements?.length === expectCount, `${back.elements?.length}`)
         const reimport = importDsl(back)
         ok('export -> import round trip is valid', reimport.doc !== null, reimport.issues.join('; '))
         const reCount = reimport.doc ? Object.keys(reimport.doc.nodes).length - 1 : 0
-        ok('round trip preserves element count', reCount === 8, `got ${reCount}`)
+        ok('round trip preserves element count', reCount === expectCount, `got ${reCount}`)
 
-        const firstOrig = Object.keys(doc.nodes).find((k) => k !== doc.root)
-        const firstNew = reimport.doc ? Object.keys(reimport.doc.nodes).find((k) => k !== reimport.doc!.root) : undefined
-        const origX = firstOrig ? doc.nodes[firstOrig]?.props.x : undefined
-        const newX = firstNew ? reimport.doc?.nodes[firstNew]?.props.x : undefined
-        ok('round trip preserves coordinates', origX !== undefined && origX === newX, `${origX} vs ${newX}`)
+        // Coordinates are checked on the EXPORT, not after a re-import: the
+        // re-import legitimately adds a fresh wrapper root for the flat
+        // foreign format, so comparing node-for-node across the round trip
+        // compares different sets. What must hold is that no coordinate is
+        // lost on the way out — including the user-owned root's.
+        const srcXs = Object.values(doc.nodes)
+          .map((n) => Number(n.props.x) || 0)
+          .sort((a, b) => a - b)
+          .join(',')
+        const expXs = (back.elements ?? [])
+          .map((e) => Number((e.absolute as { x?: number } | undefined)?.x) || 0)
+          .sort((a, b) => a - b)
+          .join(',')
+        ok('export preserves every coordinate', srcXs === expXs, `${srcXs} vs ${expXs}`)
       }
     }
   } else {
