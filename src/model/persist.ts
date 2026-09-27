@@ -11,9 +11,30 @@
  *     every call site.
  */
 
-import type { Document, Node, NodeId } from './types'
+import { BREAKPOINTS, type Breakpoint, type Document, type Node, type NodeId } from './types'
 import { getComponent, validateProps } from './registry'
+import { clampZ } from './ops'
+import { normalizeEffects } from '../render/effects'
 import './toolbox'
+
+/**
+ * Tools that were REPLACED rather than kept alongside.
+ *
+ * A rename is a removal, and removals break files. When a tool is folded into
+ * a better one, old documents have to keep opening — a designer who comes back
+ * to a six-month-old file must not be told their work is corrupt because a tool
+ * was renamed. The node is migrated to its replacement and the substitution is
+ * REPORTED, so the change is visible rather than silent.
+ */
+const RENAMED: Record<string, string> = {
+  // Folded into a real container field; the old one drew its own text input.
+  FormField: 'Field',
+  // Replaced by the grid; the old one was a div schematic.
+  Table: 'DataGrid',
+}
+
+/** The only keys a responsive override may carry. */
+const RESPONSIVE_KEYS = new Set(['x', 'y', 'w', 'h', 'flow', 'visible', 'opacity'])
 
 export const FORMAT_VERSION = 1
 
@@ -72,6 +93,28 @@ export function validate(input: unknown): Validated {
   if (!raw.nodes || typeof raw.nodes !== 'object') {
     return { doc: null, issues: [{ path: '$.nodes', message: 'missing' }] }
   }
+  // `null` root is the EMPTY workspace and always valid — nothing is auto
+  // created, so a brand-new or just-emptied document is a first-class file.
+  if (raw.root === null) {
+    const strays = Object.keys(raw.nodes).length
+    if (strays > 0) {
+      issues.push({ path: '$.nodes', message: `${strays} node(s) with no root (dropped)` })
+    }
+    return {
+      doc: {
+        version: FORMAT_VERSION,
+        meta: {
+          name: typeof raw.meta?.name === 'string' ? raw.meta.name : 'Untitled',
+          targets: Array.isArray(raw.meta?.targets) ? (raw.meta.targets as never) : ['web'],
+          theme: typeof raw.meta?.theme === 'string' ? raw.meta.theme : 'midnight',
+          created: typeof raw.meta?.created === 'number' ? raw.meta.created : Date.now(),
+        },
+        root: null,
+        nodes: {},
+      },
+      issues,
+    }
+  }
   if (typeof raw.root !== 'string' || !raw.nodes[raw.root]) {
     return { doc: null, issues: [{ path: '$.root', message: 'root does not exist' }] }
   }
@@ -84,7 +127,20 @@ export function validate(input: unknown): Validated {
       continue
     }
     const node = n as Node
-    if (typeof node.type !== 'string' || !getComponent(node.type)) {
+    if (typeof node.type !== 'string') {
+      issues.push({ path: `$.nodes.${id}.type`, message: 'missing type' })
+      continue
+    }
+    // A renamed tool migrates instead of vanishing: the file opens, and the
+    // substitution is reported so nobody wonders where the node went.
+    if (!getComponent(node.type) && RENAMED[node.type] && getComponent(RENAMED[node.type])) {
+      issues.push({
+        path: `$.nodes.${id}.type`,
+        message: `"${node.type}" was replaced by "${RENAMED[node.type]}" (migrated)`,
+      })
+      node.type = RENAMED[node.type]
+    }
+    if (!getComponent(node.type)) {
       issues.push({ path: `$.nodes.${id}.type`, message: `unknown component "${node.type}"` })
       continue
     }
@@ -108,6 +164,77 @@ export function validate(input: unknown): Validated {
     if ('locked' in node && typeof node.locked !== 'boolean') {
       issues.push({ path: `$.nodes.${id}.locked`, message: `expected boolean, got ${typeof node.locked}` })
     }
+    // Atmosphere + paint order survive the round trip: effects are
+    // re-normalized (renderer would anyway), z is clamped to range.
+    // Without this, styling work silently vanishes on every save/load.
+    let effects: Node['effects']
+    if (node.effects === undefined) {
+      effects = undefined
+    } else if (node.effects && typeof node.effects === 'object' && !Array.isArray(node.effects)) {
+      effects = normalizeEffects(node.effects)
+    } else {
+      issues.push({ path: `$.nodes.${id}.effects`, message: 'not an object (dropped)' })
+      effects = undefined
+    }
+    let z: number | undefined
+    if (node.z === undefined) {
+      z = undefined
+    } else if (typeof node.z === 'number' && Number.isFinite(node.z)) {
+      z = clampZ(node.z)
+    } else {
+      issues.push({ path: `$.nodes.${id}.z`, message: `expected finite number, got ${String(node.z)}` })
+      z = undefined
+    }
+    // Responsive overrides are a TRUST BOUNDARY like any other: a hand-written
+    // file must not be able to smuggle in a non-finite width, a NaN coordinate
+    // or an unknown breakpoint. Unknown keys are dropped and reported; numbers
+    // are clamped to the same ranges the op uses.
+    let responsive: Node['responsive']
+    if (node.responsive === undefined) {
+      responsive = undefined
+    } else if (node.responsive && typeof node.responsive === 'object' && !Array.isArray(node.responsive)) {
+      const bag: Record<string, Record<string, number | boolean>> = {}
+      for (const [bpRaw, overRaw] of Object.entries(node.responsive as Record<string, unknown>)) {
+        if (!BREAKPOINTS.includes(bpRaw as Breakpoint)) {
+          issues.push({ path: `$.nodes.${id}.responsive.${bpRaw}`, message: `unknown breakpoint (dropped)` })
+          continue
+        }
+        if (!overRaw || typeof overRaw !== 'object' || Array.isArray(overRaw)) {
+          issues.push({ path: `$.nodes.${id}.responsive.${bpRaw}`, message: 'not an object (dropped)' })
+          continue
+        }
+        const clean: Record<string, number | boolean> = {}
+        for (const [k, v] of Object.entries(overRaw as Record<string, unknown>)) {
+          if (!RESPONSIVE_KEYS.has(k)) {
+            issues.push({ path: `$.nodes.${id}.responsive.${bpRaw}.${k}`, message: 'unknown key (dropped)' })
+            continue
+          }
+          if (typeof v === 'boolean') {
+            clean[k] = v
+            continue
+          }
+          if (typeof v === 'number' && Number.isFinite(v)) {
+            clean[k] = k === 'opacity' ? Math.min(1, Math.max(0, v)) : k === 'w' || k === 'h' ? Math.max(1, Math.round(v)) : Math.round(v)
+            continue
+          }
+          issues.push({ path: `$.nodes.${id}.responsive.${bpRaw}.${k}`, message: `expected finite number or boolean, got ${typeof v}` })
+        }
+        if (Object.keys(clean).length > 0) bag[bpRaw] = clean
+      }
+      responsive = Object.keys(bag).length > 0 ? (bag as Node['responsive']) : undefined
+    } else {
+      issues.push({ path: `$.nodes.${id}.responsive`, message: 'not an object (dropped)' })
+      responsive = undefined
+    }
+    // Opacity repairs toward 1, clamped into range like the op does.
+    let opacity = 1
+    if (node.opacity !== undefined) {
+      if (typeof node.opacity === 'number' && Number.isFinite(node.opacity)) {
+        opacity = Math.min(1, Math.max(0, node.opacity))
+      } else {
+        issues.push({ path: `$.nodes.${id}.opacity`, message: `expected finite number, got ${String(node.opacity)}` })
+      }
+    }
     nodes[id] = {
       id,
       type: node.type,
@@ -116,6 +243,10 @@ export function validate(input: unknown): Validated {
       flow: node.flow === true,
       visible: node.visible !== false,
       locked: node.locked === true,
+      opacity,
+      effects,
+      z,
+      responsive,
     }
   }
 

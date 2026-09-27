@@ -80,16 +80,15 @@ function detach(doc: Document, id: NodeId) {
  * Apply one operation. Returns a new Document.
  *
  * Rejects structurally invalid operations rather than corrupting the tree:
- * you cannot reparent a node into its own descendant, and you cannot remove
- * the root.
+ * you cannot reparent a node into its own descendant. Rootless documents are
+ * handled here rather than in the UI: an `insert` with `parent: null` makes
+ * its node the root, and removing the root empties the workspace.
  */
 export function apply(doc: Document, op: Op): Document {
   const next = clone(doc)
 
   switch (op.op) {
     case 'insert': {
-      const parent = next.nodes[op.parent]
-      if (!parent) return doc
       const node = cloneNode(op.node)
       next.nodes[node.id] = node
       if (op.tree) {
@@ -97,14 +96,35 @@ export function apply(doc: Document, op: Op): Document {
           next.nodes[id] = cloneNode(n)
         }
       }
+      // Rootless: the user's FIRST drop has no parent to land in, so it
+      // becomes the root. This is how a workspace comes into existence.
+      if (op.parent === null) {
+        if (next.root !== null && next.nodes[next.root]) return doc
+        return { ...next, root: node.id }
+      }
+      const parent = next.nodes[op.parent]
+      if (!parent) return doc
       const index = op.index ?? parent.children.length
       parent.children.splice(Math.max(0, Math.min(index, parent.children.length)), 0, node.id)
       return next
     }
 
-    case 'remove': {
-      if (op.id === next.root) return doc
+    case 'setRoot': {
+      if (op.id === null) {
+        if (next.root === null) return doc
+        return { ...next, root: null, nodes: {} }
+      }
       if (!next.nodes[op.id]) return doc
+      return { ...next, root: op.id }
+    }
+
+    case 'remove': {
+      if (!next.nodes[op.id]) return doc
+      // Removing the root empties the workspace: the user's last node is
+      // theirs to delete, and an empty workspace is a valid document.
+      if (op.id === next.root) {
+        return { ...next, root: null, nodes: {} }
+      }
       for (const id of [op.id, ...descendants(next, op.id)]) delete next.nodes[id]
       detach(next, op.id)
       return next
@@ -130,6 +150,24 @@ export function apply(doc: Document, op: Op): Document {
       const node = next.nodes[op.id]
       if (!node) return doc
       node.props[op.key] = op.value
+      return next
+    }
+
+    case 'setResponsive': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      const bag = node.responsive ?? {}
+      const current = bag[op.breakpoint] ?? {}
+      const merged: Record<string, number | boolean> = { ...current }
+      for (const [k, v] of Object.entries(op.patch)) {
+        if (v === null) delete merged[k]
+        else merged[k] = v
+      }
+      const nextBag = { ...bag }
+      if (Object.keys(merged).length === 0) delete nextBag[op.breakpoint]
+      else nextBag[op.breakpoint] = merged
+      if (Object.keys(nextBag).length === 0) node.responsive = undefined
+      else node.responsive = nextBag
       return next
     }
 
@@ -171,6 +209,15 @@ export function apply(doc: Document, op: Op): Document {
       const node = next.nodes[op.id]
       if (!node) return doc
       node.locked = op.locked
+      return next
+    }
+
+    case 'setOpacity': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      // Clamp into range; non-finite input preserves the current value
+      // rather than poisoning the stylesheet.
+      if (Number.isFinite(op.opacity)) node.opacity = Math.min(1, Math.max(0, op.opacity))
       return next
     }
 
@@ -272,6 +319,17 @@ export function invert(doc: Document, op: Op): Op | undefined {
         ? { op: 'setProp', id: op.id, key: op.key, value: node.props[op.key] }
         : { op: 'setProp', id: op.id, key: op.key, value: null }
     }
+    case 'setResponsive': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      // Restore the whole breakpoint bag, including its absence: an undo of
+      // the FIRST responsive write must leave no empty bag behind.
+      const before = node.responsive?.[op.breakpoint]
+      const inverse: Record<string, number | boolean | null> = {}
+      for (const k of Object.keys(op.patch)) inverse[k] = before?.[k as keyof typeof before] ?? null
+      return { op: 'setResponsive', id: op.id, breakpoint: op.breakpoint, patch: inverse }
+    }
+
     case 'setEffects': {
       const node = doc.nodes[op.id]
       if (!node) return undefined
@@ -299,6 +357,11 @@ export function invert(doc: Document, op: Op): Op | undefined {
       const node = doc.nodes[op.id]
       if (!node) return undefined
       return { op: 'setLocked', id: op.id, locked: node.locked }
+    }
+    case 'setOpacity': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      return { op: 'setOpacity', id: op.id, opacity: node.opacity }
     }
     case 'reparent': {
       const from = parentOf(doc, op.id)

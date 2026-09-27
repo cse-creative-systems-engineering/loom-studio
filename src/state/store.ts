@@ -15,6 +15,7 @@ import { instantiate } from '../model/registry'
 import type { Document, Node, NodeId, Op, PropValue, TargetId } from '../model/types'
 import { serialize, validate, filenameFor } from '../model/persist'
 import { emitHtml, exportFilenameFor } from '../export/html'
+import { emitReact, reactFilenameFor } from '../export/react'
 import '../model/toolbox'
 
 interface LoomHost {
@@ -24,6 +25,7 @@ interface LoomHost {
   readAutosave: (name: string) => Promise<{ ok: boolean; path?: string; contents?: string }>
   /** Present on current hosts; older hosts fall back to `save`. */
   exportHtml?: (name: string, contents: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean }>
+  exportReact?: (name: string, contents: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean }>
 }
 
 export interface HistoryEntry {
@@ -227,7 +229,7 @@ export class EditorStore {
    */
   addComponent(
     name: string,
-    parent: NodeId,
+    parent: NodeId | null,
     x = 0,
     y = 0,
     overrides: Record<string, PropValue> = {},
@@ -243,6 +245,7 @@ export class EditorStore {
       flow: opts.flow ?? built.flow,
       visible: true,
       locked: false,
+      opacity: 1,
     }
     const ok = this.commit({ op: 'insert', parent, node }, `Add ${name}`)
     if (ok) this.select([id])
@@ -251,11 +254,15 @@ export class EditorStore {
 
   /** Create several components as ONE undoable step (fixtures, paste, AI batches). */
   addMany(
-    items: Array<{ type: string; parent: NodeId; props?: Record<string, PropValue>; flow?: boolean }>,
+    items: Array<{ type: string; parent: NodeId | null; props?: Record<string, PropValue>; flow?: boolean }>,
     label = 'Add components',
   ) {
     const ops: Op[] = []
     const created: NodeId[] = []
+    // A `null` parent means "no root yet": the FIRST such item becomes the
+    // root, and any later one nests inside it. That is the only way to seed a
+    // rootless document in one undoable step.
+    let firstNullParent: NodeId | null = null
     for (const it of items) {
       const id = `n${Math.random().toString(36).slice(2, 9)}`
       const built = instantiate(it.type)
@@ -267,8 +274,11 @@ export class EditorStore {
         flow: it.flow ?? built.flow,
         visible: true,
         locked: false,
+        opacity: 1,
       }
-      ops.push({ op: 'insert', parent: it.parent, node })
+      const parent = it.parent ?? firstNullParent
+      if (parent === null) firstNullParent = id
+      ops.push({ op: 'insert', parent, node })
       created.push(id)
     }
     this.commitAll(ops, label)
@@ -339,6 +349,33 @@ export class EditorStore {
     return saver(this.exportFilename(), html)
   }
 
+  /** Standalone React filename, derived from the document name. */
+  reactFilename(): string {
+    return reactFilenameFor(this.doc.meta.name)
+  }
+
+  /** Render the document to a self-contained React module (pure, deterministic). */
+  emitReact(): string {
+    return emitReact(this.doc)
+  }
+
+  /**
+   * Export via the host save dialog with a JSX filter. Same trust shape as
+   * the HTML export; falls back to `save` on older hosts.
+   */
+  async exportReactFile() {
+    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    if (!api) return { ok: false, error: 'no host bridge' }
+    let src: string
+    try {
+      src = emitReact(this.doc)
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+    const saver = api.exportReact ?? api.save
+    return saver(this.reactFilename(), src)
+  }
+
   async open() {
     const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
     if (!api) return { ok: false as const, error: 'no host bridge' }
@@ -387,13 +424,20 @@ export class EditorStore {
       return n && !n.locked
     })
     if (doomed.length === 0) return
-    // Only touch selection when something was actually deleted: clearing it
-    // on a refused op (removing the root) flips the inspector to "Nothing
-    // selected" while the document is untouched.
-    const ok = this.commitAll(
-      doomed.map((id): Op => ({ op: 'remove', id })),
-      doomed.length > 1 ? `Delete ${doomed.length} items` : 'Delete',
-    )
+    // The root is an ordinary design node now: deleting it takes its subtree
+    // and leaves a genuinely EMPTY workspace, which is undoable like any
+    // other edit. Locking a child does not protect it from its own root being
+    // deleted — that is the trade the user accepted by owning the root.
+    const ops: Op[] = doomed.map((id) => ({ op: 'remove', id }))
+    const wipesWorkspace = this.doc.root !== null && doomed.includes(this.doc.root)
+    const label = wipesWorkspace
+      ? doomed.length > 1
+        ? `Delete ${doomed.length} items`
+        : 'Delete root'
+      : doomed.length > 1
+        ? `Delete ${doomed.length} items`
+        : 'Delete'
+    const ok = this.commitAll(ops, label)
     if (ok) this.select([])
   }
 
@@ -420,27 +464,16 @@ export class EditorStore {
   }
 }
 
+/**
+ * A truly EMPTY workspace: zero nodes, no root. Nothing is auto-created —
+ * the user's first drop becomes the root (see `apply`'s `insert` with
+ * `parent: null`). This is what New/Open-with-no-file give you.
+ */
 export function emptyDocument(): Document {
-  const rootId = 'root'
-  // Build the root through the same schema path everything else uses, so the
-  // root is never a special case carrying a hand-written prop list.
-  // The root is a FREE canvas by default: children are absolutely positioned
-  // at their drop coordinates. Containers opt into flow individually.
-  const built = instantiate('Panel')
   return {
     version: 1,
     meta: { name: 'Untitled', targets: ['web'], created: Date.now() },
-    root: rootId,
-    nodes: {
-      [rootId]: {
-        id: rootId,
-        type: 'Panel',
-        props: { ...built.props, x: 0, y: 0 },
-        children: [],
-        flow: false,
-        visible: true,
-        locked: false,
-      },
-    },
+    root: null,
+    nodes: {},
   }
 }

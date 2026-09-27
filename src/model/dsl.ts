@@ -76,6 +76,17 @@ const TYPE_ALIASES: Record<string, string> = {
   'glass-morph-button': 'Button',
   'spotlight-action': 'Button',
   'submit-button': 'Button',
+  // Fields. `FormField` is REMOVED as a tool name: `Field` replaces it.
+  FormField: 'Field',
+  'form-field': 'Field',
+  field: 'Field',
+  // Data display. `Table` is REMOVED as a tool name: `DataGrid` replaces it,
+  // and an alias is how a foreign bundle keeps importing without us
+  // resurrecting a tool that does the same job.
+  Table: 'DataGrid',
+  table: 'DataGrid',
+  'data-table': 'DataGrid',
+  'data-grid': 'DataGrid',
   // Surfaces
   'glass-card': 'Card',
   'elevated-card': 'Card',
@@ -214,6 +225,7 @@ export function importDsl(raw: unknown): ImportResult {
       flow: true,
       visible: true,
       locked: false,
+      opacity: 1,
       z: 0,
     },
   }
@@ -264,6 +276,8 @@ export function importDsl(raw: unknown): ImportResult {
       flow: false,
       visible: true,
       locked: el.constraints?.locked === true,
+      // The interchange contract carries no opacity token; default solid.
+      opacity: 1,
       z: Number(a.z) || 0,
       // Normalise at the boundary: the DSL's effects are an untrusted partial
       // bag, and a node must never hold a malformed one.
@@ -327,10 +341,14 @@ export function exportDsl(doc: Document): DslBundle {
     breadcrumb.set(id, trail.join(' › '))
     for (const child of node.children) walk(child, [...trail, node.type])
   }
-  walk(doc.root, [])
+  if (doc.root !== null) walk(doc.root, [])
 
   for (const node of Object.values(doc.nodes)) {
-    if (node.id === doc.root) continue
+    // The root is included: since documents became rootless it is an ordinary
+    // node the USER placed, and the DSL is a flat absolute list, so dropping it
+    // would delete a whole component from the interchange. Re-import wraps a
+    // foreign flat bundle in a Panel root, which is the documented interop
+    // affordance for a format that has no root of its own.
     if (node.visible === false) continue
 
     const p = node.props
@@ -346,7 +364,7 @@ export function exportDsl(doc: Document): DslBundle {
     elements.push({
       id: node.id,
       type: node.type,
-      role: node.type.match(/Button|Input|FormField/)
+      role: node.type.match(/Button|Input|Field/)
         ? 'control'
         : node.type.match(/Label|Heading/)
           ? 'text'

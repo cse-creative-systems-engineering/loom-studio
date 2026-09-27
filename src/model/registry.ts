@@ -9,8 +9,41 @@
  */
 
 import type { NodeId, PropValue } from './types'
+import { positionProps } from './prop-vocab'
 
-export type PropKind = 'string' | 'number' | 'boolean' | 'enum' | 'color'
+export type PropKind = 'string' | 'number' | 'boolean' | 'enum' | 'color' | 'delimiter'
+
+/**
+ * The characters a `delimiter` prop can name.
+ *
+ * A list-valued property used to hardcode its separator, which is a quiet lie:
+ * the moment real data contains a comma INSIDE an item, the list silently splits
+ * in the wrong place and the designer has no way to say so. The separator is
+ * therefore a property, visible in the inspector and changeable, like any other.
+ */
+export const DELIMITERS = {
+  comma: ',',
+  pipe: '|',
+  semicolon: ';',
+  newline: '\n',
+  tab: '\t',
+  space: ' ',
+} as const
+
+export type DelimiterName = keyof typeof DELIMITERS
+
+/** The character a delimiter prop names, defaulting to comma. */
+export function delimiterChar(value: unknown): string {
+  const name = typeof value === 'string' && value in DELIMITERS ? (value as DelimiterName) : 'comma'
+  return DELIMITERS[name]
+}
+
+/** Friendly label for the inspector, showing the character AND its name. */
+export function delimiterLabel(value: unknown): string {
+  const name = typeof value === 'string' && value in DELIMITERS ? (value as DelimiterName) : 'comma'
+  const shown = name === 'newline' ? '\\n' : name === 'tab' ? '\\t' : DELIMITERS[name]
+  return `${name}  "${shown}"`
+}
 
 export interface PropSpec {
   type: PropKind
@@ -55,9 +88,24 @@ export interface ComponentSpec {
 
 const registry = new Map<string, ComponentSpec>()
 
+/**
+ * Properties every component carries, injected rather than repeated.
+ *
+ * Positioning and docking are not a category concern: anything you can place
+ * can be anchored, rotated or made sticky. Declaring them 120 times is how you
+ * end up with 20 components that quietly cannot dock, so the registry adds them
+ * once, here. A component that genuinely cannot take one opts out with
+ * `universal: false`, which no component currently needs.
+ */
+function withUniversalProps(spec: ComponentSpec): ComponentSpec {
+  if ((spec as { universal?: boolean }).universal === false) return spec
+  return { ...spec, props: { ...positionProps(), ...spec.props } }
+}
+
 export function defineComponent(spec: ComponentSpec): ComponentSpec {
-  registry.set(spec.name, spec)
-  return spec
+  const full = withUniversalProps(spec)
+  registry.set(full.name, full)
+  return full
 }
 
 export function getComponent(name: string): ComponentSpec | undefined {
@@ -173,6 +221,8 @@ function propValueMatches(ps: PropSpec, v: unknown): boolean {
       return typeof v === 'boolean'
     case 'enum':
       return typeof v === 'string' && (ps.options ?? []).includes(v)
+    case 'delimiter':
+      return typeof v === 'string' && v in DELIMITERS
   }
 }
 
@@ -188,6 +238,8 @@ function describeProp(ps: PropSpec): string {
       return 'boolean'
     case 'enum':
       return `one of ${(ps.options ?? []).join('|')}`
+    case 'delimiter':
+      return 'a list separator name'
   }
 }
 
@@ -214,6 +266,7 @@ export function instantiate(name: string): {
   flow: boolean
   visible: boolean
   locked: boolean
+  opacity: number
 } {
   const spec = registry.get(name)
   if (!spec) throw new Error(`unknown component: ${name}`)
@@ -231,6 +284,7 @@ export function instantiate(name: string): {
     flow: spec.defaultFlow ?? false,
     visible: true,
     locked: false,
+    opacity: 1,
   }
 }
 

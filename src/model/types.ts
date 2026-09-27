@@ -37,6 +37,12 @@ export interface Node {
    */
   locked: boolean
   /**
+   * Element opacity, 0 (invisible but present) to 1 (solid). A node-level
+   * field rather than 111 schema props: every component gets transparency
+   * uniformly, including future ones. Clamped on write.
+   */
+  opacity: number
+  /**
    * Atmosphere layer (grain / glass / aurora / spotlight / shimmer / glow /
    * tilt / chromatic). Typed rather than `Record<string, unknown>` because the
    * inspector generates its controls from this declaration; optional so older
@@ -50,7 +56,52 @@ export interface Node {
    * site carry it.
    */
   z?: number
+  /**
+   * Per-breakpoint overrides.
+   *
+   * A deliberate, SMALL surface: geometry, flow, visibility and opacity only.
+   * Responsive *styling* (colour, type, spacing) is a much larger surface and
+   * is not here — a half-implemented one is worse than none, because a
+   * designer would reasonably expect a responsive card to restyle, not just
+   * move. If that changes, it changes as its own typed bag, not as `any`.
+   *
+   * Keys are breakpoint names ('sm' | 'md' | 'lg'); a node only carries the
+   * breakpoints it actually overrides, so the common case costs nothing.
+   */
+  responsive?: ResponsiveOverrides
 }
+
+/** The viewport widths a document can be authored for. */
+export type Breakpoint = 'sm' | 'md' | 'lg'
+
+/** Breakpoint order, narrowest first. Drives the cascade order. */
+export const BREAKPOINTS: readonly Breakpoint[] = ['sm', 'md', 'lg'] as const
+
+/**
+ * The container-width band each breakpoint covers.
+ *
+ * Note the direction: the BASE document is authored at desktop, and narrower
+ * breakpoints override it. That is the opposite of the mobile-first default,
+ * and deliberately so — a designer lays out on the canvas they can see, so the
+ * canvas must be the widest case, and phones are the adaptation.
+ */
+export const BREAKPOINT_BAND: Record<Breakpoint, { min: number; max: number | null }> = {
+  sm: { min: 0, max: 639 },
+  md: { min: 640, max: 1023 },
+  lg: { min: 1024, max: null },
+}
+
+export interface ResponsiveOverride {
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+  flow?: boolean
+  visible?: boolean
+  opacity?: number
+}
+
+export type ResponsiveOverrides = Partial<Record<Breakpoint, ResponsiveOverride>>
 
 export type TargetId = 'web' | 'desktop'
 
@@ -76,7 +127,13 @@ export interface DocMeta {
 export interface Document {
   version: 1
   meta: DocMeta
-  root: NodeId
+  /**
+   * The workspace root, or null for a TRULY empty workspace. No panel is
+   * ever auto-created: the user's first drop brings the workspace into
+   * existence, and deleting the last node returns to empty. Every consumer
+   * handles null — the compiler enforces it.
+   */
+  root: NodeId | null
   nodes: Record<NodeId, Node>
 }
 
@@ -91,7 +148,11 @@ export interface Document {
 export type Op =
   | {
       op: 'insert'
-      parent: NodeId
+      /**
+       * Destination, or `null` when the workspace has no root yet — in which
+       * case the inserted node BECOMES the root (the user's first drop).
+       */
+      parent: NodeId | null
       index?: number
       node: Node
       /**
@@ -121,7 +182,21 @@ export type Op =
   | { op: 'setFlow'; id: NodeId; flow: boolean }
   | { op: 'setVisible'; id: NodeId; visible: boolean }
   | { op: 'setLocked'; id: NodeId; locked: boolean }
+  | { op: 'setOpacity'; id: NodeId; opacity: number }
   | { op: 'reparent'; id: NodeId; parent: NodeId; index?: number }
+  /**
+   * Set the workspace root. `id: null` empties the workspace. Used by the
+   * user's first drop (becomes root) and by removing the last node, so
+   * "empty" is a first-class, undoable state rather than a special case
+   * scattered across the UI.
+   */
+  | { op: 'setRoot'; id: NodeId | null }
+  /**
+   * Write one breakpoint's overrides for a node. `null` in the patch means
+   * "this key was not overridden here", which is different from an override of
+   * zero and is how a node returns to the base value.
+   */
+  | { op: 'setResponsive'; id: NodeId; breakpoint: Breakpoint; patch: Record<string, number | boolean | null> }
   | { op: 'rename'; name: string }
 
 /** An op plus enough context to describe it in the undo history. */
