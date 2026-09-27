@@ -7,7 +7,8 @@
  * exactness, subtree delete/undo, and the document's purity.
  */
 
-import { EditorStore, emptyDocument } from '../src/state/store'
+import { EditorStore, emptyDocument, type LoomHost } from '../src/state/store'
+import { autosaveFileName, isExternalUrlAllowed } from './guards'
 import type { Document, Node as LoomNode } from '../src/model/types'
 import { descendants, parentOf } from '../src/model/ops'
 import { allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
@@ -2331,6 +2332,122 @@ export async function runSelfTest(): Promise<string> {
     const paths = both.match(/<path d="M [^"]+"/g) ?? []
     check('the card and the sparkline share one implementation', paths.length === 4 &&
       paths[0] === paths[2] && paths[1] === paths[3], `${paths.length} paths`)
+  }
+
+  // --- 49. every edit is recorded, and the host bridge is confined -------
+  // Regression suite for the deep-dive findings. Each block names the bug it
+  // pins so a future "simplification" cannot quietly bring it back.
+  {
+    // (a) Inspector gestures that poke fields OUTSIDE props (opacity, effects,
+    // responsive) must seal into history and mark the document dirty. The old
+    // seal compared a hand-picked field list and swallowed all three.
+    const gestures: Array<[string, (s: EditorStore, id: string) => void]> = [
+      ['opacity', (s, id) => s.poke({ op: 'setOpacity', id, opacity: 0.3 })],
+      ['effects', (s, id) => s.poke({ op: 'setEffects', id, patch: { grain: true } })],
+      ['responsive', (s, id) => s.poke({ op: 'setResponsive', id, breakpoint: 'sm', patch: { x: 5 } })],
+    ]
+    for (const [name, gesture] of gestures) {
+      const s = new EditorStore()
+      const r = withRoot(s)
+      const before = s.doc
+      gesture(s, r)
+      s.seal(name)
+      check(`the ${name} gesture becomes one undo step`, s.history.length === 1, `${s.history.length} entries`)
+      check(`the ${name} gesture marks the document unsaved`, s.dirty === true)
+      s.undo()
+      check(`undoing the ${name} gesture restores the document exactly`, s.doc === before)
+    }
+    {
+      // ...while a gesture that changed nothing still records nothing.
+      const s = new EditorStore()
+      const r = withRoot(s)
+      s.poke({ op: 'setOpacity', id: r, opacity: 1 })
+      s.seal('Opacity')
+      check('a no-op gesture still adds no history', s.history.length === 0 && s.dirty === false)
+    }
+
+    // (b) A theme change is an edit: undoable, and unsaved until saved.
+    {
+      const s = new EditorStore()
+      withRoot(s)
+      const before = s.doc.meta.theme
+      s.setTheme('daylight')
+      check('a theme change is one undo step', s.history.length === 1 && s.doc.meta.theme === 'daylight')
+      check('a theme change marks the document unsaved', s.dirty === true)
+      s.undo()
+      check('undoing a theme change restores the previous theme', s.doc.meta.theme === before, String(s.doc.meta.theme))
+      s.redo()
+      s.setTheme('daylight')
+      check('re-applying the same theme adds no history', s.history.length === 1, `${s.history.length} entries`)
+    }
+
+    // (c) Dirty tracks the SAVED document: undo after a save is unsaved work,
+    // and redo back to the saved state is clean again.
+    {
+      const s = new EditorStore()
+      const r = withRoot(s)
+      const writes: string[] = []
+      const fake: LoomHost = {
+        save: async (_name, contents) => {
+          writes.push(contents)
+          return { ok: true, path: '/tmp/fake.loom.json' }
+        },
+        open: async () => ({ ok: false, canceled: true }),
+        autosave: async () => ({ ok: true }),
+        readAutosave: async () => ({ ok: false }),
+      }
+      s.host = fake
+      s.setProp(r, 'title', 'Saved title')
+      await s.save()
+      check('saving clears the dirty flag', s.dirty === false && writes.length === 1)
+      s.undo()
+      check('undo after a save is unsaved work', s.dirty === true)
+      s.redo()
+      check('redo back to the saved state is clean', s.dirty === false)
+
+      // An edit made while the save dialog is open is not on disk.
+      let release: () => void = () => undefined
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      s.host = { ...fake, save: async () => { await gate; return { ok: true, path: '/tmp/fake.loom.json' } } }
+      s.setProp(r, 'title', 'Before dialog')
+      const pending = s.save()
+      s.setProp(r, 'title', 'During dialog')
+      release()
+      await pending
+      check('an edit made during the save dialog stays unsaved', s.dirty === true)
+    }
+
+    // (d) Save/load keeps every meta field, and a hostile meta is reported.
+    {
+      const doc = rootDoc()
+      doc.meta = { ...doc.meta, artboard: { w: 800, h: 600 }, snapGrid: 8 }
+      const back = validate(serialize(doc))
+      check('round trip keeps the artboard', back.doc?.meta.artboard?.w === 800 && back.doc?.meta.artboard?.h === 600,
+        JSON.stringify(back.doc?.meta.artboard))
+      check('round trip keeps the snap grid', back.doc?.meta.snapGrid === 8, String(back.doc?.meta.snapGrid))
+      const hostile = JSON.parse(serialize(doc)) as { meta: Record<string, unknown> }
+      hostile.meta.artboard = { w: 'wide', h: -1 }
+      hostile.meta.snapGrid = -4
+      const repaired = validate(JSON.stringify(hostile))
+      check('a malformed artboard is dropped and reported',
+        repaired.doc?.meta.artboard === undefined && repaired.issues.some((i) => i.path === '$.meta.artboard'))
+      check('a negative snap grid is dropped and reported',
+        repaired.doc?.meta.snapGrid === undefined && repaired.issues.some((i) => i.path === '$.meta.snapGrid'))
+    }
+
+    // (e) The main process confines what a document can reach.
+    check('autosave accepts exactly the names filenameFor produces',
+      ['Untitled', 'My App / v2.0!', 'x'.repeat(200), '   '].every((n) => autosaveFileName(filenameFor(n)) === filenameFor(n)))
+    const hostileNames = ['../../.bashrc', '..', 'a/b.loom.json', 'a\\b.loom.json', '/etc/passwd', 'x.loom.json/..', '.loom.json', 'evil.json', '', 42, null]
+    check('autosave refuses anything that could escape its directory',
+      hostileNames.every((n) => autosaveFileName(n) === null),
+      hostileNames.filter((n) => autosaveFileName(n) !== null).map(String).join(', '))
+    check('web and mail links may open externally',
+      ['https://example.com', 'http://example.com/a?b', 'mailto:a@example.com'].every(isExternalUrlAllowed))
+    const hostileUrls = ['file:///etc/passwd', 'javascript:alert(1)', 'smb://host/share', 'vscode://x', 'data:text/html,x', 'not a url', '']
+    check('every other scheme is refused',
+      hostileUrls.every((u) => !isExternalUrlAllowed(u)),
+      hostileUrls.filter(isExternalUrlAllowed).join(', '))
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

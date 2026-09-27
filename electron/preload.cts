@@ -6,9 +6,12 @@
  * and must never gain reach through this bridge.
  *
  * The preview channel is deliberately narrow: the editor can ASK to open,
- * close, or pin the preview window, and can PUSH a document. The preview
- * window can do nothing except receive a document. It cannot touch the
- * filesystem, the model gateway, or the editor.
+ * close, or pin the preview window, and can PUSH a document.
+ *
+ * Both windows load THIS preload, so the preview window sees the same
+ * `loomHost` object. The boundary is enforced in the main process, not here:
+ * file, autosave and preview-open/update IPC is honoured only from the editor
+ * window, and no window may navigate away from its own page.
  */
 
 const { contextBridge, ipcRenderer } = require('electron')

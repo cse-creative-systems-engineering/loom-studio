@@ -6,9 +6,10 @@
  * the GPU paint strategies; the plain-DOM path does not need it.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
+import { autosaveFileName, isExternalUrlAllowed } from './guards'
 
 // This file is bundled to CommonJS for Electron's main process, where
 // `import.meta.url` does not exist. esbuild passes `__dirname` through, so the
@@ -21,6 +22,40 @@ if (EXPERIMENTAL) {
   app.commandLine.appendSwitch('enable-features', 'CanvasDrawElement')
   app.commandLine.appendSwitch('enable-experimental-web-platform-features')
 }
+
+/**
+ * Every window is locked to the page it was loaded with.
+ *
+ * A designed document can carry any link, and a window that navigates to a
+ * remote page KEEPS the preload bridge — so a hostile file plus one click in
+ * the preview would hand a web page `loomHost`. Navigation is therefore always
+ * refused, and a link the OS can safely open goes to the real browser instead.
+ * Programmatic `loadFile`/`loadURL` do not emit `will-navigate`, so the app's
+ * own page loads are unaffected.
+ */
+app.on('web-contents-created', (_e, contents) => {
+  contents.on('will-navigate', (event, url) => {
+    event.preventDefault()
+    if (isExternalUrlAllowed(url)) void shell.openExternal(url)
+  })
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isExternalUrlAllowed(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+})
+
+/**
+ * The editor window. File and preview-control IPC is honoured only from it:
+ * the preview window loads the same preload, and it must not be able to save,
+ * open or autosave on the document's behalf.
+ */
+let editorWin: BrowserWindow | null = null
+
+function fromEditor(e: IpcMainInvokeEvent): boolean {
+  return editorWin !== null && !editorWin.isDestroyed() && e.sender === editorWin.webContents
+}
+
+const FORBIDDEN = { ok: false, error: 'forbidden' } as const
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -39,6 +74,10 @@ function createWindow() {
     },
   })
 
+  editorWin = win
+  win.on('closed', () => {
+    if (editorWin === win) editorWin = null
+  })
   win.once('ready-to-show', () => win.show())
 
   const devUrl = process.env.LOOM_DEV_URL
@@ -54,12 +93,6 @@ function createWindow() {
       demo ? { search: 'demo=1' } : undefined,
     )
   }
-
-  // External links open in the real browser, never in the app shell.
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
-    return { action: 'deny' }
-  })
 
   return win
 }
@@ -97,7 +130,7 @@ function openPreview(doc: unknown) {
     return previewWin
   }
 
-  const parent = BrowserWindow.getAllWindows()[0]
+  const parent = editorWin
   previewWin = new BrowserWindow({
     width: 900,
     height: 640,
@@ -154,14 +187,16 @@ function openPreview(doc: unknown) {
 app.whenReady().then(() => {
   createWindow()
 
-  ipcMain.handle('preview:open', (_e, doc: unknown) => {
+  ipcMain.handle('preview:open', (e, doc: unknown) => {
+    if (!fromEditor(e)) return false
     openPreview(doc)
     // Explicit open takes focus; the send (or stash) follows.
     sendPreviewDoc(doc)
     return true
   })
 
-  ipcMain.handle('preview:update', (_e, doc: unknown) => {
+  ipcMain.handle('preview:update', (e, doc: unknown) => {
+    if (!fromEditor(e)) return false
     // Live sync while building: deliver WITHOUT focusing and WITHOUT
     // opening. Focusing here would yank keyboard focus out of the editor on
     // every keystroke and drag frame. Updates to a closed window are
@@ -189,8 +224,9 @@ app.whenReady().then(() => {
    * document and the tool that edits it stay in separate trust domains.
    * ------------------------------------------------------------------ */
 
-  ipcMain.handle('doc:save', async (_e, suggestedName: string, contents: string) => {
-    const win = BrowserWindow.getAllWindows()[0]
+  ipcMain.handle('doc:save', async (e, suggestedName: string, contents: string) => {
+    if (!fromEditor(e)) return FORBIDDEN
+    const win = editorWin
     if (!win) return { ok: false, error: 'no window' }
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       title: 'Save Loom document',
@@ -206,10 +242,11 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('doc:export-html', async (_e, suggestedName: string, contents: string) => {
+  ipcMain.handle('doc:export-html', async (e, suggestedName: string, contents: string) => {
+    if (!fromEditor(e)) return FORBIDDEN
     // Standalone web export. Same trust shape as save: the renderer hands
     // over bytes, the main process picks the path and writes them.
-    const win = BrowserWindow.getAllWindows()[0]
+    const win = editorWin
     if (!win) return { ok: false, error: 'no window' }
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       title: 'Export standalone HTML',
@@ -225,9 +262,10 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('doc:export-react', async (_e, suggestedName: string, contents: string) => {
+  ipcMain.handle('doc:export-react', async (e, suggestedName: string, contents: string) => {
+    if (!fromEditor(e)) return FORBIDDEN
     // Standalone React module export. Same trust shape as the HTML export.
-    const win = BrowserWindow.getAllWindows()[0]
+    const win = editorWin
     if (!win) return { ok: false, error: 'no window' }
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       title: 'Export React component',
@@ -243,8 +281,9 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('doc:open', async (_e) => {
-    const win = BrowserWindow.getAllWindows()[0]
+  ipcMain.handle('doc:open', async (e) => {
+    if (!fromEditor(e)) return FORBIDDEN
+    const win = editorWin
     if (!win) return { ok: false, error: 'no window' }
     const { canceled, filePaths } = await dialog.showOpenDialog(win, {
       title: 'Open Loom document',
@@ -260,13 +299,17 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('doc:write-recent', async (_e, suggestedName: string, contents: string) => {
+  ipcMain.handle('doc:write-recent', async (e, suggestedName: unknown, contents: unknown) => {
     // Autosave to a known location, no dialog. This is what makes a crash
-    // survivable rather than fatal.
+    // survivable rather than fatal. The name is renderer-supplied and joined
+    // onto a real directory, so it must be a bare slug — never a path.
+    if (!fromEditor(e)) return FORBIDDEN
+    const name = autosaveFileName(suggestedName)
+    if (name === null || typeof contents !== 'string') return { ok: false, error: 'invalid autosave name' }
     try {
       const dir = path.join(app.getPath('userData'), 'autosave')
       await fs.mkdir(dir, { recursive: true })
-      const file = path.join(dir, suggestedName || 'untitled.loom.json')
+      const file = path.join(dir, name)
       await fs.writeFile(file, contents, 'utf8')
       return { ok: true, path: file }
     } catch (e) {
@@ -274,9 +317,12 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('doc:read-recent', async (_e, suggestedName: string) => {
+  ipcMain.handle('doc:read-recent', async (e, suggestedName: unknown) => {
+    if (!fromEditor(e)) return FORBIDDEN
+    const name = autosaveFileName(suggestedName)
+    if (name === null) return { ok: false }
     try {
-      const file = path.join(app.getPath('userData'), 'autosave', suggestedName)
+      const file = path.join(app.getPath('userData'), 'autosave', name)
       const contents = await fs.readFile(file, 'utf8')
       return { ok: true, path: file, contents }
     } catch {

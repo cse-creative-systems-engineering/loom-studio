@@ -18,7 +18,7 @@ import { emitHtml, exportFilenameFor } from '../export/html'
 import { emitReact, reactFilenameFor } from '../export/react'
 import '../model/toolbox'
 
-interface LoomHost {
+export interface LoomHost {
   save: (name: string, contents: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean }>
   open: () => Promise<{ ok: boolean; path?: string; contents?: string; error?: string; canceled?: boolean }>
   autosave: (name: string, contents: string) => Promise<{ ok: boolean; path?: string }>
@@ -37,34 +37,30 @@ export interface HistoryEntry {
 const HISTORY_LIMIT = 200
 
 /**
- * True when two node maps hold identical content.
+ * Structural equality over the document's JSON-shaped data.
  *
  * `apply()` is pure and returns a NEW document every time, so reference
- * equality can never detect a no-op. This compares the substance instead.
+ * equality can never detect a no-op. This compares the substance instead —
+ * ALL of it. An earlier version compared a hand-picked list of node fields
+ * and silently missed opacity, effects and responsive overrides, so those
+ * gestures never reached history or the dirty flag. Being generic is the
+ * point: a field added to `Node` later is compared without anyone having to
+ * remember this function exists. A key holding `undefined` counts as absent,
+ * matching what serialisation would write.
  */
-function nodeMapsEqual(a: Record<string, Node>, b: Record<string, Node>): boolean {
-  const ka = Object.keys(a)
-  const kb = Object.keys(b)
-  if (ka.length !== kb.length) return false
-  for (const k of ka) {
-    const x = a[k]
-    const y = b[k]
-    if (!y) return false
-    if (x.type !== y.type || x.flow !== y.flow) return false
-    if (x.children.length !== y.children.length) return false
-    for (let i = 0; i < x.children.length; i++) {
-      if (x.children[i] !== y.children[i]) return false
-    }
-    const px = x.props
-    const py = y.props
-    const pka = Object.keys(px)
-    const pkb = Object.keys(py)
-    if (pka.length !== pkb.length) return false
-    for (const p of pka) {
-      if (px[p] !== py[p]) return false
-    }
+function sameData(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+    return a.every((v, i) => sameData(v, b[i]))
   }
-  return true
+  const ra = a as Record<string, unknown>
+  const rb = b as Record<string, unknown>
+  const ka = Object.keys(ra).filter((k) => ra[k] !== undefined)
+  const kb = Object.keys(rb).filter((k) => rb[k] !== undefined)
+  if (ka.length !== kb.length) return false
+  return ka.every((k) => sameData(ra[k], rb[k]))
 }
 
 export class EditorStore {
@@ -80,6 +76,15 @@ export class EditorStore {
   lastSavedPath: string | null = null
 
   /**
+   * The document as it exists on disk (last save or open), or null when this
+   * work has never been written. Undo/redo compare against it by identity —
+   * history holds the exact document objects, so stepping back to the saved
+   * state lands on the same reference and reads as clean, and stepping away
+   * from it reads as dirty. A never-saved document stays dirty once edited.
+   */
+  private savedDoc: Document | null = null
+
+  /**
    * The document as of the last committed/sealed state. A drag pokes the live
    * document without touching history; seal() then diffs against this to
    * collapse the whole gesture into one undoable entry.
@@ -87,6 +92,13 @@ export class EditorStore {
   private sealed: Document
 
   private listeners = new Set<() => void>()
+
+  /**
+   * The desktop host bridge (file dialogs, autosave), or undefined outside
+   * Electron. A field rather than a global lookup at each call site so tests
+   * can hand the store a fake host.
+   */
+  host: LoomHost | undefined = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
 
   constructor(initial?: Document) {
     this.doc = initial ?? emptyDocument()
@@ -157,11 +169,12 @@ export class EditorStore {
    * The no-op guard compares the NODE MAPS, not document identity: `apply()`
    * returns a fresh object on every call, so `this.sealed === this.doc` was
    * never true and every seal added a phantom undo entry — including for a
-   * gesture that changed nothing. Deep-comparing the serialized nodes is
-   * cheap at this size and is the only correct test.
+   * gesture that changed nothing. Deep-comparing the whole document is
+   * cheap at this size (it runs once per gesture, on release) and is the only
+   * correct test.
    */
   seal(label: string) {
-    if (nodeMapsEqual(this.sealed.nodes, this.doc.nodes)) {
+    if (sameData(this.sealed, this.doc)) {
       // Nothing actually changed; make sure `sealed` tracks the current
       // object identity so the next comparison is against the right base.
       this.sealed = this.doc
@@ -178,6 +191,7 @@ export class EditorStore {
     this.future.push(entry)
     this.doc = entry.before
     this.sealed = this.doc
+    this.dirty = this.doc !== this.savedDoc
     this.pruneSelection()
     this.emit()
   }
@@ -188,6 +202,7 @@ export class EditorStore {
     this.history.push(entry)
     this.doc = entry.after
     this.sealed = this.doc
+    this.dirty = this.doc !== this.savedDoc
     this.pruneSelection()
     this.emit()
   }
@@ -209,9 +224,7 @@ export class EditorStore {
    * Before tokens existed, re-theming meant editing each node's colours.
    */
   setTheme(name: string) {
-    this.doc = { ...this.doc, meta: { ...this.doc.meta, theme: name } }
-    this.sealed = this.doc
-    this.emit()
+    this.commit({ op: 'setTheme', theme: name }, `Theme: ${name}`)
   }
 
   private pruneSelection() {
@@ -299,6 +312,7 @@ export class EditorStore {
     this.future = []
     this.selection = []
     this.dirty = false
+    this.savedDoc = null
     this.emit()
   }
 
@@ -308,11 +322,15 @@ export class EditorStore {
   }
 
   async save() {
-    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    const api = this.host
     if (!api) return { ok: false, error: 'no host bridge' }
-    const res = await api.save(this.autosaveName(), serialize(this.doc))
+    // Capture what is being written: the save dialog is async, and an edit
+    // made while it is open is NOT on disk, so it must stay dirty.
+    const written = this.doc
+    const res = await api.save(this.autosaveName(), serialize(written))
     if (res.ok) {
-      this.dirty = false
+      this.savedDoc = written
+      this.dirty = this.doc !== written
       this.lastSavedPath = res.path ?? null
       this.emit()
     }
@@ -337,7 +355,7 @@ export class EditorStore {
    * hosts that predate the `doc:export-html` channel.
    */
   async exportHtmlFile() {
-    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    const api = this.host
     if (!api) return { ok: false, error: 'no host bridge' }
     let html: string
     try {
@@ -364,7 +382,7 @@ export class EditorStore {
    * the HTML export; falls back to `save` on older hosts.
    */
   async exportReactFile() {
-    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    const api = this.host
     if (!api) return { ok: false, error: 'no host bridge' }
     let src: string
     try {
@@ -377,7 +395,7 @@ export class EditorStore {
   }
 
   async open() {
-    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    const api = this.host
     if (!api) return { ok: false as const, error: 'no host bridge' }
     const res = await api.open()
     if (!res.ok) return res
@@ -386,6 +404,8 @@ export class EditorStore {
       return { ok: false as const, error: 'invalid document', issues: parsed.issues }
     }
     this.loadDocument(parsed.doc)
+    // An opened file is what is on disk.
+    this.savedDoc = parsed.doc
     this.lastSavedPath = res.path ?? null
     this.emit()
     return { ok: true as const, issues: parsed.issues }
@@ -393,13 +413,13 @@ export class EditorStore {
 
   /** Silent background save; failure is non-fatal by design. */
   async autosave() {
-    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    const api = this.host
     if (!api || !this.dirty) return
     await api.autosave(this.autosaveName(), serialize(this.doc))
   }
 
   async restoreAutosave() {
-    const api = (globalThis as unknown as { loomHost?: LoomHost }).loomHost
+    const api = this.host
     if (!api) return false
     const res = await api.readAutosave(this.autosaveName())
     if (!res.ok) return false

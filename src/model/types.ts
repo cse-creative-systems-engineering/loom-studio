@@ -198,6 +198,12 @@ export type Op =
    */
   | { op: 'setResponsive'; id: NodeId; breakpoint: Breakpoint; patch: Record<string, number | boolean | null> }
   | { op: 'rename'; name: string }
+  /**
+   * Set the document's design theme. `null` clears it back to the default.
+   * An op rather than a direct write so a re-skin is undoable and marks the
+   * document unsaved like any other edit.
+   */
+  | { op: 'setTheme'; theme: string | null }
 
 /** An op plus enough context to describe it in the undo history. */
 export interface OpFrame {

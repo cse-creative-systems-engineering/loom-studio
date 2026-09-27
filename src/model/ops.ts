@@ -243,6 +243,15 @@ export function apply(doc: Document, op: Op): Document {
       next.meta.name = op.name
       return next
     }
+
+    case 'setTheme': {
+      const current = doc.meta.theme ?? null
+      if (current === op.theme) return doc
+      const meta = { ...next.meta }
+      if (op.theme === null) delete meta.theme
+      else meta.theme = op.theme
+      return { ...next, meta }
+    }
   }
 }
 
@@ -380,6 +389,9 @@ export function invert(doc: Document, op: Op): Op | undefined {
     }
     case 'rename': {
       return { op: 'rename', name: doc.meta.name }
+    }
+    case 'setTheme': {
+      return { op: 'setTheme', theme: doc.meta.theme ?? null }
     }
   }
 }

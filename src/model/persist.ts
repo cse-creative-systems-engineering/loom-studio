@@ -11,7 +11,7 @@
  *     every call site.
  */
 
-import { BREAKPOINTS, type Breakpoint, type Document, type Node, type NodeId } from './types'
+import { BREAKPOINTS, type Breakpoint, type DocMeta, type Document, type Node, type NodeId } from './types'
 import { getComponent, validateProps } from './registry'
 import { clampZ } from './ops'
 import { normalizeEffects } from '../render/effects'
@@ -103,12 +103,7 @@ export function validate(input: unknown): Validated {
     return {
       doc: {
         version: FORMAT_VERSION,
-        meta: {
-          name: typeof raw.meta?.name === 'string' ? raw.meta.name : 'Untitled',
-          targets: Array.isArray(raw.meta?.targets) ? (raw.meta.targets as never) : ['web'],
-          theme: typeof raw.meta?.theme === 'string' ? raw.meta.theme : 'midnight',
-          created: typeof raw.meta?.created === 'number' ? raw.meta.created : Date.now(),
-        },
+        meta: validateMeta(raw.meta, issues),
         root: null,
         nodes: {},
       },
@@ -351,17 +346,45 @@ export function validate(input: unknown): Validated {
   return {
     doc: {
       version: FORMAT_VERSION,
-      meta: {
-        name: typeof raw.meta?.name === 'string' ? raw.meta.name : 'Untitled',
-        targets: Array.isArray(raw.meta?.targets) ? (raw.meta.targets as never) : ['web'],
-        theme: typeof raw.meta?.theme === 'string' ? raw.meta.theme : 'midnight',
-        created: typeof raw.meta?.created === 'number' ? raw.meta.created : Date.now(),
-      },
+      meta: validateMeta(raw.meta, issues),
       root: raw.root,
       nodes,
     },
     issues,
   }
+}
+
+/**
+ * Rebuild `meta` from an untrusted file.
+ *
+ * Built field by field on purpose (nothing undeclared rides through), which
+ * means every optional field MUST be listed here — an earlier version rebuilt
+ * only four fields and silently dropped the artboard and snap grid on every
+ * open. Present-but-invalid optional values are dropped and reported.
+ */
+function validateMeta(input: unknown, issues: ValidationIssue[]): DocMeta {
+  const m = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const meta: DocMeta = {
+    name: typeof m.name === 'string' ? m.name : 'Untitled',
+    targets: Array.isArray(m.targets) ? (m.targets as never) : ['web'],
+    theme: typeof m.theme === 'string' ? m.theme : 'midnight',
+    created: typeof m.created === 'number' ? m.created : Date.now(),
+  }
+  if (m.artboard !== undefined) {
+    const a = m.artboard as { w?: unknown; h?: unknown } | null
+    const ok =
+      a !== null &&
+      typeof a === 'object' &&
+      typeof a.w === 'number' && Number.isFinite(a.w) && a.w > 0 &&
+      typeof a.h === 'number' && Number.isFinite(a.h) && a.h > 0
+    if (ok) meta.artboard = { w: Math.round(a.w as number), h: Math.round(a.h as number) }
+    else issues.push({ path: '$.meta.artboard', message: 'expected { w, h } positive finite numbers (dropped)' })
+  }
+  if (m.snapGrid !== undefined) {
+    if (typeof m.snapGrid === 'number' && Number.isFinite(m.snapGrid) && m.snapGrid >= 0) meta.snapGrid = m.snapGrid
+    else issues.push({ path: '$.meta.snapGrid', message: `expected a non-negative finite number, got ${String(m.snapGrid)} (dropped)` })
+  }
+  return meta
 }
 
 /** Serialise for disk. Key order is stable so diffs stay readable. */
