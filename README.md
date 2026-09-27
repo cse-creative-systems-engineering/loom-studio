@@ -1,4 +1,7 @@
-# Loom
+# Loom — Studio
+
+*A loom is a tool for building: threads in, cloth out. This one takes
+components in and gives you an interface.*
 
 A desktop UI studio. You compose an interface from 117 components, and the
 things you build actually work — in the editor, in the live preview, and in

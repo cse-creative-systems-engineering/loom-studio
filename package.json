@@ -35,5 +35,6 @@
   },
   "allowScripts": {
     "esbuild@0.28.2": true
-  }
+  },
+  "description": "Loom \u2014 Studio: a desktop UI builder whose components actually work."
 }
