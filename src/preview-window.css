@@ -14,23 +14,36 @@ body.preview-window {
 }
 
 .pvwin {
-  display: grid;
-  grid-template-rows: 30px 1fr;
+  position: relative;
   height: 100%;
+  display: grid;
 }
 
-.pvwin-bar {
+.pvwin-float {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 6px 0 10px;
-  background: linear-gradient(180deg, #131725, #0e1119);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  gap: 2px;
+  padding: 3px 5px;
+  background: rgba(14, 17, 25, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 999px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  /* The pill is the drag handle: frameless windows have no OS chrome. */
   -webkit-app-region: drag;
   user-select: none;
+  opacity: 0.55;
+  transition: opacity 160ms ease;
+  z-index: 10;
 }
 
-.pvwin-bar button { -webkit-app-region: no-drag; }
+.pvwin-float:hover { opacity: 1; }
+
+.pvwin-float button { -webkit-app-region: no-drag; }
 
 .pvwin-dot {
   width: 6px;
@@ -117,3 +130,8 @@ body.preview-window {
 /* Never show editor affordances in the output. */
 .pvwin-stage [data-loom-id],
 .pvwin-stage .loom-handle { outline: none !important; cursor: default !important; }
+
+/* Theme review switch: sits with the other floating controls, outside the drag
+   handle's way. */
+.pvwin-themes { display: flex; gap: 2px; margin-right: 6px; }
+.pvwin-btn.on { background: rgba(91, 140, 255, 0.28); color: #fff; }

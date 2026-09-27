@@ -1,13 +1,23 @@
 import React from 'react'
-import { EditorStore } from './state/store'
-import type { Document, Node, NodeId, PropValue } from './model/types'
+import { EditorStore, emptyDocument } from './state/store'
+import type { Breakpoint, Document, Node, NodeId, PropValue } from './model/types'
 import { ancestry, parentOf } from './model/ops'
 import { snapMove as snapTo, artboardAnchors, type SnapBox } from './model/snap'
-import { componentsByCategory, getComponent, propSupported, unsupportedProps } from './model/registry'
+import {
+  componentsByCategory,
+  getComponent,
+  propSupported,
+  unsupportedProps,
+  DELIMITERS,
+  delimiterLabel,
+} from './model/registry'
+import { tooltipText } from './model/tooltip'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { normalizeEffects } from './render/effects'
 import { Toggle } from './ui-primitives'
+import { VIEWPORTS, nodeBreakpoints } from './render/responsive'
+import { installResponsiveCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import { ContextMenu, type MenuState } from './context-menu'
 import { THEME_NAMES, getTheme } from './render/theme'
 import './ui.css'
@@ -33,6 +43,19 @@ declare global {
     __loomStore: EditorStore
   }
 }
+
+/**
+ * Replace the document with a fresh empty workspace. Returns false when the
+ * user backs out of the unsaved-changes confirmation. Shared by the New
+ * button and Ctrl+N so the two can never disagree.
+ */
+function confirmNewWorkspace(s: EditorStore): boolean {
+  if (s.dirty && !window.confirm('Start a new empty workspace? Unsaved changes will be lost.')) {
+    return false
+  }
+  s.loadDocument(emptyDocument())
+  return true
+}
 if (typeof window !== 'undefined') window.__loomStore = store
 
 function useStore(): EditorStore {
@@ -49,6 +72,10 @@ export function App() {
   const s = useStore()
   const [dragging, setDragging] = React.useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = React.useState(false)
+  // The viewport the artboard is authoring at. It lives up here, not in the
+  // Canvas, because the Inspector writes overrides for it: narrowing the
+  // artboard and editing what that narrowing revealed are one action.
+  const [viewport, setViewport] = React.useState<Breakpoint>('lg')
   const [menu, setMenu] = React.useState<MenuState | null>(null)
   // Canvas zoom is view state, not document state: it never touches the
   // doc, the history, or the output. 1 = 100%.
@@ -163,6 +190,12 @@ export function App() {
         } else if (e.key === 'p') {
           e.preventDefault()
           togglePreview()
+        } else if (e.key === 'r') {
+          e.preventDefault()
+          void s.exportReactFile()
+        } else if (e.key === 'n') {
+          e.preventDefault()
+          confirmNewWorkspace(s)
         } else if (e.key === 'o') {
           e.preventDefault()
           void s.open()
@@ -217,13 +250,15 @@ export function App() {
       <div className="body">
         <Toolbox s={s} onDragChange={setDragging} zoom={zoom} />
         <Canvas
+          viewport={viewport}
+          onViewport={setViewport}
           s={s}
           dragging={dragging}
           onMenu={setMenu}
           zoom={zoom}
           onZoom={(z) => setZoom(Math.min(2, Math.max(0.25, Math.round(z * 100) / 100)))}
         />
-        <Inspector s={s} />
+        <Inspector s={s} viewport={viewport} />
       </div>
       <StatusBar s={s} previewOpen={previewOpen} onTogglePreview={togglePreview} />
       {menu && <ContextMenu s={s} state={menu} onClose={() => setMenu(null)} />}
@@ -248,6 +283,12 @@ function TitleBar({ s, previewOpen, onTogglePreview }: { s: EditorStore; preview
       window.setTimeout(() => setCopied(false), 1500)
     })
   }
+  // A fresh empty workspace. History resets with the document (an OPEN, not
+  // an edit), and unsaved work gets a confirmation first — silently
+  // discarding it would be the worst kind of data loss.
+  const newWorkspace = () => {
+    confirmNewWorkspace(s)
+  }
   return (
     <header className="titlebar">
       <div className="brand">
@@ -259,6 +300,9 @@ function TitleBar({ s, previewOpen, onTogglePreview }: { s: EditorStore; preview
         {s.dirty && <span className="dirty-dot" title="Unsaved changes" aria-label="Unsaved changes" />}
       </div>
       <div className="file-actions">
+        <button className="file-btn" onClick={newWorkspace} title="New empty workspace (Ctrl+N)">
+          New
+        </button>
         <button className="file-btn" onClick={() => void s.open()} title="Open a document (Ctrl+O)">
           Open
         </button>
@@ -278,6 +322,9 @@ function TitleBar({ s, previewOpen, onTogglePreview }: { s: EditorStore; preview
         </button>
         <button className="file-btn" onClick={copyHtml} title="Copy the standalone HTML output to the clipboard">
           {copied ? 'Copied ✓' : 'Copy'}
+        </button>
+        <button className="file-btn" onClick={() => void s.exportReactFile()} title="Export a self-contained React component (.jsx, Ctrl+R)">
+          React
         </button>
       </div>
       <span className="spacer" />
@@ -352,7 +399,9 @@ function Toolbox({
       // A flow parent places its children, so coordinates are meaningless
       // there; a free parent needs them. The child's own `flow` flag (how
       // ITS children layout) comes from the component schema, not the parent.
-      const flowParent = s.doc.nodes[hit.parent]?.flow === true
+      // A null parent means "no root yet": the node being dropped IS the
+      // root, so it is free-positioned (a flow root would ignore x/y).
+      const flowParent = hit.parent !== null && s.doc.nodes[hit.parent]?.flow === true
       const { x, y } = snapTo(hit.host, ev)
       s.addComponent(type, hit.parent, flowParent ? 0 : x, flowParent ? 0 : y)
     }
@@ -368,7 +417,7 @@ function Toolbox({
    * `closest` walks ancestors, so the nearest container ancestor under the
    * cursor wins: the deepest one.
    */
-  const dropTarget = (x: number, y: number): { host: HTMLElement; parent: NodeId } | null => {
+  const dropTarget = (x: number, y: number): { host: HTMLElement; parent: NodeId | null } | null => {
     const el = document.elementFromPoint(x, y) as HTMLElement | null
     if (!el) return null
 
@@ -377,8 +426,12 @@ function Toolbox({
       return { host: container, parent: container.dataset.loomId }
     }
     const surface = el.closest('[data-loom-surface]') as HTMLElement | null
-    if (surface?.dataset.loomSurface) {
-      return { host: surface, parent: surface.dataset.loomSurface }
+    if (surface) {
+      // `data-loom-surface="empty"` means the workspace has NO root yet, so a
+      // drop here creates one: the parent is null and the new node becomes the
+      // root. This is how the user brings a workspace into existence.
+      const id = surface.dataset.loomSurface
+      return { host: surface, parent: id && id !== 'empty' ? id : null }
     }
     return null
   }
@@ -454,7 +507,7 @@ function Toolbox({
                       <button
                         key={c.name}
                         className="tool"
-                        title={`${c.description}${gated.length ? `\n\nNot portable to ${s.target}: ${gated.join(', ')}` : ''}`}
+                        title={tooltipText(c, s.target)}
                         onPointerDown={(e) => startDrag(e, c.name)}
                       >
                         <span className="tool-icon">{c.icon}</span>
@@ -488,12 +541,19 @@ function layerDetail(node: { props: Record<string, PropValue> }): string {
  * truth — including hidden nodes, which the canvas only ghosts.
  */
 function Layers({ s }: { s: EditorStore }) {
-  const root = s.doc.nodes[s.doc.root]
-  if (!root) return null
+  const root = s.doc.root === null ? undefined : s.doc.nodes[s.doc.root]
+  if (!root) {
+    return (
+      <div className="scroll layers">
+        <div className="legend">0 elements · drop a component to start</div>
+      </div>
+    )
+  }
+  const count = Object.keys(s.doc.nodes).length - 1
   return (
     <div className="scroll layers">
       <div className="legend">
-        {Object.keys(s.doc.nodes).length - 1} element{Object.keys(s.doc.nodes).length === 2 ? '' : 's'} · top is front
+        {count} element{count === 1 ? '' : 's'} · top is front
       </div>
       {root.children.map((id) => (
         <LayerRow key={id} s={s} id={id} depth={0} />
@@ -593,6 +653,86 @@ interface DragState {
 /** Snap threshold in doc units. */
 const SNAP_WITHIN = 6
 
+/** Insertion indicator box in doc units, or null when it cannot compute. */
+type DropSlotDisplay = {
+  /**
+   * Slot as a POST-REMOVAL index (what the reparent op consumes): the
+   * dragged node ends up with exactly `index` siblings before it. No
+   * origin adjustment needed — counting rendered kids (which exclude the
+   * dragged node) already yields post-removal coordinates.
+   */
+  index: number
+  x: number
+  y: number
+  w: number
+  h: number
+  horizontal: boolean
+} | null
+
+/**
+ * Compute the reorder drop slot for a flow child from the RENDERED siblings.
+ *
+ * The axis is measured, not assumed: whichever axis the sibling centers
+ * spread along most is the ordering axis (a column of stretched children
+ * spreads vertically; a single row spreads horizontally). That keeps this
+ * free of schema knowledge — Grid, row Panels, and columns all work.
+ * Coordinates come back in doc units for indicator placement; screen pixels
+ * are only ever compared against screen pixels.
+ */
+function dropSlot(
+  doc: Document,
+  parent: NodeId,
+  exclude: NodeId,
+  clientX: number,
+  clientY: number,
+  zoom: number,
+): DropSlotDisplay {
+  const parentEl = document.querySelector(`[data-loom-id="${parent}"]`)
+  const surfaceEl = document.querySelector('[data-loom-surface]')
+  if (!(parentEl instanceof HTMLElement) || !(surfaceEl instanceof HTMLElement)) return null
+  const kids = Array.from(parentEl.querySelectorAll(':scope > [data-loom-id]'))
+    .map((el) => ({
+      id: (el as HTMLElement).dataset.loomId ?? '',
+      rect: el.getBoundingClientRect(),
+    }))
+    .filter((k) => k.id !== '' && k.id !== exclude && doc.nodes[k.id])
+  if (kids.length === 0) return null
+  const cxs = kids.map((k) => k.rect.left + k.rect.width / 2)
+  const cys = kids.map((k) => k.rect.top + k.rect.height / 2)
+  const horizontal = Math.max(...cxs) - Math.min(...cxs) > Math.max(...cys) - Math.min(...cys)
+  const centers = horizontal ? cxs : cys
+  const point = horizontal ? clientX : clientY
+  let index = 0
+  while (index < centers.length && point >= centers[index]) index += 1
+
+  const sr = surfaceEl.getBoundingClientRect()
+  const pr = parentEl.getBoundingClientRect()
+  const px = zoomed(pr.left - sr.left, zoom)
+  const py = zoomed(pr.top - sr.top, zoom)
+  const pw = zoomed(pr.width, zoom)
+  const ph = zoomed(pr.height, zoom)
+  if (horizontal) {
+    const edges = kids.map((k) => k.rect.left)
+    const ends = kids.map((k) => k.rect.right)
+    const x =
+      index === 0
+        ? zoomed(edges[0] - sr.left, zoom)
+        : index >= kids.length
+          ? zoomed(ends[kids.length - 1] - sr.left, zoom)
+          : zoomed((ends[index - 1] + edges[index]) / 2 - sr.left, zoom)
+    return { index, x, y: py, w: 0, h: ph, horizontal }
+  }
+  const tops = kids.map((k) => k.rect.top)
+  const bottoms = kids.map((k) => k.rect.bottom)
+  const y =
+    index === 0
+      ? zoomed(tops[0] - sr.top, zoom)
+      : index >= kids.length
+        ? zoomed(bottoms[kids.length - 1] - sr.top, zoom)
+        : zoomed((bottoms[index - 1] + tops[index]) / 2 - sr.top, zoom)
+  return { index, x: px, y, w: pw, h: 0, horizontal }
+}
+
 /**
  * Snap a dragged position to nearby sibling edges (left/top) and the parent
  * origin. Each axis snaps independently to the nearest candidate within
@@ -655,18 +795,34 @@ function Canvas({
   onMenu,
   zoom,
   onZoom,
+  viewport,
+  onViewport,
 }: {
   s: EditorStore
   dragging: string | null
   onMenu: (m: MenuState | null) => void
   zoom: number
   onZoom: (z: number) => void
+  viewport: Breakpoint
+  onViewport: (b: Breakpoint) => void
 }) {
   const dragRef = React.useRef<DragState | null>(null)
   const [rulers, setRulers] = React.useState(false)
+  // Authoring happens at Desktop by default (the canvas you can see is the
+  // widest case) and narrows on demand, which is the only honest direction for
+  // a tool whose base layout IS the desktop layout.
+  const viewportWidth = VIEWPORTS.find((v) => v.id === viewport)?.width ?? 1280
   // Snap guides (doc-unit coordinates) + live drag readout, both transient.
   const [guides, setGuides] = React.useState<{ x: number | null; y: number | null }>({ x: null, y: null })
   const [readout, setReadout] = React.useState<{ x: number; y: number; cx: number; cy: number } | null>(null)
+  // Reorder insertion indicator (doc-unit box), transient like the guides.
+  const [slot, setSlot] = React.useState<DropSlotDisplay>(null)
+
+  // The layout rules are generated from the document, so they have to be
+  // re-derived whenever it changes.
+  React.useEffect(() => {
+    installResponsiveCss(s.doc)
+  }, [s.doc])
 
   const onContextMenuNode = (id: NodeId, e: React.MouseEvent) => {
     e.preventDefault()
@@ -686,7 +842,6 @@ function Canvas({
     } else if (!s.selection.includes(id)) {
       s.select([id])
     }
-    if (id === s.doc.root) return
     // Locked nodes select (above) but never manipulate — unlock in Layers.
     if (node.locked) return
 
@@ -714,7 +869,12 @@ function Canvas({
     }
 
     const free = !isFlowChild(s.doc, target)
-    if (!free) return
+    if (!free) {
+      // Flow children carry no meaningful x/y, so dragging reorders them
+      // among their siblings instead of refusing the gesture.
+      startReorder(e, target)
+      return
+    }
 
     dragRef.current = {
       id: target,
@@ -802,6 +962,40 @@ function Canvas({
     window.addEventListener('pointerup', onUp)
   }
 
+  /**
+   * Reorder drag for flow children. A flow child has no meaningful x/y, so
+   * the gesture reorders it among its siblings instead of moving it. Nothing
+   * is poked during the gesture: the drop slot is computed live from the
+   * rendered siblings, and the document changes exactly once on release
+   * (one undoable `reparent`), or not at all when the slot is unchanged —
+   * never a phantom entry.
+   */
+  const startReorder = (e: React.PointerEvent, id: NodeId) => {
+    e.stopPropagation()
+    const parent = parentOf(s.doc, id)
+    if (!parent) return
+    const siblings = s.doc.nodes[parent]?.children ?? []
+    if (siblings.length < 2) return
+    const origin = siblings.indexOf(id)
+    if (origin < 0) return
+
+    const onMove = (ev: PointerEvent) => {
+      setSlot(dropSlot(s.doc, parent, id, ev.clientX, ev.clientY, zoom))
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      const slot = dropSlot(s.doc, parent, id, ev.clientX, ev.clientY, zoom)
+      setSlot(null)
+      if (!slot) return
+      if (slot.index !== origin) {
+        s.commit({ op: 'reparent', id, parent, index: slot.index }, 'Reorder')
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   const selected = new Set(s.selection)
 
   return (
@@ -810,6 +1004,19 @@ function Canvas({
         <button className="chip" onClick={() => setRulers((r) => !r)}>
           {rulers ? 'Rulers on' : 'Rulers off'}
         </button>
+        <div className="viewport-group" role="group" aria-label="Design viewport">
+          {VIEWPORTS.map((v) => (
+            <button
+              key={v.id}
+              className={`chip${viewport === v.id ? ' on' : ''}`}
+              onClick={() => onViewport(v.id)}
+              title={`${v.label} — ${v.width}px. Nudge the artboard to see how the layout responds.`}
+              aria-pressed={viewport === v.id}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
         <div className="zoom-group" role="group" aria-label="Canvas zoom">
           <button className="chip" onClick={() => onZoom(zoom / 1.25)} title="Zoom out" aria-label="Zoom out">
             −
@@ -831,18 +1038,36 @@ function Canvas({
       </div>
       <div className={`canvas ${rulers ? 'rulers' : ''} ${dragging ? 'drop-active' : ''}`}>
         <div
-          className="surface"
-          data-loom-surface={s.doc.root}
+          className={`surface ${CONTAINER_CLASS}`}
+          data-loom-surface={s.doc.root ?? 'empty'}
           data-zoom={Math.round(zoom * 100)}
+          data-viewport={viewport}
           onPointerDown={() => s.select([])}
-          style={{ zoom }}
+          style={{ zoom, width: viewportWidth, maxWidth: '100%' }}
         >
-          {renderNode(
-            { doc: s.doc, onPointerDownNode, onContextMenuNode, selected },
-            s.doc.root,
+          {s.doc.root !== null && (
+            renderNode(
+              { doc: s.doc, onPointerDownNode, onContextMenuNode, selected },
+              s.doc.root,
+            )
+          )}
+          {s.doc.root === null && (
+            <div className="empty-hint">
+              <div className="empty-hint-title">Empty workspace</div>
+              <div className="empty-hint-body">
+                Drag a component from the left panel onto the canvas to create the first node —
+                it becomes the root of this document.
+              </div>
+            </div>
           )}
           {guides.x !== null && <div className="snap-guide-v" style={{ left: guides.x }} aria-hidden="true" />}
           {guides.y !== null && <div className="snap-guide-h" style={{ top: guides.y }} aria-hidden="true" />}
+          {slot &&
+            (slot.horizontal ? (
+              <div className="snap-guide-v" style={{ left: slot.x, top: slot.y, height: slot.h }} aria-hidden="true" />
+            ) : (
+              <div className="snap-guide-h" style={{ top: slot.y, left: slot.x, width: slot.w }} aria-hidden="true" />
+            ))}
         </div>
       </div>
       {readout && (
@@ -858,9 +1083,16 @@ function Canvas({
  * Inspector — generated from the component schema
  * ------------------------------------------------------------------ */
 
-function Inspector({ s }: { s: EditorStore }) {
+function Inspector({ s, viewport }: { s: EditorStore; viewport: Breakpoint }) {
   const id = s.selection[0]
   const node = id ? s.doc.nodes[id] : undefined
+  // Narrowing the artboard and editing what it revealed are the same action, so
+  // the Position fields write to the ACTIVE breakpoint's overrides. At Desktop
+  // they write the base every other breakpoint inherits from.
+  const bp = viewport
+  const narrow = bp !== 'lg'
+  const over = node?.responsive?.[bp] ?? {}
+  const label = VIEWPORTS.find((v) => v.id === bp)?.label ?? bp
 
   if (!node) {
     return (
@@ -901,6 +1133,45 @@ function Inspector({ s }: { s: EditorStore }) {
       </div>
 
       <div className="insp-scroll">
+        <section>
+          <h3>Display</h3>
+          <div className="field">
+            <label>
+              Opacity
+              <span className="dim"> — {Math.round((node.opacity ?? 1) * 100)}%</span>
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round((node.opacity ?? 1) * 100)}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                if (Number.isFinite(v)) s.poke({ op: 'setOpacity', id: node.id, opacity: v / 100 })
+              }}
+              onBlur={() => s.seal('Opacity')}
+              onMouseUp={() => s.seal('Opacity')}
+              aria-label="Opacity percent"
+            />
+          </div>
+          <div className="field">
+            <label>Visible in output</label>
+            <Toggle
+              checked={node.visible !== false}
+              onChange={(v) => s.commit({ op: 'setVisible', id: node.id, visible: v }, v ? 'Show' : 'Hide')}
+            />
+          </div>
+          <div className="field">
+            <label>
+              Locked
+              <span className="dim"> — no drag, resize, or delete</span>
+            </label>
+            <Toggle
+              checked={node.locked === true}
+              onChange={(v) => s.commit({ op: 'setLocked', id: node.id, locked: v }, v ? 'Lock' : 'Unlock')}
+            />
+          </div>
+        </section>
         {spec.container && (
           <section>
             <h3>Layout</h3>
@@ -916,37 +1187,83 @@ function Inspector({ s }: { s: EditorStore }) {
             </div>
           </section>
         )}
-        {!isFlowChild(s.doc, node.id) && node.id !== s.doc.root && (
+        {!isFlowChild(s.doc, node.id) && (
           <section>
-            <h3>Position</h3>
+            <h3>
+              Position
+              {narrow && <span className="dim"> — at {label} only</span>}
+            </h3>
             <div className="row two">
               <NumField
                 label="X"
-                value={Number(node.props.x) || 0}
-                onChange={(v) => s.poke({ op: 'move', id: node.id, x: v, y: Number(node.props.y) || 0 })}
-                onCommit={() => s.seal('Move')}
+                value={narrow ? (over.x ?? Number(node.props.x) ?? 0) : Number(node.props.x) || 0}
+                onChange={(v) => {
+                  if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: bp, patch: { x: v } })
+                  else s.poke({ op: 'move', id: node.id, x: v, y: Number(node.props.y) || 0 })
+                }}
+                onCommit={() => (narrow ? s.seal(`Position at ${label}`) : s.seal('Move'))}
               />
               <NumField
                 label="Y"
-                value={Number(node.props.y) || 0}
-                onChange={(v) => s.poke({ op: 'move', id: node.id, x: Number(node.props.x) || 0, y: v })}
-                onCommit={() => s.seal('Move')}
+                value={narrow ? (over.y ?? Number(node.props.y) ?? 0) : Number(node.props.y) || 0}
+                onChange={(v) => {
+                  if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: bp, patch: { y: v } })
+                  else s.poke({ op: 'move', id: node.id, x: Number(node.props.x) || 0, y: v })
+                }}
+                onCommit={() => (narrow ? s.seal(`Position at ${label}`) : s.seal('Move'))}
               />
             </div>
             <div className="row two">
               <NumField
                 label="W"
-                value={Number(node.props.w) || 0}
-                onChange={(v) => s.poke({ op: 'resize', id: node.id, w: Math.max(1, v), h: Number(node.props.h) || 0 || 1 })}
-                onCommit={() => s.seal('Resize')}
+                value={narrow ? (over.w ?? Number(node.props.w) ?? 0) : Number(node.props.w) || 0}
+                onChange={(v) => {
+                  if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: bp, patch: { w: Math.max(1, v) } })
+                  else s.poke({ op: 'resize', id: node.id, w: Math.max(1, v), h: Number(node.props.h) || 0 || 1 })
+                }}
+                onCommit={() => (narrow ? s.seal(`Size at ${label}`) : s.seal('Resize'))}
               />
               <NumField
                 label="H"
-                value={Number(node.props.h) || 0}
-                onChange={(v) => s.poke({ op: 'resize', id: node.id, w: Number(node.props.w) || 0 || 1, h: Math.max(1, v) })}
-                onCommit={() => s.seal('Resize')}
+                value={narrow ? (over.h ?? Number(node.props.h) ?? 0) : Number(node.props.h) || 0}
+                onChange={(v) => {
+                  if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: bp, patch: { h: Math.max(1, v) } })
+                  else s.poke({ op: 'resize', id: node.id, w: Number(node.props.w) || 0 || 1, h: Math.max(1, v) })
+                }}
+                onCommit={() => (narrow ? s.seal(`Size at ${label}`) : s.seal('Resize'))}
               />
             </div>
+          </section>
+        )}
+
+        {/* What this node does at other widths, and how to get rid of it. */}
+        {nodeBreakpoints(node).length > 0 && (
+          <section>
+            <h3>Responsive</h3>
+            {nodeBreakpoints(node).map((b) => {
+              const keys = Object.keys(node.responsive?.[b] ?? {})
+              const bLabel = VIEWPORTS.find((v) => v.id === b)?.label ?? b
+              return (
+                <div key={b} className="row between">
+                  <span className="dim">
+                    {bLabel}: {keys.join(', ')}
+                    {b === viewport ? ' · editing' : ''}
+                  </span>
+                  <button
+                    className="mini"
+                    onClick={() =>
+                      s.commit(
+                        { op: 'setResponsive', id: node.id, breakpoint: b, patch: Object.fromEntries(keys.map((k) => [k, null])) },
+                        `Reset ${bLabel}`,
+                      )
+                    }
+                    title={`Drop every ${bLabel} override and fall back to the base layout`}
+                  >
+                    Reset
+                  </button>
+                </div>
+              )
+            })}
           </section>
         )}
 
@@ -1023,6 +1340,18 @@ function Field({ name, ps, value, onChange, badge }: FieldProps) {
             {(ps.options ?? []).map((o) => (
               <option key={o} value={o}>
                 {o}
+              </option>
+            ))}
+          </select>
+          <span className="chevron" aria-hidden="true" />
+        </div>
+      )}
+      {ps.type === 'delimiter' && (
+        <div className="select-wrap">
+          <select value={String(value ?? ps.default)} onChange={(e) => onChange(e.target.value)}>
+            {Object.keys(DELIMITERS).map((d) => (
+              <option key={d} value={d}>
+                {delimiterLabel(d)}
               </option>
             ))}
           </select>

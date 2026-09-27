@@ -18,7 +18,7 @@ import type { NodeId, PropValue } from './model/types'
 /** Drop a component under `parent`, the same way the toolbox does. */
 function drop(
   s: EditorStore,
-  parent: NodeId,
+  parent: NodeId | null,
   type: string,
   props: Record<string, PropValue> = {},
   opts: { flow?: boolean; x?: number; y?: number } = {},
@@ -34,7 +34,11 @@ function drop(
 }
 
 export function seedDemo(s: EditorStore) {
-  const root = s.doc.root
+  // The demo CREATES the root, exactly like a user's first drop: nothing is
+  // pre-existing. Seeding onto an empty document is the honest path and it
+  // keeps the fixture honest about the rootless model.
+  const root = drop(s, s.doc.root, 'Panel')
+  if (root === undefined) return
 
   // Root is a flow column; children stack and `gap` applies.
   s.commitAll(
@@ -87,7 +91,6 @@ export function seedDemo(s: EditorStore) {
       width: 240,
       height: 72,
       accent: '#5b8cff',
-      shader: true,
     })
     drop(s, trendCard, 'Label', { text: '6.2 GB / 16 GB', size: 'xs', color: '#6b7488' })
   }
@@ -104,7 +107,7 @@ export function seedDemo(s: EditorStore) {
   // Parented to a flow root, so it JOINS the flow rather than floating.
   // Free positioning is exercised by the drag tests, not by the fixture.
   drop(s, root, 'Label', {
-    text: 'Sparkline shader is web-only — switch the target to see it flagged',
+    text: 'Free positioning is exercised by the drag tests, not by this fixture',
     size: 'xs',
     color: '#4a5266',
   })

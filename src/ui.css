@@ -403,11 +403,42 @@ input, select { font-family: inherit; font-size: 12px; }
     0 24px 60px -24px rgba(0, 0, 0, 0.9);
 }
 
-/* The designed root Panel fills the surface while authoring. */
+/* The root fills the surface while authoring. It renders chromeless (see
+   renderNode's root branch) — this rule only guarantees size/positioning. */
 .surface > [data-loom-type='Panel'] {
   min-height: 460px;
   position: relative;
   border-radius: 12px;
+}
+
+/* Empty workspace: no root exists yet, so the canvas says so instead of
+   looking like a broken/immovable panel. This is the "drop your first
+   component" invitation — it disappears the moment one lands. */
+.empty-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 32px;
+  text-align: center;
+  pointer-events: none;
+  color: var(--ink-3);
+}
+
+.empty-hint-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink-2);
+}
+
+.empty-hint-body {
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 42ch;
 }
 
 /* Manipulation affordance. An unselected element must LOOK grabbable, and
@@ -996,3 +1027,40 @@ input, select { font-family: inherit; font-size: 12px; }
   transition: color var(--loom-motion) var(--loom-ease), border-color var(--loom-motion) var(--loom-ease);
 }
 .eff-reset:hover { color: var(--loom-danger); border-color: color-mix(in srgb, var(--loom-danger) 50%, transparent); }
+
+/* ---------------- viewport switcher ---------------- */
+
+/* The artboard is a CONTAINER: its inline width is what the responsive
+   queries measure, so narrowing it is how you see the layout respond. */
+.surface.loom-container { container-type: inline-size; container-name: loom; }
+
+.viewport-group {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.viewport-group .chip.on {
+  background: var(--select);
+  color: #fff;
+  border-color: transparent;
+}
+
+/* Theme review switch in the docked preview. */
+.theme-switch {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  z-index: 5;
+}
+
+.theme-switch .chip.on { background: var(--select); color: #fff; border-color: transparent; }

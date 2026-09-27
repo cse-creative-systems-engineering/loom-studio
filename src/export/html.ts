@@ -21,6 +21,8 @@
 
 import { renderToStaticMarkup } from 'react-dom/server'
 import { renderNode } from '../render/web'
+import { behaviourCss, behaviourRuntime } from '../render/behaviour'
+import { responsiveCss } from '../render/responsive'
 import { resolveTheme } from '../render/theme'
 import type { Document } from '../model/types'
 
@@ -50,17 +52,29 @@ function escapeHtml(s: string): string {
  * renderer) rather than emitting a silent generic div.
  */
 export function emitHtml(doc: Document): string {
-  const root = doc.nodes[doc.root]
-  if (!root) throw new Error(`missing node: ${String(doc.root)}`)
   const theme = resolveTheme(doc.meta.theme)
-  const body = renderToStaticMarkup(
-    renderNode({ doc, selected: new Set(), mode: 'preview', theme }, doc.root),
-  )
+  // An empty workspace exports an empty page, not a broken one: a document
+  // with no root is a legitimate thing to save and share.
+  const body =
+    doc.root === null
+      ? ''
+      : renderToStaticMarkup(renderNode({ doc, selected: new Set(), mode: 'preview', theme }, doc.root))
   const title = escapeHtml(doc.meta.name || 'Untitled')
-  // The root Panel is a free-canvas node (position:absolute at 0,0 with no
-  // intrinsic size). On a real page it must BE the page: relative,
-  // full-width, full-height. The override is scoped to the export wrapper
-  // so the editor renderer is untouched.
+  // Page fill applies ONLY to a root the user left untouched: unsized and at
+  // the origin. Such a root is the canvas, so on a real page it must BE the
+  // page. The moment the user sizes or moves it, it is a designed element and
+  // the export honours exactly what they authored — the editor never silently
+  // overrides a decision the user made.
+  const rootNode = doc.root === null ? undefined : doc.nodes[doc.root]
+  const rootUntouched = rootNode
+    ? Number(rootNode.props.w ?? 0) <= 0 &&
+      Number(rootNode.props.h ?? 0) <= 0 &&
+      Number(rootNode.props.x ?? 0) === 0 &&
+      Number(rootNode.props.y ?? 0) === 0
+    : false
+  const pageFill = rootNode && rootUntouched
+    ? '.loom-export>:first-child{position:relative !important;left:auto !important;top:auto !important;width:100% !important;min-height:100vh}'
+    : ''
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -72,11 +86,18 @@ export function emitHtml(doc: Document): string {
 html,body{margin:0;padding:0}
 body{background:${theme.bg};color:${theme.textPrimary};font-family:${theme.fontFamily}}
 .loom-export{position:relative;min-height:100vh;width:100%}
-.loom-export>:first-child{position:relative !important;left:auto !important;top:auto !important;width:100% !important;min-height:100vh}
+${pageFill}
+/* Built-in control behaviour: the same state rules the editor preview uses. */
+${behaviourCss()}
+/* Per-breakpoint layout: the same generated rules the editor authors against. */
+${responsiveCss(doc)}
 </style>
 </head>
 <body>
-<div class="loom-export">${body}</div>
+<div class="loom-export loom-container">${body}</div>
+<!-- Built-in control behaviour. Inline and dependency-free on purpose: an
+     exported document must work by opening the file, with no network. -->
+<script>${behaviourRuntime()}</script>
 </body>
 </html>`
 }

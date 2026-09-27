@@ -142,7 +142,9 @@ export function ContextMenu({ s, state, onClose }: Props) {
           <button
             className="ctx-item"
             role="menuitem"
-            onClick={run(() => s.select([parent ?? s.doc.root]))}
+            onClick={run(() => {
+              if (parent) s.select([parent])
+            })}
             disabled={!parent}
           >
             <span className="ctx-k">↑</span> Select parent

@@ -13,6 +13,9 @@
 import React from 'react'
 import type { EditorStore } from './state/store'
 import { renderNode } from './render/web'
+import { resolveTheme } from './render/theme'
+import { THEME_NAMES, type ThemeName } from './render/theme'
+import { installBehaviourRuntime } from './render/behaviour-mount'
 
 
 export type PreviewSize = 'peek' | 'panel' | 'full'
@@ -156,14 +159,56 @@ export function Preview({ s, size, onSize, onClose }: PreviewProps) {
  * The artifact itself. Rendered in `preview` mode so it carries no editor
  * attributes — this is what the user would actually ship.
  */
-export function PreviewStage({ s }: { s: EditorStore }) {
-  const root = s.doc.nodes[s.doc.root]
+/**
+ * A theme to REVIEW the artifact in, without editing the document.
+ *
+ * This is a design-time instrument, and it is deliberately not written into
+ * the document: switching a theme changes what you are looking at, not what you
+ * built. Shipping both themes is table stakes, and "does this survive daylight?"
+ * is a question you have to be able to ask before you ship, not after.
+ */
+export function PreviewStage({
+  s,
+  themeName,
+  onThemeName,
+}: {
+  s: EditorStore
+  themeName?: ThemeName
+  onThemeName?: (n: ThemeName) => void
+}) {
+  // Same behaviour layer as the export: the docked preview is not a picture
+  // of the artifact, it IS the artifact.
+  React.useEffect(() => {
+    installBehaviourRuntime()
+  }, [])
+  const root = s.doc.root
+  const review = themeName ?? s.doc.meta.theme
+  const showSwitch = onThemeName !== undefined
+  if (root === null) {
+    return (
+      <div className="preview-stage" style={{ minHeight: 200, opacity: 0.45 }}>
+        {null}
+      </div>
+    )
+  }
   return (
-    <div
-      className="preview-stage"
-      style={{ minHeight: root ? undefined : 200, opacity: root ? 1 : 0.45 }}
-    >
-      {renderNode({ doc: s.doc, selected: new Set(), mode: 'preview' }, s.doc.root)}
+    <div className="preview-stage">
+      {renderNode({ doc: s.doc, selected: new Set(), mode: 'preview', theme: resolveTheme(review) }, root)}
+      {showSwitch ? (
+        <div className="theme-switch" role="group" aria-label="Review in theme">
+          {THEME_NAMES.map((n) => (
+            <button
+              key={n}
+              className={`chip${review === n ? ' on' : ''}`}
+              aria-pressed={review === n}
+              onClick={() => onThemeName?.(n)}
+              title={`Review this artifact in the ${n} theme`}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }

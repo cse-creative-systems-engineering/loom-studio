@@ -8,8 +8,13 @@ import type { EditorStore } from './state/store'
 import { store } from './app'
 import { seedDemo } from './demo'
 
-// `?demo=1` seeds a representative scene. Used by the screenshot harness so
-// reviews (human or agent) look at a real document instead of an empty canvas.
+// DEVELOPMENT ONLY. `?demo=1` (set by the E2E probes via LOOM_DEMO=1) seeds a
+// fixture document so an automated review has something to click.
+//
+// This is NOT the first-run experience and must never become one: a person
+// opening Loom gets a genuinely EMPTY workspace, because documents are
+// rootless and the first node is theirs to place. There is no sample project
+// waiting for them, and nothing restores an old one behind their back.
 if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1') {
   seedDemo(store)
 }

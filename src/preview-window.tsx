@@ -10,9 +10,10 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderNode } from './render/web'
-import { resolveTheme } from './render/theme'
+import { resolveTheme, THEME_NAMES, type ThemeName } from './render/theme'
 import { emptyDocument } from './state/store'
 import type { Document } from './model/types'
+import { installBehaviourRuntime, installResponsiveCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import './preview-window.css'
 import './model/toolbox'
 
@@ -21,11 +22,25 @@ const ARTBOARD_H = 460
 
 function App() {
   const [doc, setDoc] = React.useState<Document>(() => emptyDocument())
+  // Review-time theme, NOT the document's theme: switching it changes what you
+  // are looking at, not what you built.
+  const [themeName, setThemeName] = React.useState<ThemeName>('midnight')
   const [zoom, setZoom] = React.useState<number | 'fit'>('fit')
   const [pinned, setPinned] = React.useState(true)
   const [dragging, setDragging] = React.useState(false)
   const stageRef = React.useRef<HTMLDivElement>(null)
   const wrapRef = React.useRef<HTMLDivElement>(null)
+
+  // The preview is the artifact: it carries the same behaviour layer the
+  // export does, so what works here works there.
+  React.useEffect(() => {
+    installBehaviourRuntime()
+  }, [])
+  // The preview is the artifact at the width it is being viewed at, so it
+  // carries the same generated layout rules the export does.
+  React.useEffect(() => {
+    installResponsiveCss(doc)
+  }, [doc])
 
   React.useEffect(() => {
     const api = (window as unknown as { loomPreview?: PreviewApi }).loomPreview
@@ -58,49 +73,12 @@ function App() {
 
   const t = resolveTheme(doc.meta.theme)
 
+  const close = () => {
+    void (window as unknown as { loomPreview?: PreviewApi }).loomPreview?.close()
+  }
+
   return (
     <div className="pvwin">
-      <header className="pvwin-bar">
-        <span className="pvwin-dot" style={{ background: t.accent }} aria-hidden="true" />
-        <span className="pvwin-title">{doc.meta.name}</span>
-        <span className="pvwin-tag">{t.name}</span>
-        <span className="pvwin-spacer" />
-        <div className="pvwin-zoom">
-          <button
-            className="pvwin-btn"
-            onClick={() => setZoom((z) => Math.max(0.1, (z === 'fit' ? 0.5 : z) - 0.1))}
-            title="Zoom out"
-          >
-            −
-          </button>
-          <button
-            className="pvwin-btn wide"
-            onClick={() => setZoom('fit')}
-            title="Fit to window"
-          >
-            {zoom === 'fit' ? 'fit' : `${Math.round((zoom as number) * 100)}%`}
-          </button>
-          <button
-            className="pvwin-btn"
-            onClick={() => setZoom((z) => Math.min(2, (z === 'fit' ? 0.5 : z) + 0.1))}
-            title="Zoom in"
-          >
-            +
-          </button>
-        </div>
-        <button
-          className={`pvwin-btn ${pinned ? 'on' : ''}`}
-          onClick={() => {
-            const next = !pinned
-            setPinned(next)
-            void (window as unknown as { loomPreview?: PreviewApi }).loomPreview?.setAlwaysOnTop(next)
-          }}
-          title={pinned ? 'Unpin from top' : 'Keep above the editor'}
-        >
-          pin
-        </button>
-      </header>
-
       <div
         className={`pvwin-body ${dragging ? 'panning' : ''}`}
         ref={wrapRef}
@@ -127,7 +105,7 @@ function App() {
         }}
       >
         <div
-          className="pvwin-stage"
+          className={`pvwin-stage ${CONTAINER_CLASS}`}
           ref={stageRef}
           style={
             effective !== undefined
@@ -135,8 +113,63 @@ function App() {
               : undefined
           }
         >
-          {renderNode({ doc, selected: new Set(), mode: 'preview' }, doc.root)}
+          {doc.root === null
+            ? null
+            : renderNode({ doc, selected: new Set(), mode: 'preview', theme: resolveTheme(themeName) }, doc.root)}
         </div>
+      </div>
+      {/* Floating controls: the only chrome. The pill is the window's drag
+          handle (frameless windows have no OS region to grab); buttons opt
+          back out. It fades until hovered so the artifact reads clean. */}
+      <div className="pvwin-float" title={`${doc.meta.name} · ${t.name}`}>
+        <div className="pvwin-themes" role="group" aria-label="Review in theme">
+          {THEME_NAMES.map((n) => (
+            <button
+              key={n}
+              className={`pvwin-btn${themeName === n ? ' on' : ''}`}
+              aria-pressed={themeName === n}
+              onClick={() => setThemeName(n)}
+              title={`Review in the ${n} theme`}
+            >
+              {n === 'midnight' ? '◐' : n === 'daylight' ? '◑' : '◉'}
+            </button>
+          ))}
+        </div>
+        <button
+          className="pvwin-btn"
+          onClick={() => setZoom((z) => Math.max(0.1, (z === 'fit' ? 0.5 : z) - 0.1))}
+          title="Zoom out"
+        >
+          −
+        </button>
+        <button
+          className="pvwin-btn wide"
+          onClick={() => setZoom('fit')}
+          title="Fit to window"
+        >
+          {zoom === 'fit' ? 'fit' : `${Math.round((zoom as number) * 100)}%`}
+        </button>
+        <button
+          className="pvwin-btn"
+          onClick={() => setZoom((z) => Math.min(2, (z === 'fit' ? 0.5 : z) + 0.1))}
+          title="Zoom in"
+        >
+          +
+        </button>
+        <button
+          className={`pvwin-btn ${pinned ? 'on' : ''}`}
+          onClick={() => {
+            const next = !pinned
+            setPinned(next)
+            void (window as unknown as { loomPreview?: PreviewApi }).loomPreview?.setAlwaysOnTop(next)
+          }}
+          title={pinned ? 'Unpin from top' : 'Keep above the editor'}
+        >
+          pin
+        </button>
+        <button className="pvwin-btn" onClick={close} title="Close preview">
+          ✕
+        </button>
       </div>
       {void scale}
     </div>
