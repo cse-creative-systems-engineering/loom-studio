@@ -2561,6 +2561,77 @@ export async function runSelfTest(): Promise<string> {
     }
   }
 
+  // --- 51. per-breakpoint overrides apply to REAL layout ------------------
+  // §40 checked the generated CSS text; nothing measured a box, and the
+  // overrides applied nowhere (no hook in output, and inline base styles beat
+  // every rule). These mount real markup in real containers and measure.
+  {
+    const s51 = new EditorStore()
+    s51.addComponent('Panel', null, 0, 0)
+    const r51 = s51.doc.root as string
+    const moved = s51.addComponent('Card', r51, 300, 200) as string
+    s51.commit({ op: 'resize', id: moved, w: 500, h: 300 }, 'size')
+    s51.commit({ op: 'setResponsive', id: moved, breakpoint: 'sm', patch: { x: 10, y: 20, w: 200, h: 120, opacity: 0.5 } }, 'phone')
+    const hidden = s51.addComponent('Button', r51, 40, 600) as string
+    s51.commit({ op: 'setResponsive', id: hidden, breakpoint: 'sm', patch: { visible: false } }, 'hide')
+    const stack = s51.addComponent('Stack', r51, 700, 40) as string
+    s51.addComponent('Button', stack, 10, 10, { label: 'A' })
+    s51.addComponent('Button', stack, 200, 10, { label: 'B' })
+    s51.commit({ op: 'setResponsive', id: stack, breakpoint: 'sm', patch: { flow: true } }, 'stack')
+
+    const measure = (mode: 'preview' | 'authoring', width: number) => {
+      const style = document.createElement('style')
+      style.textContent = responsiveCss(s51.doc)
+      document.head.appendChild(style)
+      const host = document.createElement('div')
+      host.className = 'loom-container'
+      host.style.cssText = `position:absolute;left:-10000px;top:0;width:${width}px;height:900px`
+      host.innerHTML = renderToStaticMarkup(renderNode({ doc: s51.doc, selected: new Set(), mode }, r51))
+      document.body.appendChild(host)
+      const attr = mode === 'preview' ? 'data-loom-node' : 'data-loom-id'
+      const el = (id: string) => host.querySelector(`[${attr}="${id}"]`) as HTMLElement | null
+      // Children are found by label in preview (they carry no hook of their own).
+      const btn = (label: string) =>
+        [...host.querySelectorAll('button')].find((x) => x.textContent?.trim() === label) as HTMLElement | undefined
+      // Position relative to the containing block (offsetLeft/Top), which is
+      // exactly what `left`/`top` mean — a parent's border is not an offset.
+      const box = (e: Element | null | undefined) => {
+        if (!e) return null
+        const h = e as HTMLElement
+        return { x: h.offsetLeft, y: h.offsetTop, w: h.offsetWidth, h: h.offsetHeight }
+      }
+      const out = {
+        moved: box(el(moved)),
+        movedOpacity: el(moved) ? getComputedStyle(el(moved) as HTMLElement).opacity : 'missing',
+        hiddenDisplay: el(hidden) ? getComputedStyle(el(hidden) as HTMLElement).display : 'missing',
+        a: box(btn('A')),
+        b: box(btn('B')),
+      }
+      host.remove()
+      style.remove()
+      return out
+    }
+    for (const mode of ['preview', 'authoring'] as const) {
+      const phone = measure(mode, 390)
+      const desk = measure(mode, 1280)
+      const m = phone.moved
+      check(`${mode}: a phone override moves and resizes the node`,
+        m !== null && m.x === 10 && m.y === 20 && m.w === 200 && m.h === 120, JSON.stringify(m))
+      check(`${mode}: desktop keeps the base layout`,
+        desk.moved !== null && desk.moved.x === 300 && desk.moved.y === 200 && desk.moved.w === 500, JSON.stringify(desk.moved))
+      check(`${mode}: a phone opacity override applies`, phone.movedOpacity === '0.5' && desk.movedOpacity === '1',
+        `${phone.movedOpacity} / ${desk.movedOpacity}`)
+      check(`${mode}: hidden at phone only`, phone.hiddenDisplay === 'none' && desk.hiddenDisplay !== 'none',
+        `${phone.hiddenDisplay} / ${desk.hiddenDisplay}`)
+      check(`${mode}: a free container flows its children at phone`,
+        phone.a !== null && phone.b !== null && phone.b.y > phone.a.y && phone.b.x === phone.a.x,
+        JSON.stringify({ a: phone.a, b: phone.b }))
+      check(`${mode}: and keeps them free on desktop`,
+        desk.a !== null && desk.b !== null && desk.b.x - desk.a.x === 190 && desk.b.y === desk.a.y,
+        JSON.stringify({ a: desk.a, b: desk.b }))
+    }
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

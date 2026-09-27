@@ -189,6 +189,7 @@ export function applyEffects(
       <div
         key={key}
         aria-hidden="true"
+        data-loom-fx=""
         style={{
           position: 'absolute',
           pointerEvents: 'none',
@@ -218,6 +219,7 @@ export function applyEffects(
       <div
         key="grain"
         aria-hidden="true"
+        data-loom-fx=""
         className="loom-grain"
         style={{ opacity: e.grainIntensity, ['--grain-op' as string]: e.grainIntensity }}
       />,
@@ -232,6 +234,7 @@ export function applyEffects(
       <div
         key="spot"
         aria-hidden="true"
+        data-loom-fx=""
         className="loom-spotlight"
         style={{
           background: `radial-gradient(${e.spotlightSize}px circle at ${x}px ${y}px, ${e.spotlightColor}, transparent 70%)`,
@@ -245,7 +248,7 @@ export function applyEffects(
   /* ---- shimmer ---------------------------------------------------- */
   if (e.shimmer) {
     layers.push(
-      <span key="shim" aria-hidden="true" className="loom-shimmer" style={{ ['--shimmer-dur' as string]: `${e.shimmerSpeed}s` }}>
+      <span key="shim" aria-hidden="true" data-loom-fx="" className="loom-shimmer" style={{ ['--shimmer-dur' as string]: `${e.shimmerSpeed}s` }}>
         <span
           style={{
             position: 'absolute',

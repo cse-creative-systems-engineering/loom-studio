@@ -29,6 +29,21 @@ import {
   type ResponsiveOverride,
 } from '../model/types'
 
+/**
+ * The attribute an OUTPUT element carries when generated rules must reach it.
+ * Distinct from the editor's `data-loom-id` so exports stay free of editor
+ * hooks, and emitted only on nodes that need it.
+ */
+export const OUTPUT_HOOK = 'data-loom-node'
+
+/**
+ * The selector for one node on every surface: the editor canvas addresses it
+ * by its editor id, the preview and exports by the output hook.
+ */
+export function nodeSelector(id: string): string {
+  return `:is([data-loom-id="${id}"],[${OUTPUT_HOOK}="${id}"])`
+}
+
 /** The name of the container every responsive document establishes. */
 export const CONTAINER_NAME = 'loom'
 
@@ -50,9 +65,6 @@ function decls(over: ResponsiveOverride): string[] {
   if (typeof over.w === 'number') out.push(`width:${over.w}px`)
   if (typeof over.h === 'number') out.push(`height:${over.h}px`)
   if (typeof over.opacity === 'number') out.push(`opacity:${over.opacity}`)
-  // `display` is how a free node becomes a flow child at a narrower width, and
-  // the reverse. This is the whole reason flow belongs in the responsive
-  // surface: stacking a row of cards on a phone IS a layout change.
   if (typeof over.flow === 'boolean') {
     out.push(over.flow ? 'display:flex' : 'display:block')
     if (over.flow) {
@@ -60,10 +72,31 @@ function decls(over: ResponsiveOverride): string[] {
       out.push('align-items:stretch')
     }
   }
-  if (typeof over.visible === 'boolean') {
-    out.push(over.visible ? 'display:revert' : 'display:none')
-  }
+  // Only HIDING is expressible: a node hidden in the base layout is not in the
+  // output at all, so there is nothing a breakpoint could reveal, and forcing
+  // `display` on a visible node would erase its own (flex, grid, inline).
+  if (over.visible === false) out.push('display:none')
   return out
+}
+
+/** Every rule one node needs at one breakpoint. */
+function nodeRules(id: string, over: ResponsiveOverride): string[] {
+  const d = decls(over)
+  if (d.length === 0) return []
+  // `!important` is required, not a shortcut: the base layout is INLINE, and
+  // an inline declaration beats any stylesheet rule without it. The override
+  // could never win otherwise — and did not, until it was measured.
+  const rules = [`${nodeSelector(id)}{${d.map((x) => `${x} !important`).join(';')}}`]
+  if (over.flow === true) {
+    // A free container's children are absolutely positioned INLINE, so
+    // `display:flex` on the parent alone moves nothing. Flowing means the
+    // children leave absolute positioning; effect decoration layers
+    // (`data-loom-fx`) stay where they are.
+    rules.push(
+      `${nodeSelector(id)}>:not([data-loom-fx]){position:relative !important;inset:auto !important}`,
+    )
+  }
+  return rules
 }
 
 /**
@@ -86,9 +119,7 @@ export function responsiveCss(doc: Document): string {
     for (const node of Object.values(doc.nodes)) {
       const over = node.responsive?.[bp]
       if (!over) continue
-      const d = decls(over)
-      if (d.length === 0) continue
-      body.push(`[data-loom-id="${node.id}"]{${d.join(';')}}`)
+      body.push(...nodeRules(node.id, over))
     }
     if (body.length === 0) continue
     rules.push(`@container ${CONTAINER_NAME} ${cond}{${body.join('\n')}}`)

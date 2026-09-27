@@ -17,6 +17,7 @@ import { parentOf } from '../model/ops'
 import { typeStep, weightStep, resolveTheme, type Theme } from './theme'
 import { applyEffects, normalizeEffects } from './effects'
 import { behaviourAttrs, groupId } from './behaviour'
+import { OUTPUT_HOOK, isResponsive } from './responsive'
 import type { Document, Node, NodeId, PropValue } from '../model/types'
 
 export interface RenderCtx {
@@ -1647,7 +1648,7 @@ function renderPreviewNode(
   // sibling wrapper would break the absolute-positioning contract that every
   // free-positioned node depends on.
   const layers = eff.layers
-  const content = renderPreviewBody(node, style, children, t, key, parentId, ctx)
+  const content = withOutputHook(node, renderPreviewBody(node, style, children, t, key, parentId, ctx))
 
   if (!layers.length) return content
 
@@ -1669,6 +1670,24 @@ function renderPreviewNode(
     { key },
     ...([layers, existing] as never[]),
   )
+}
+
+/**
+ * Give the output element the hook its generated rules address.
+ *
+ * Output carries no editor ids, so a node whose layout is adjusted by a
+ * generated stylesheet (per-breakpoint overrides) needs its own stable
+ * attribute, or the rules match nothing — which is exactly how responsive
+ * overrides silently did nothing in the preview and both exports. Only nodes
+ * that NEED it carry it, so a plain export stays free of generated hooks.
+ */
+function withOutputHook(node: Node, el: React.ReactElement): React.ReactElement {
+  if (!isResponsive(node)) return el
+  if (el.type === React.Fragment) {
+    // Fail loudly: an override that cannot attach would silently not apply.
+    throw new Error(`${node.type} has no root element, so its layout overrides cannot apply`)
+  }
+  return React.cloneElement(el, { [OUTPUT_HOOK]: node.id } as Record<string, unknown>)
 }
 
 /** The node's own element, with no effect decoration. */
