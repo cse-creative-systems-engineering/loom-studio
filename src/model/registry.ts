@@ -9,7 +9,7 @@
  */
 
 import type { NodeId, PropValue } from './types'
-import { positionProps } from './prop-vocab'
+import { positionProps, STYLING_KEYS, universalStyleProps } from './prop-vocab'
 
 export type PropKind = 'string' | 'number' | 'boolean' | 'enum' | 'color' | 'delimiter'
 
@@ -63,6 +63,12 @@ export interface PropSpec {
    * web-only features while a desktop target is selected.
    */
   requires?: Capability[]
+  /**
+   * Shown behind "More properties" rather than up front. The component's own
+   * options come first; universal styling is one click away. A changed
+   * advanced property is always shown, so a value can never hide.
+   */
+  advanced?: boolean
 }
 
 export type Capability =
@@ -84,6 +90,12 @@ export interface ComponentSpec {
   icon: string
   description: string
   props: Record<string, PropSpec>
+  /**
+   * False for a component with no text anywhere in it (a loading skeleton):
+   * it gets the universal box styling but not the type properties, which
+   * would be controls that change nothing a person can see.
+   */
+  rendersText?: boolean
 }
 
 const registry = new Map<string, ComponentSpec>()
@@ -91,15 +103,30 @@ const registry = new Map<string, ComponentSpec>()
 /**
  * Properties every component carries, injected rather than repeated.
  *
- * Positioning and docking are not a category concern: anything you can place
- * can be anchored, rotated or made sticky. Declaring them 120 times is how you
- * end up with 20 components that quietly cannot dock, so the registry adds them
- * once, here. A component that genuinely cannot take one opts out with
- * `universal: false`, which no component currently needs.
+ * Positioning, docking and box styling are not a category concern: anything
+ * you can place can be anchored, padded, filled or re-typed. Declaring them 120
+ * times is how you end up with 20 components that quietly cannot dock and 50
+ * that cannot take a background, so the registry adds them once, here (see
+ * `universalStyleProps` for why that is safe). The component's own declaration
+ * of a key always wins. A component that genuinely cannot take any of them
+ * opts out with `universal: false`, which no component currently needs.
  */
 function withUniversalProps(spec: ComponentSpec): ComponentSpec {
   if ((spec as { universal?: boolean }).universal === false) return spec
-  return { ...spec, props: { ...positionProps(), ...spec.props } }
+  // The component's own properties come FIRST (declaration order is panel
+  // order, so a newcomer meets Content before Position), and an injected key
+  // is only added where the component did not declare its own.
+  const props: Record<string, PropSpec> = {}
+  for (const [key, ps] of Object.entries(spec.props)) {
+    // A styling key is advanced wherever it is declared, unless the component
+    // says otherwise with an explicit `advanced: false`.
+    props[key] = STYLING_KEYS.has(key) && ps.advanced === undefined ? { ...ps, advanced: true } : ps
+  }
+  const injected = { ...positionProps(), ...universalStyleProps(spec.rendersText !== false) }
+  for (const [key, ps] of Object.entries(injected)) {
+    if (!(key in props)) props[key] = ps
+  }
+  return { ...spec, props }
 }
 
 export function defineComponent(spec: ComponentSpec): ComponentSpec {

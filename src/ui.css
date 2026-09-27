@@ -523,6 +523,97 @@ input, select { font-family: inherit; font-size: 12px; }
 
 .field { margin-bottom: 10px; }
 
+/* Label row: the label plus, when the value is changed, a reset button that
+   must live outside the <label> (see Field in app.tsx). */
+.field-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.field-head > label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+/* A changed value is visible at a glance: accent dot + brighter label. */
+.field.modified .field-head > label { color: var(--ink); }
+
+.mod-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.prop-reset {
+  flex: none;
+  padding: 0 5px;
+  line-height: 18px;
+  font-size: 12px;
+  color: var(--ink-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.prop-reset:hover { color: var(--ink); border-color: var(--line-2); }
+.prop-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Search + the essentials/everything toggle, pinned above the property groups. */
+.props-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px -12px 0;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.props-search {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  outline: none;
+}
+
+.props-search:focus { border-color: rgba(91, 140, 255, 0.65); }
+
+.props-more {
+  flex: 1 1 100%;
+  text-align: left;
+  padding: 6px 9px;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.props-more:hover { color: var(--ink); }
+.props-more.on { color: var(--accent); border-color: rgba(91, 140, 255, 0.5); }
+.props-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.props-empty { color: var(--ink-3); font-size: var(--text-sm); margin: 14px 0; }
+
 .field > label {
   display: flex;
   align-items: center;
@@ -592,6 +683,12 @@ input, select { font-family: inherit; font-size: 12px; }
   border: 1px solid var(--line-2);
   overflow: hidden;
   cursor: pointer;
+}
+
+/* No colour set: the component's own colour applies, so the swatch shows
+   "none" rather than pretending to be white. */
+.swatch.none {
+  background: linear-gradient(to top right, transparent calc(50% - 1px), var(--danger) calc(50% - 1px), var(--danger) calc(50% + 1px), transparent calc(50% + 1px));
 }
 
 .swatch input[type='color'] {

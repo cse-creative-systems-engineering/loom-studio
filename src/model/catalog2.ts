@@ -643,7 +643,7 @@ defineComponent({ name: 'EmptyState', category: 'Data', icon: '○', description
   maxWidth: { type: 'number', default: -1, min: -1, max: 2000, group: 'Type' },
   ...padProps(),
 }})
-defineComponent({ name: 'Skeleton', category: 'Data', icon: '▒', description: "The shape of content that is still arriving. Prefer it to a spinner for page loads.", props: {
+defineComponent({ name: 'Skeleton', category: 'Data', icon: '▒', description: "The shape of content that is still arriving. Prefer it to a spinner for page loads.", rendersText: false, props: {
   lines: { type: 'number', default: 3, min: 1, max: 12, group: 'Layout' },
   height: { type: 'number', default: 14, min: 8, max: 48, group: 'Layout' },
   // The three shapes a placeholder is drawn in: a paragraph of lines, one

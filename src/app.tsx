@@ -12,6 +12,7 @@ import {
   delimiterLabel,
 } from './model/registry'
 import { tooltipText } from './model/tooltip'
+import { inspectorView, propLabel } from './model/inspector-view'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { normalizeEffects } from './render/effects'
@@ -1083,7 +1084,30 @@ function Canvas({
  * Inspector — generated from the component schema
  * ------------------------------------------------------------------ */
 
+/** Per-viewer preference; storage can be unavailable, and the panel must still work. */
+const ADVANCED_KEY = 'loom.inspector.showAdvanced'
+
+function readShowAdvanced(): boolean {
+  try {
+    return window.localStorage.getItem(ADVANCED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 function Inspector({ s, viewport }: { s: EditorStore; viewport: Breakpoint }) {
+  // Hooks sit above the early returns: the panel keeps its search and toggle
+  // across selections, which is what a person scanning several nodes wants.
+  const [query, setQuery] = React.useState('')
+  const [showAdvanced, setShowAdvancedState] = React.useState(readShowAdvanced)
+  const setShowAdvanced = (on: boolean) => {
+    setShowAdvancedState(on)
+    try {
+      window.localStorage.setItem(ADVANCED_KEY, on ? '1' : '0')
+    } catch {
+      // Not persisted; the toggle still works for this session.
+    }
+  }
   const id = s.selection[0]
   const node = id ? s.doc.nodes[id] : undefined
   // Narrowing the artboard and editing what it revealed are the same action, so
@@ -1108,13 +1132,7 @@ function Inspector({ s, viewport }: { s: EditorStore; viewport: Breakpoint }) {
   const spec = getComponent(node.type)
   if (!spec) return <aside className="inspector" />
 
-  const groups = new Map<string, Array<[string, (typeof spec)['props'][string]]>>()
-  for (const [key, ps] of Object.entries(spec.props)) {
-    const g = ps.group ?? 'General'
-    const list = groups.get(g) ?? []
-    list.push([key, ps])
-    groups.set(g, list)
-  }
+  const view = inspectorView(spec, node.props, { query, showAdvanced })
 
   const chain = ancestry(s.doc, node.id)
   const parent = parentOf(s.doc, node.id)
@@ -1267,28 +1285,54 @@ function Inspector({ s, viewport }: { s: EditorStore; viewport: Breakpoint }) {
           </section>
         )}
 
-        {[...groups.entries()].map(([group, props]) => (
-          <section key={group}>
-            <h3>{group}</h3>
-            {props.map(([key, ps]) => {
-              const supported = supportedIn(spec, key, s.target)
-              // Fall back to the schema default so a missing key renders as
-              // its real value instead of a misleading 0/empty.
-              const raw = node.props[key]
-              const value = Object.prototype.hasOwnProperty.call(node.props, key)
-                ? raw
-                : ps.default
-              return (
-                <Field
-                  key={key}
-                  name={key}
-                  ps={ps}
-                  value={value}
-                  onChange={(v) => s.commit({ op: 'setProp', id: node.id, key, value: v }, `Set ${key}`)}
-                  badge={supported ? undefined : s.target}
-                />
-              )
-            })}
+        <div className="props-bar">
+          <input
+            type="search"
+            className="props-search"
+            placeholder="Search properties"
+            aria-label="Search properties"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setQuery('')
+            }}
+          />
+          <button
+            type="button"
+            className={`props-more ${showAdvanced ? 'on' : ''}`}
+            aria-pressed={showAdvanced}
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            title={showAdvanced ? 'Show only the essentials' : 'Show spacing, surface and type for this component'}
+          >
+            {showAdvanced
+              ? 'Show essentials only'
+              : view.hiddenAdvanced > 0
+                ? `Show ${view.hiddenAdvanced} more ${view.hiddenAdvanced === 1 ? 'property' : 'properties'}`
+                : 'Show all properties'}
+          </button>
+        </div>
+
+        {view.groups.length === 0 && query.trim() !== '' && (
+          <p className="props-empty">No properties match “{query.trim()}”.</p>
+        )}
+
+        {view.groups.map((group) => (
+          <section key={group.name}>
+            <h3>{group.name}</h3>
+            {group.rows.map((row) => (
+              <Field
+                key={row.key}
+                name={row.key}
+                ps={row.spec}
+                value={row.value}
+                modified={row.modified}
+                onChange={(v) => s.commit({ op: 'setProp', id: node.id, key: row.key, value: v }, `Set ${row.key}`)}
+                onReset={() =>
+                  s.commit({ op: 'setProp', id: node.id, key: row.key, value: row.spec.default }, `Reset ${row.key}`)
+                }
+                badge={supportedIn(spec, row.key, s.target) ? undefined : s.target}
+              />
+            ))}
           </section>
         ))}
 
@@ -1321,16 +1365,39 @@ interface FieldProps {
   value: PropValue | undefined
   onChange: (v: PropValue) => void
   badge?: string
+  /** The value differs from the schema default; shows a marker and a reset. */
+  modified?: boolean
+  onReset?: () => void
 }
 
-function Field({ name, ps, value, onChange, badge }: FieldProps) {
+function Field({ name, ps, value, onChange, badge, modified, onReset }: FieldProps) {
+  const label = propLabel(name, ps)
+  // -1 is the shared vocabulary's "the designer did not set this". Showing it
+  // as a number reads as a real value of minus one, so it shows as empty.
+  const unset = ps.type === 'number' && ps.default === -1
   return (
-    <div className={`field ${badge ? 'gated' : ''}`}>
-      <label>
-        {ps.label ?? name}
-        {ps.bindable && <span className="bind" title="Can be bound to a data source">◈</span>}
-        {badge && <span className="gate-badge">{badge} only</span>}
-      </label>
+    <div className={`field ${badge ? 'gated' : ''} ${modified ? 'modified' : ''}`}>
+      {/* The reset button sits OUTSIDE the label: a button is a labelable
+          element, so inside a <label> a click on the label text would reset. */}
+      <div className="field-head">
+        <label title={name}>
+          {modified && <span className="mod-dot" aria-label="Changed from default" title="Changed from default" />}
+          {label}
+          {ps.bindable && <span className="bind" title="Can be bound to a data source">◈</span>}
+          {badge && <span className="gate-badge">{badge} only</span>}
+        </label>
+        {modified && onReset && (
+          <button
+            type="button"
+            className="prop-reset"
+            onClick={onReset}
+            aria-label={`Reset ${label} to default`}
+            title="Reset to default"
+          >
+            ↺
+          </button>
+        )}
+      </div>
       {ps.type === 'boolean' && (
         <Toggle checked={value === true} onChange={(v) => onChange(v)} />
       )}
@@ -1365,14 +1432,15 @@ function Field({ name, ps, value, onChange, badge }: FieldProps) {
           onChange={(e) => onChange(e.target.value)}
         />
       )}
-      {ps.type === 'color' && <ColorField value={String(value ?? '#ffffff')} onChange={onChange} />}
+      {ps.type === 'color' && <ColorField value={String(value ?? '')} onChange={onChange} />}
       {ps.type === 'number' && (
         <NumField
-          label={ps.label ?? name}
+          ariaLabel={label}
           value={Number(value) || 0}
           min={ps.min}
           max={ps.max}
           step={ps.step ?? 1}
+          unset={unset}
           onChange={onChange}
           onCommit={() => undefined}
         />
@@ -1387,9 +1455,12 @@ function Field({ name, ps, value, onChange, badge }: FieldProps) {
  */
 function ColorField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const hex = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#ffffff'
+  // An empty colour means "the component's own colour", not white; the swatch
+  // must not claim a colour that will not render.
+  const none = value === ''
   return (
     <div className="color-field">
-      <span className="swatch" style={{ background: hex }} aria-hidden="true">
+      <span className={`swatch ${none ? 'none' : ''}`} style={none ? undefined : { background: hex }} aria-hidden="true">
         <input
           type="color"
           value={hex}
@@ -1401,6 +1472,7 @@ function ColorField({ value, onChange }: { value: string; onChange: (v: string) 
         type="text"
         className="hex"
         value={value}
+        placeholder="default"
         spellCheck={false}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -1410,31 +1482,45 @@ function ColorField({ value, onChange }: { value: string; onChange: (v: string) 
 
 function NumField({
   label,
+  ariaLabel,
   value,
   min,
   max,
   step = 1,
+  unset = false,
   onChange,
   onCommit,
 }: {
-  label: string
+  /** Visible inline label. Omit where a label is already shown above the field. */
+  label?: string
+  /** Accessible name when there is no visible inline label. */
+  ariaLabel?: string
   value: number
   min?: number
   max?: number
   step?: number
+  /** -1 means "not set": shown empty with an `auto` hint, and clearing writes -1. */
+  unset?: boolean
   onChange: (v: number) => void
   onCommit: () => void
 }) {
+  const shown = unset && value === -1 ? '' : Number.isFinite(value) ? value : 0
   return (
     <div className="num">
-      <span className="num-label">{label}</span>
+      {label !== undefined && <span className="num-label">{label}</span>}
       <input
         type="number"
-        value={Number.isFinite(value) ? value : 0}
+        aria-label={label === undefined ? ariaLabel : undefined}
+        value={shown}
+        placeholder={unset ? 'auto' : undefined}
         min={min}
         max={max}
         step={step}
         onChange={(e) => {
+          if (unset && e.target.value === '') {
+            onChange(-1)
+            return
+          }
           const v = Number(e.target.value)
           if (Number.isFinite(v)) onChange(v)
         }}

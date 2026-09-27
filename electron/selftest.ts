@@ -9,6 +9,8 @@
 
 import { EditorStore, emptyDocument, type LoomHost } from '../src/state/store'
 import { autosaveFileName, isExternalUrlAllowed } from './guards'
+import { humanize, inspectorView, isModified } from '../src/model/inspector-view'
+import { universalStyleProps } from '../src/model/prop-vocab'
 import type { Document, Node as LoomNode } from '../src/model/types'
 import { descendants, parentOf } from '../src/model/ops'
 import { allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
@@ -2448,6 +2450,115 @@ export async function runSelfTest(): Promise<string> {
     check('every other scheme is refused',
       hostileUrls.every((u) => !isExternalUrlAllowed(u)),
       hostileUrls.filter(isExternalUrlAllowed).join(', '))
+  }
+
+  // --- 50. universal styling + a panel for newcomers and developers ------
+  {
+    const BOX = ['padding', 'paddingX', 'paddingY', 'radius', 'background', 'border', 'borderWidth', 'shadow']
+    const TYPE = ['fontSize', 'fontWeight', 'color', 'lineHeight', 'letterSpacing']
+    const specs = allComponents()
+
+    // Every component carries the universal box styling; every component with
+    // text carries the type styling. Walked from the registry, not a list.
+    const noBox = specs.filter((c) => BOX.some((k) => !(k in c.props))).map((c) => c.name)
+    check('every component carries universal box styling', noBox.length === 0, noBox.join(', '))
+    const noType = specs.filter((c) => c.rendersText !== false && TYPE.some((k) => !(k in c.props))).map((c) => c.name)
+    check('every component with text carries universal type styling', noType.length === 0, noType.join(', '))
+    const skeleton = getComponent('Skeleton')
+    // `color` is excluded: Skeleton declares its own, meaning the placeholder fill.
+    check('a component with no text is not offered type controls',
+      Boolean(skeleton) && TYPE.filter((k) => k !== 'color').every((k) => !(k in (skeleton?.props ?? {}))))
+
+    // Injection must change NO existing output: every injected property
+    // defaults to unset, which the shared style pass ignores.
+    const setDefaults = Object.entries(universalStyleProps(true))
+      .filter(([, ps]) => !(ps.default === -1 || ps.default === '' || ps.default === 'none'))
+      .map(([k]) => k)
+    check('every universal property defaults to unset', setDefaults.length === 0, setDefaults.join(', '))
+
+    // A component's own declaration wins over the injected one, and keeps its
+    // meaning: a component that declared padding 0 still defaults to 0, not
+    // to the injected unset.
+    const ownPadding = specs.filter((c) => c.props.padding?.default === 0)
+    check('a component\'s own property is not replaced by the universal one', ownPadding.length > 0,
+      `${ownPadding.length} components keep their own padding default`)
+
+    // The component's own options come first in the panel.
+    const button = getComponent('Button')
+    const firstKey = button ? Object.keys(button.props)[0] : ''
+    check('a component\'s own properties are listed before injected ones',
+      Boolean(button) && !['anchor', 'rotate', 'sticky', ...BOX, ...TYPE].includes(firstKey), firstKey)
+
+    // Newly reachable styling reaches the output. Before this, a Paragraph had
+    // no background and an Alert no font size at all.
+    {
+      const s50 = new EditorStore()
+      const r50 = withRoot(s50)
+      const para = s50.addComponent('Paragraph', r50, 0, 0, { background: '#123456', padding: 18 })
+      const alert = s50.addComponent('Alert', r50, 0, 0, { fontSize: 23, letterSpacing: 2 })
+      const html = emitHtml(s50.doc)
+      check('a paragraph can take a background and padding', Boolean(para) && html.includes('#123456') && html.includes('padding:18px'))
+      check('an alert can take a font size and letter spacing', Boolean(alert) && html.includes('font-size:23px') && html.includes('letter-spacing:2px'))
+
+      // Saved and reopened, the new styling survives.
+      const back = validate(serialize(s50.doc))
+      check('universal styling survives save and load',
+        back.issues.length === 0 && para !== undefined && back.doc?.nodes[para]?.props.background === '#123456',
+        back.issues.map((i) => i.message).join('; '))
+    }
+
+    // An OLD file (written before these properties existed) opens with no
+    // repairs and renders exactly as it did: missing keys take unset defaults.
+    {
+      const s = new EditorStore()
+      const r = withRoot(s)
+      s.addComponent('Button', r, 20, 20, { text: 'Old file' })
+      s.addComponent('Paragraph', r, 20, 80)
+      const old = JSON.parse(serialize(s.doc)) as { nodes: Record<string, { type: string; props: Record<string, unknown> }> }
+      for (const n of Object.values(old.nodes)) {
+        const spec = getComponent(n.type)
+        for (const [k, ps] of Object.entries(spec?.props ?? {})) if (ps.advanced) delete n.props[k]
+      }
+      const loaded = validate(JSON.stringify(old))
+      check('a file written before universal styling opens with no repairs', loaded.issues.length === 0,
+        loaded.issues.map((i) => i.message).join('; '))
+      check('and renders exactly as before', loaded.doc !== null && emitHtml(loaded.doc) === emitHtml(s.doc))
+    }
+
+    // The panel: essentials first, everything one click away, nothing hidden
+    // that was changed, and search that ignores the toggle.
+    {
+      const spec = getComponent('Button')
+      if (spec) {
+        const defaults = instantiate('Button').props
+        const essentials = inspectorView(spec, defaults, { query: '', showAdvanced: false })
+        const shown = essentials.groups.flatMap((g) => g.rows.map((r) => r.key))
+        check('the panel starts with essentials only', !shown.includes('background') && essentials.hiddenAdvanced > 0,
+          `${essentials.hiddenAdvanced} hidden`)
+        check('the component\'s own options are always shown',
+          ['label', 'variant', 'size', 'disabled'].every((k) => shown.includes(k)), shown.join(','))
+        check('the essentials are a short list', shown.length <= 16, `${shown.length} shown: ${shown.join(',')}`)
+        const all = inspectorView(spec, defaults, { query: '', showAdvanced: true })
+        check('"More properties" reveals everything', all.hiddenAdvanced === 0 &&
+          all.groups.reduce((n, g) => n + g.rows.length, 0) === Object.keys(spec.props).length)
+        const changed = inspectorView(spec, { ...defaults, shadow: 'lg' }, { query: '', showAdvanced: false })
+        const shadowRow = changed.groups.flatMap((g) => g.rows).find((r) => r.key === 'shadow')
+        check('a changed advanced property is never hidden', shadowRow?.modified === true)
+        const found = inspectorView(spec, defaults, { query: 'letter', showAdvanced: false })
+        check('search finds advanced properties with the toggle off',
+          found.groups.flatMap((g) => g.rows).some((r) => r.key === 'letterSpacing') && found.hiddenAdvanced === 0)
+        const byLabel = inspectorView(spec, defaults, { query: 'font size', showAdvanced: false })
+        check('search matches the readable label, word by word',
+          byLabel.groups.flatMap((g) => g.rows).some((r) => r.key === 'fontSize'))
+        const none = inspectorView(spec, defaults, { query: 'zzzz-nothing', showAdvanced: true })
+        check('a search with no match returns no groups', none.groups.length === 0)
+      }
+      check('labels read as words',
+        humanize('paddingX') === 'Padding X' && humanize('fontSize') === 'Font size' && humanize('aria-label') === 'Aria label',
+        `${humanize('paddingX')} | ${humanize('fontSize')} | ${humanize('aria-label')}`)
+      const pad = getComponent('Paragraph')?.props.padding
+      check('an unset value is not reported as changed', Boolean(pad) && pad !== undefined && !isModified(pad, -1) && isModified(pad, 0))
+    }
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
