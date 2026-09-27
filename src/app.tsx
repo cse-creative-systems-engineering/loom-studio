@@ -1,6 +1,6 @@
 import React from 'react'
 import { EditorStore, emptyDocument } from './state/store'
-import type { Breakpoint, Document, Node, NodeId, PropValue } from './model/types'
+import type { Breakpoint, Document, InteractionState, Node, NodeId, PropValue } from './model/types'
 import { ancestry, parentOf } from './model/ops'
 import { snapMove as snapTo, artboardAnchors, type SnapBox } from './model/snap'
 import {
@@ -15,10 +15,11 @@ import { tooltipText } from './model/tooltip'
 import { inspectorView, propLabel } from './model/inspector-view'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
+import { StatesPanel } from './states-inspector'
 import { normalizeEffects } from './render/effects'
 import { Toggle } from './ui-primitives'
 import { VIEWPORTS, nodeBreakpoints } from './render/responsive'
-import { installResponsiveCss, CONTAINER_CLASS } from './render/behaviour-mount'
+import { installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import { ContextMenu, type MenuState } from './context-menu'
 import { THEME_NAMES, getTheme } from './render/theme'
 import './ui.css'
@@ -77,6 +78,9 @@ export function App() {
   // Canvas, because the Inspector writes overrides for it: narrowing the
   // artboard and editing what that narrowing revealed are one action.
   const [viewport, setViewport] = React.useState<Breakpoint>('lg')
+  // The interaction state being edited. Lifted for the same reason as the
+  // viewport: editing a hover and SEEING the hover on the canvas are one action.
+  const [editState, setEditState] = React.useState<InteractionState | null>(null)
   const [menu, setMenu] = React.useState<MenuState | null>(null)
   // Canvas zoom is view state, not document state: it never touches the
   // doc, the history, or the output. 1 = 100%.
@@ -252,6 +256,7 @@ export function App() {
         <Toolbox s={s} onDragChange={setDragging} zoom={zoom} />
         <Canvas
           viewport={viewport}
+          editState={editState}
           onViewport={setViewport}
           s={s}
           dragging={dragging}
@@ -259,7 +264,7 @@ export function App() {
           zoom={zoom}
           onZoom={(z) => setZoom(Math.min(2, Math.max(0.25, Math.round(z * 100) / 100)))}
         />
-        <Inspector s={s} viewport={viewport} />
+        <Inspector s={s} viewport={viewport} editState={editState} onEditState={setEditState} />
       </div>
       <StatusBar s={s} previewOpen={previewOpen} onTogglePreview={togglePreview} />
       {menu && <ContextMenu s={s} state={menu} onClose={() => setMenu(null)} />}
@@ -798,8 +803,10 @@ function Canvas({
   onZoom,
   viewport,
   onViewport,
+  editState,
 }: {
   s: EditorStore
+  editState: InteractionState | null
   dragging: string | null
   onMenu: (m: MenuState | null) => void
   zoom: number
@@ -822,7 +829,7 @@ function Canvas({
   // The layout rules are generated from the document, so they have to be
   // re-derived whenever it changes.
   React.useEffect(() => {
-    installResponsiveCss(s.doc)
+    installDocumentCss(s.doc)
   }, [s.doc])
 
   const onContextMenuNode = (id: NodeId, e: React.MouseEvent) => {
@@ -1048,7 +1055,14 @@ function Canvas({
         >
           {s.doc.root !== null && (
             renderNode(
-              { doc: s.doc, onPointerDownNode, onContextMenuNode, selected },
+              {
+                doc: s.doc,
+                onPointerDownNode,
+                onContextMenuNode,
+                selected,
+                forceState:
+                  editState && s.selection.length === 1 ? { id: s.selection[0], state: editState } : undefined,
+              },
               s.doc.root,
             )
           )}
@@ -1095,7 +1109,17 @@ function readShowAdvanced(): boolean {
   }
 }
 
-function Inspector({ s, viewport }: { s: EditorStore; viewport: Breakpoint }) {
+function Inspector({
+  s,
+  viewport,
+  editState,
+  onEditState,
+}: {
+  s: EditorStore
+  viewport: Breakpoint
+  editState: InteractionState | null
+  onEditState: (state: InteractionState | null) => void
+}) {
   // Hooks sit above the early returns: the panel keeps its search and toggle
   // across selections, which is what a person scanning several nodes wants.
   const [query, setQuery] = React.useState('')
@@ -1284,6 +1308,8 @@ function Inspector({ s, viewport }: { s: EditorStore; viewport: Breakpoint }) {
             })}
           </section>
         )}
+
+        <StatesPanel s={s} node={node} editing={editState} onEditing={onEditState} />
 
         <div className="props-bar">
           <input

@@ -69,7 +69,43 @@ export interface Node {
    * breakpoints it actually overrides, so the common case costs nothing.
    */
   responsive?: ResponsiveOverrides
+  /**
+   * Interaction-state styling: how the node looks while hovered, focused or
+   * pressed. Same shape and discipline as `responsive` — a small typed bag per
+   * state, carried only for the states a node actually styles.
+   */
+  states?: InteractionStyles
 }
+
+/** The interaction states a node can be styled for, in cascade order. */
+export type InteractionState = 'hover' | 'focus' | 'pressed'
+
+export const INTERACTION_STATES: readonly InteractionState[] = ['hover', 'focus', 'pressed'] as const
+
+/**
+ * What a state may change. Deliberately visual-only and SMALL: every field
+ * animates, none of them moves layout (so a hover can never reflow a page), and
+ * `scale`/`lift`/`brightness` work on any component without knowing its colour.
+ */
+export interface StateStyle {
+  /** Surface colour. */
+  background?: string
+  /** Text colour. */
+  color?: string
+  /** Border colour. */
+  border?: string
+  shadow?: 'none' | 'sm' | 'md' | 'lg' | 'glow'
+  /** 0 to 1. */
+  opacity?: number
+  /** 1 is natural size. */
+  scale?: number
+  /** Pixels upward; negative sinks. */
+  lift?: number
+  /** 1 is unchanged; above brightens, below darkens. */
+  brightness?: number
+}
+
+export type InteractionStyles = Partial<Record<InteractionState, StateStyle>>
 
 /** The viewport widths a document can be authored for. */
 export type Breakpoint = 'sm' | 'md' | 'lg'
@@ -197,6 +233,13 @@ export type Op =
    * zero and is how a node returns to the base value.
    */
   | { op: 'setResponsive'; id: NodeId; breakpoint: Breakpoint; patch: Record<string, number | boolean | null> }
+  /**
+   * Write one interaction state's styling for a node. `null` in the patch
+   * removes that key, which is how a state returns to the base look. Values
+   * are sanitised on apply: a colour string lands in a generated stylesheet,
+   * so it must not be able to carry anything but a colour.
+   */
+  | { op: 'setStateStyle'; id: NodeId; state: InteractionState; patch: Record<string, string | number | null> }
   | { op: 'rename'; name: string }
   /**
    * Set the document's design theme. `null` clears it back to the default.

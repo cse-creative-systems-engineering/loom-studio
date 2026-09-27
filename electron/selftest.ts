@@ -11,6 +11,8 @@ import { EditorStore, emptyDocument, type LoomHost } from '../src/state/store'
 import { autosaveFileName, isExternalUrlAllowed } from './guards'
 import { humanize, inspectorView, isModified } from '../src/model/inspector-view'
 import { universalStyleProps } from '../src/model/prop-vocab'
+import { isSafeColor, stateCss, STATE_PRESETS } from '../src/render/states'
+import { documentCss } from '../src/render/document-css'
 import type { Document, Node as LoomNode } from '../src/model/types'
 import { descendants, parentOf } from '../src/model/ops'
 import { allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
@@ -1828,7 +1830,7 @@ export async function runSelfTest(): Promise<string> {
       check('the HTML export ships the layout rules', html.includes('(max-width: 639px)'))
       check('the HTML export makes the page measurable', html.includes('loom-container'))
       const jsx = emitReact(s40.doc)
-      check('the React export ships the layout rules', jsx.includes('RESPONSIVE_CSS'))
+      check('the React export ships the layout rules', jsx.includes('DOCUMENT_CSS'))
       check('the React export root is measurable', jsx.includes('loom-container'))
     }
   }
@@ -2630,6 +2632,124 @@ export async function runSelfTest(): Promise<string> {
         desk.a !== null && desk.b !== null && desk.b.x - desk.a.x === 190 && desk.b.y === desk.a.y,
         JSON.stringify({ a: desk.a, b: desk.b }))
     }
+  }
+
+  // --- 52. interaction states: hover, focus, pressed ---------------------
+  {
+    const s52 = new EditorStore()
+    s52.addComponent('Panel', null, 0, 0)
+    const r52 = s52.doc.root as string
+    const btn = s52.addComponent('Button', r52, 40, 40, { label: 'Hover me' }) as string
+    const plain = s52.addComponent('Button', r52, 40, 120, { label: 'Plain' }) as string
+
+    // Op + exact undo, including the absence of the bag.
+    s52.commit({ op: 'setStateStyle', id: btn, state: 'hover', patch: { background: '#123456', lift: 3, brightness: 1.1 } }, 'hover')
+    check('a state style is stored per state', s52.doc.nodes[btn].states?.hover?.background === '#123456' &&
+      s52.doc.nodes[btn].states?.pressed === undefined)
+    s52.undo()
+    check('undoing the first state style leaves no empty bag', s52.doc.nodes[btn].states === undefined)
+    s52.redo()
+    s52.commit({ op: 'setStateStyle', id: btn, state: 'pressed', patch: { scale: 0.97, opacity: 0.8 } }, 'pressed')
+    s52.commit({ op: 'setStateStyle', id: btn, state: 'focus', patch: { shadow: 'glow' } }, 'focus')
+
+    // Values are clamped, unknown keys and hostile colours never land.
+    s52.commit({ op: 'setStateStyle', id: plain, state: 'hover', patch: { scale: 9, lift: -99 } }, 'clamp')
+    check('state numbers are clamped into range',
+      s52.doc.nodes[plain].states?.hover?.scale === 1.5 && s52.doc.nodes[plain].states?.hover?.lift === -24,
+      JSON.stringify(s52.doc.nodes[plain].states))
+    s52.commit({ op: 'setStateStyle', id: plain, state: 'focus', patch: { background: 'red}</style><script>alert(1)</script>', bogus: 1 } }, 'hostile')
+    check('a hostile colour or unknown key never reaches the document', s52.doc.nodes[plain].states?.focus === undefined)
+    s52.commit({ op: 'setStateStyle', id: plain, state: 'hover', patch: { scale: null, lift: null } }, 'clear')
+
+    const good = ['#fff', '#12345678', 'red', 'transparent', 'rgb(1, 2, 3)', 'rgba(1,2,3,0.5)', 'hsl(210 50% 40% / .5)', 'var(--loom-accent)']
+    const bad = ['red;}', 'red}</style>', 'url(x)', 'rgb(1,2,3));x', 'expression(alert(1))', 'var(--a) ;b', '"red"', '', '#12']
+    check('the colour grammar admits real colours', good.every(isSafeColor), good.filter((c) => !isSafeColor(c)).join(', '))
+    check('the colour grammar refuses everything else', bad.every((c) => !isSafeColor(c)), bad.filter(isSafeColor).join(', '))
+
+    // Generated CSS: the right selectors, in the right order.
+    const css = stateCss(s52.doc)
+    check('a document with no states ships no state rules', stateCss(rootDoc()) === '')
+    check('hover rules only apply where hovering exists', /@media \(hover:hover\)\{[^]*:hover/.test(css))
+    check('focus means keyboard focus, on the node or inside it', css.includes(':focus-visible') && css.includes(':has(:focus-visible)'))
+    check('pressed is :active', css.includes(':active'))
+    check('pressed rules come after hover rules', css.indexOf(':active') > css.indexOf(':hover'))
+    check('lift and scale compose with the node\'s own transform', css.includes('translate:0 -3px !important') && css.includes('scale:0.97 !important'))
+    check('state changes animate, except under reduced motion', css.includes('transition:') && css.includes('prefers-reduced-motion'))
+    check('every surface gets the state rules', documentCss(s52.doc).includes(css))
+
+    // Defence in depth: a document built in code, bypassing op and loader.
+    const forged = JSON.parse(JSON.stringify(s52.doc)) as Document
+    forged.nodes[plain].states = { hover: { background: 'red}</style><script>alert(1)</script>' } }
+    const forgedHtml = emitHtml(forged)
+    check('a forged colour cannot break out of the exported stylesheet', !forgedHtml.includes('<script>alert(1)'))
+
+    // The file trust boundary.
+    const hostileFile = JSON.parse(serialize(s52.doc)) as { nodes: Record<string, Record<string, unknown>> }
+    hostileFile.nodes[plain].states = { hover: { background: 'url(evil)', opacity: 7, glow: true }, sideways: { opacity: 1 }, focus: 'x' }
+    const loaded = validate(JSON.stringify(hostileFile))
+    const paths = loaded.issues.map((i) => `${i.path} ${i.message}`)
+    check('a hostile states bag is repaired and reported',
+      loaded.doc?.nodes[plain].states?.hover?.opacity === 1 && loaded.doc?.nodes[plain].states?.hover?.background === undefined &&
+      paths.some((p) => p.includes('sideways')) && paths.some((p) => p.includes('not a colour')) && paths.some((p) => p.includes('glow')) &&
+      paths.some((p) => p.includes('states.focus')), paths.join(' | '))
+    const clean = validate(serialize(s52.doc))
+    check('states survive save and load', clean.issues.length === 0 &&
+      JSON.stringify(clean.doc?.nodes[btn].states) === JSON.stringify(s52.doc.nodes[btn].states))
+
+    // Only styled nodes carry an output hook.
+    const html = emitHtml(s52.doc)
+    check('a styled node carries its output hook in the export', html.includes(`data-loom-node="${btn}"`))
+    check('an unstyled node carries none', !html.includes(`data-loom-node="${plain}"`))
+
+    // LIVE: computed styles in a real document. The editor forces the state
+    // being edited; the export attaches the same rules to its hook.
+    const live = (mode: 'preview' | 'authoring', force: 'hover' | 'pressed' | null) => {
+      const style = document.createElement('style')
+      style.textContent = documentCss(s52.doc)
+      document.head.appendChild(style)
+      const host = document.createElement('div')
+      host.className = 'loom-container'
+      host.style.cssText = 'position:absolute;left:-10000px;top:0;width:800px;height:400px'
+      host.innerHTML = renderToStaticMarkup(renderNode({
+        doc: s52.doc, selected: new Set(), mode, forceState: force ? { id: btn, state: force } : undefined,
+      }, r52))
+      document.body.appendChild(host)
+      const el = host.querySelector(mode === 'preview' ? `[data-loom-node="${btn}"]` : `[data-loom-id="${btn}"]`) as HTMLElement | null
+      // The generated transition is read FIRST (it proves the base rule
+      // reached this element), then disabled so values read the end state.
+      const transition = el ? getComputedStyle(el).transitionProperty : 'missing'
+      if (el) el.style.transition = 'none'
+      const c = el ? getComputedStyle(el) : null
+      const out = c
+        ? { bg: c.backgroundColor, translate: c.translate, filter: c.filter, scale: c.scale, opacity: c.opacity, transition }
+        : null
+      host.remove()
+      style.remove()
+      return out
+    }
+    const hovered = live('authoring', 'hover')
+    check('the editor shows the hover being edited', hovered !== null && hovered.bg === 'rgb(18, 52, 86)' &&
+      hovered.translate === '0px -3px' && hovered.filter === 'brightness(1.1)', JSON.stringify(hovered))
+    const pressed = live('authoring', 'pressed')
+    check('the editor shows the pressed state being edited', pressed !== null && pressed.scale === '0.97' && pressed.opacity === '0.8',
+      JSON.stringify(pressed))
+    const resting = live('authoring', null)
+    check('without a forced state the node rests', resting !== null && resting.bg !== 'rgb(18, 52, 86)' && resting.scale === 'none',
+      JSON.stringify(resting))
+    const exported = live('preview', null)
+    check('the export attaches the state rules to the node',
+      exported !== null && exported.transition.includes('scale') && exported.transition.includes('background-color'),
+      JSON.stringify(exported))
+
+    // Presets are complete and valid on their own.
+    const presetProblems = STATE_PRESETS.flatMap((p) =>
+      Object.entries(p.states).flatMap(([st, style]) => {
+        const f = JSON.parse(JSON.stringify(s52.doc)) as Document
+        f.nodes[plain].states = { [st]: style }
+        return stateCss(f) === '' ? [`${p.id}.${st}`] : []
+      }),
+    )
+    check('every preset produces real rules', STATE_PRESETS.length >= 4 && presetProblems.length === 0, presetProblems.join(', '))
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

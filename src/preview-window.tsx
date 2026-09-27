@@ -13,7 +13,7 @@ import { renderNode } from './render/web'
 import { resolveTheme, THEME_NAMES, type ThemeName } from './render/theme'
 import { emptyDocument } from './state/store'
 import type { Document } from './model/types'
-import { installBehaviourRuntime, installResponsiveCss, CONTAINER_CLASS } from './render/behaviour-mount'
+import { installBehaviourRuntime, installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import './preview-window.css'
 import './model/toolbox'
 
@@ -37,10 +37,11 @@ function App() {
     installBehaviourRuntime()
   }, [])
   // The preview is the artifact at the width it is being viewed at, so it
-  // carries the same generated layout rules the export does.
+  // carries the same generated rules (layout + interaction states) the export
+  // does, resolved against the theme being reviewed.
   React.useEffect(() => {
-    installResponsiveCss(doc)
-  }, [doc])
+    installDocumentCss(doc, resolveTheme(themeName))
+  }, [doc, themeName])
 
   React.useEffect(() => {
     const api = (window as unknown as { loomPreview?: PreviewApi }).loomPreview

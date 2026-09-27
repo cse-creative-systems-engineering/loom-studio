@@ -11,10 +11,11 @@
  *     every call site.
  */
 
-import { BREAKPOINTS, type Breakpoint, type DocMeta, type Document, type Node, type NodeId } from './types'
+import { BREAKPOINTS, INTERACTION_STATES, type Breakpoint, type DocMeta, type Document, type InteractionState, type InteractionStyles, type Node, type NodeId } from './types'
 import { getComponent, validateProps } from './registry'
 import { clampZ } from './ops'
 import { normalizeEffects } from '../render/effects'
+import { cleanStateStyle } from '../render/states'
 import './toolbox'
 
 /**
@@ -221,6 +222,33 @@ export function validate(input: unknown): Validated {
       issues.push({ path: `$.nodes.${id}.responsive`, message: 'not an object (dropped)' })
       responsive = undefined
     }
+    // Interaction states are written into a generated stylesheet as TEXT, so
+    // this is a real trust boundary: an unknown state, an unknown key, an
+    // out-of-range number or a "colour" that is not a colour is dropped and
+    // reported — the same sanitiser the op uses, so no path differs.
+    let states: Node['states']
+    if (node.states === undefined) {
+      states = undefined
+    } else if (node.states && typeof node.states === 'object' && !Array.isArray(node.states)) {
+      const bag: InteractionStyles = {}
+      for (const [stateRaw, styleRaw] of Object.entries(node.states as Record<string, unknown>)) {
+        if (!INTERACTION_STATES.includes(stateRaw as InteractionState)) {
+          issues.push({ path: `$.nodes.${id}.states.${stateRaw}`, message: 'unknown state (dropped)' })
+          continue
+        }
+        if (!styleRaw || typeof styleRaw !== 'object' || Array.isArray(styleRaw)) {
+          issues.push({ path: `$.nodes.${id}.states.${stateRaw}`, message: 'not an object (dropped)' })
+          continue
+        }
+        const { style, dropped } = cleanStateStyle(styleRaw as Record<string, unknown>)
+        for (const d of dropped) issues.push({ path: `$.nodes.${id}.states.${stateRaw}`, message: `${d} (dropped)` })
+        if (Object.keys(style).length > 0) bag[stateRaw as InteractionState] = style
+      }
+      states = Object.keys(bag).length > 0 ? bag : undefined
+    } else {
+      issues.push({ path: `$.nodes.${id}.states`, message: 'not an object (dropped)' })
+      states = undefined
+    }
     // Opacity repairs toward 1, clamped into range like the op does.
     let opacity = 1
     if (node.opacity !== undefined) {
@@ -242,6 +270,7 @@ export function validate(input: unknown): Validated {
       effects,
       z,
       responsive,
+      states,
     }
   }
 

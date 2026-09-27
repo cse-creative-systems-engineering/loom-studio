@@ -14,6 +14,7 @@ import { normalizeProps } from './registry'
 // layering. Keeping the normaliser in one place is worth more than the
 // nominal purity of not importing it.
 import { normalizeEffects } from '../render/effects'
+import { cleanStateStyle } from '../render/states'
 
 let counter = 0
 
@@ -168,6 +169,25 @@ export function apply(doc: Document, op: Op): Document {
       else nextBag[op.breakpoint] = merged
       if (Object.keys(nextBag).length === 0) node.responsive = undefined
       else node.responsive = nextBag
+      return next
+    }
+
+    case 'setStateStyle': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      const bag = node.states ?? {}
+      const merged: Record<string, unknown> = { ...(bag[op.state] ?? {}) }
+      for (const [k, v] of Object.entries(op.patch)) {
+        if (v === null) delete merged[k]
+        else merged[k] = v
+      }
+      // Sanitised here, so no path (UI, file, AI op) can put anything but a
+      // valid value into the generated stylesheet.
+      const clean = cleanStateStyle(merged).style
+      const nextBag = { ...bag }
+      if (Object.keys(clean).length === 0) delete nextBag[op.state]
+      else nextBag[op.state] = clean
+      node.states = Object.keys(nextBag).length === 0 ? undefined : nextBag
       return next
     }
 
@@ -337,6 +357,16 @@ export function invert(doc: Document, op: Op): Op | undefined {
       const inverse: Record<string, number | boolean | null> = {}
       for (const k of Object.keys(op.patch)) inverse[k] = before?.[k as keyof typeof before] ?? null
       return { op: 'setResponsive', id: op.id, breakpoint: op.breakpoint, patch: inverse }
+    }
+
+    case 'setStateStyle': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      // Restore exactly the keys the patch touched, including their absence.
+      const before = (node.states?.[op.state] ?? {}) as Record<string, string | number | undefined>
+      const inverse: Record<string, string | number | null> = {}
+      for (const k of Object.keys(op.patch)) inverse[k] = before[k] ?? null
+      return { op: 'setStateStyle', id: op.id, state: op.state, patch: inverse }
     }
 
     case 'setEffects': {

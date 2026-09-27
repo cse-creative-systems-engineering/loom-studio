@@ -1161,3 +1161,71 @@ input, select { font-family: inherit; font-size: 12px; }
 }
 
 .theme-switch .chip.on { background: var(--select); color: #fff; border-color: transparent; }
+
+/* Interaction states: Normal / Hover / Focus / Pressed, presets, fields. */
+.state-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.state-tab {
+  position: relative;
+  padding: 5px 0;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.state-tab:hover { color: var(--ink); }
+.state-tab.on { color: var(--ink); background: var(--panel-2); box-shadow: 0 0 0 1px var(--line-2); }
+.state-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.state-dot {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.state-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.state-note { margin: 0 0 10px; font-size: var(--text-sm); }
+
+.num-unit { color: var(--ink-3); font-size: var(--text-xs); min-width: 14px; }
+
+/* Shared small controls in the inspector. The Responsive section used these
+   class names before any rule existed for them, so its Reset rendered as a raw
+   browser button. */
+.row.between { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.insp-scroll .dim { color: var(--ink-3); font-size: var(--text-sm); line-height: 1.45; }
+
+.mini {
+  padding: 5px 8px;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mini:hover { color: var(--ink); border-color: rgba(91, 140, 255, 0.5); }
+.mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

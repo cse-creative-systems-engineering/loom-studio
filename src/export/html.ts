@@ -22,7 +22,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { renderNode } from '../render/web'
 import { behaviourCss, behaviourRuntime } from '../render/behaviour'
-import { responsiveCss } from '../render/responsive'
+import { documentCss } from '../render/document-css'
 import { resolveTheme } from '../render/theme'
 import type { Document } from '../model/types'
 
@@ -89,8 +89,8 @@ body{background:${theme.bg};color:${theme.textPrimary};font-family:${theme.fontF
 ${pageFill}
 /* Built-in control behaviour: the same state rules the editor preview uses. */
 ${behaviourCss()}
-/* Per-breakpoint layout: the same generated rules the editor authors against. */
-${responsiveCss(doc)}
+/* Per-breakpoint layout and interaction states: the same generated rules the editor authors against. */
+${documentCss(doc, theme)}
 </style>
 </head>
 <body>

@@ -20,7 +20,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { renderNode } from '../render/web'
 import { behaviourCss, behaviourRuntime } from '../render/behaviour'
-import { responsiveCss } from '../render/responsive'
+import { documentCss } from '../render/document-css'
 import { resolveTheme } from '../render/theme'
 import type { Document } from '../model/types'
 
@@ -126,7 +126,7 @@ import React from 'react';
 const THEME = ${JSON.stringify(theme, null, 2)};
 
 const BEHAVIOUR_CSS = ${JSON.stringify(behaviourCss())};
-const RESPONSIVE_CSS = ${JSON.stringify(responsiveCss(doc))};
+const DOCUMENT_CSS = ${JSON.stringify(documentCss(doc, theme))};
 const installBehaviour = ${behaviourRuntime()};
 
 void THEME;
@@ -135,7 +135,7 @@ export default function LoomExport() {
   const root = React.useRef(null);
   React.useEffect(() => {
     const style = document.createElement('style');
-    style.textContent = BEHAVIOUR_CSS + RESPONSIVE_CSS;
+    style.textContent = BEHAVIOUR_CSS + DOCUMENT_CSS;
     document.head.appendChild(style);
     // Called directly: the payload travels as source, so it works under a
     // strict content-security-policy that forbids eval.
