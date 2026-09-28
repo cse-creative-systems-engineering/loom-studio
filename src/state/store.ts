@@ -10,6 +10,7 @@
  * not a code path.
  */
 
+import { buildStarter, getStarter } from '../model/starters'
 import { apply, duplicateSubtree, parentOf } from '../model/ops'
 import { instantiate } from '../model/registry'
 import type { Document, Node, NodeId, Op, PropValue, TargetId } from '../model/types'
@@ -263,6 +264,20 @@ export class EditorStore {
     const ok = this.commit({ op: 'insert', parent, node }, `Add ${name}`)
     if (ok) this.select([id])
     return ok ? id : undefined
+  }
+
+  /**
+   * Drop a starter: a ready-made arrangement of real tools, inserted as ONE
+   * undoable step and selected as a whole (see `model/starters.ts`).
+   */
+  addStarter(starterId: string, parent: NodeId | null, x = 0, y = 0): NodeId | undefined {
+    const starter = getStarter(starterId)
+    if (!starter) throw new Error(`unknown starter: ${starterId}`)
+    const { root, tree } = buildStarter(starter, () => `n${Math.random().toString(36).slice(2, 9)}`)
+    root.props = { ...root.props, x, y }
+    const ok = this.commit({ op: 'insert', parent, node: root, tree }, `Add ${starter.label}`)
+    if (ok) this.select([root.id])
+    return ok ? root.id : undefined
   }
 
   /** Create several components as ONE undoable step (fixtures, paste, AI batches). */

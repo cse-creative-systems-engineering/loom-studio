@@ -401,6 +401,27 @@ export function validate(input: unknown): Validated {
     return { doc: null, issues: [...issues, { path: '$.root', message: 'root was removed' }] }
   }
 
+  // References between nodes (a Composer's "Sends to"), checked last, against
+  // the tree that actually survived: a reference to a node that was dropped,
+  // or to a type the property does not accept, is cleared and reported.
+  for (const node of Object.values(nodes)) {
+    const spec = getComponent(node.type)
+    if (!spec) continue
+    for (const [key, ps] of Object.entries(spec.props)) {
+      if (ps.type !== 'node') continue
+      const ref = node.props[key]
+      if (typeof ref !== 'string' || ref === '') continue
+      const target = nodes[ref]
+      if (!target || (ps.accepts && !ps.accepts.includes(target.type))) {
+        issues.push({
+          path: `$.nodes.${node.id}.props.${key}`,
+          message: target ? `points at a ${target.type}, expected ${(ps.accepts ?? []).join(' or ')} (cleared)` : `points at a missing node (cleared)`,
+        })
+        node.props[key] = ''
+      }
+    }
+  }
+
   return {
     doc: {
       version: FORMAT_VERSION,

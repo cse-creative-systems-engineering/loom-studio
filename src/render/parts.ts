@@ -21,6 +21,7 @@ import type { Document, Node, PartStyle } from '../model/types'
 import { getComponent, type ComponentSpec, type PartFieldGroup } from '../model/registry'
 import { cssString } from './responsive'
 import { isSafeColor } from './states'
+import { resolveTheme, type Theme } from './theme'
 
 export interface PartField {
   key: keyof PartStyle
@@ -49,6 +50,8 @@ export const PART_FIELDS: readonly PartField[] = [
   { key: 'radius', label: 'Radius', group: 'box', kind: 'number', min: 0, max: 64, step: 1, unit: 'px' },
   { key: 'border', label: 'Border colour', group: 'box', kind: 'color' },
   { key: 'borderWidth', label: 'Border width', group: 'box', kind: 'number', min: 0, max: 8, step: 1, unit: 'px' },
+  { key: 'shadow', label: 'Shadow', group: 'box', kind: 'enum', options: ['none', 'sm', 'md', 'lg', 'glow'] },
+  { key: 'gap', label: 'Spacing', group: 'layout', kind: 'number', min: 0, max: 64, step: 1, unit: 'px' },
 ]
 
 /** The fields a part with these groups accepts. `box` includes the surface. */
@@ -120,7 +123,12 @@ export function partSelector(id: string, part: string): string {
   return `[${PART_ATTR}=${cssString(partHook(id, part))}]`
 }
 
-function decls(st: PartStyle, lines: boolean): string[] {
+/** A named elevation, from the document's own theme: never a raw value. */
+function shadowOf(name: string, t: Theme): string {
+  return name === 'sm' ? t.shadowSm : name === 'md' ? t.shadowMd : name === 'lg' ? t.shadowLg : name === 'glow' ? t.shadowGlow : 'none'
+}
+
+function decls(st: PartStyle, lines: boolean, t: Theme): string[] {
   const out: string[] = []
   if (st.fontSize !== undefined) out.push(`font-size:${st.fontSize}px`)
   if (st.fontWeight !== undefined) out.push(`font-weight:${st.fontWeight}`)
@@ -140,6 +148,8 @@ function decls(st: PartStyle, lines: boolean): string[] {
   if (st.borderWidth !== undefined) out.push(`border-width:${st.borderWidth}px`, 'border-style:solid')
   else if (st.border !== undefined && !lines) out.push('border-width:1px', 'border-style:solid')
   if (st.border !== undefined) out.push(`border-color:${st.border}`)
+  if (st.gap !== undefined) out.push(`gap:${st.gap}px`)
+  if (st.shadow !== undefined) out.push(`box-shadow:${shadowOf(st.shadow, t)}`)
   return out.map((d) => `${d} !important`)
 }
 
@@ -149,12 +159,12 @@ function decls(st: PartStyle, lines: boolean): string[] {
  * built in code never passed through the op or the loader, and this is where
  * values become stylesheet text.
  */
-export function partCss(doc: Document): string {
+export function partCss(doc: Document, theme: Theme = resolveTheme(doc.meta.theme)): string {
   const rules: string[] = []
   for (const node of Object.values(doc.nodes)) {
     if (!node.parts) continue
     for (const [part, raw] of Object.entries(node.parts)) {
-      const d = decls(cleanPartStyle(node.type, part, raw as Record<string, unknown>).style, partsOf(node.type)?.[part]?.lines === true)
+      const d = decls(cleanPartStyle(node.type, part, raw as Record<string, unknown>).style, partsOf(node.type)?.[part]?.lines === true, theme)
       if (d.length > 0) rules.push(`${partSelector(node.id, part)}{${d.join(';')}}`)
     }
   }

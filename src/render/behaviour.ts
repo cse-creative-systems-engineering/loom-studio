@@ -281,6 +281,18 @@ export function behaviourCss(): string {
     '[data-loom-menu-panel][data-loom-open="0"]{display:none !important}',
     // --- live readouts (slider value, spinbox value) ---
     '[data-loom-readout]{font-variant-numeric:tabular-nums}',
+    // --- conversation ---
+    // The composer grows with its text in CSS where the engine can
+    // (`field-sizing`), up to the max-height the renderer set from `maxRows`;
+    // the runtime measures only where it cannot.
+    '[data-loom-composer-input]{field-sizing:content}',
+    '[data-loom-composer][data-loom-empty="1"] [data-loom-composer-send]{opacity:.45;cursor:default}',
+    '[data-loom-list-jump][data-loom-open="1"]{display:inline-flex !important}',
+    '@keyframes loom-typing{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-3px);opacity:1}}',
+    '[data-loom-typing-dot]{animation:loom-typing 1.2s ease-in-out infinite}',
+    '[data-loom-typing-dot]:nth-child(2){animation-delay:.15s}',
+    '[data-loom-typing-dot]:nth-child(3){animation-delay:.3s}',
+    '@media (prefers-reduced-motion:reduce){[data-loom-typing-dot]{animation:none;opacity:.8}}',
   ].join('\n')
 }
 
@@ -543,6 +555,123 @@ export function installBehaviour(): void {
     },
     true,
   )
+
+  // --- conversation: send, append, stay on the newest message ------------
+  // A Composer names its list (`data-loom-sends-to`); the list names the bubble
+  // new messages copy (`data-loom-template`). Nothing is inferred: a composer
+  // with no list, or a list with no template, says so in the console and
+  // sends nothing rather than guessing.
+  const NEAR = 48
+  const atBottom = (list: Element): boolean => list.scrollHeight - list.scrollTop - list.clientHeight <= NEAR
+  const toBottom = (list: Element): void => {
+    list.scrollTop = list.scrollHeight
+    list.querySelector('[data-loom-list-jump]')?.setAttribute('data-loom-open', '0')
+  }
+  const listFor = (composer: Element): Element | null => {
+    const id = composer.getAttribute('data-loom-sends-to')
+    if (!id) return null
+    return q('[data-loom-list]').find((l) => l.getAttribute('data-loom-list') === id) ?? null
+  }
+  /** Add `unit` to `list`: after the last message, before a typing indicator. */
+  const append = (list: Element, unit: Element): void => {
+    const follow = atBottom(list)
+    list.querySelector(':scope > [data-loom-list-empty]')?.remove()
+    const before = list.querySelector(':scope > [data-loom-typing], :scope > * > [data-loom-typing]')
+    const anchor = before ? (before.parentElement === list ? before : before.parentElement) : list.querySelector(':scope > [data-loom-list-jump]')
+    list.insertBefore(unit, anchor)
+    if (follow || list.getAttribute('data-loom-stick') !== '1') toBottom(list)
+    else list.querySelector('[data-loom-list-jump]')?.setAttribute('data-loom-open', '1')
+  }
+  const grow = (input: HTMLTextAreaElement): void => {
+    // Only where CSS cannot: `field-sizing` does this with no script at all.
+    const css = (window as unknown as { CSS?: { supports?: (p: string, v: string) => boolean } }).CSS
+    if (css?.supports?.('field-sizing', 'content')) return
+    input.style.height = 'auto'
+    input.style.height = `${input.scrollHeight}px`
+  }
+  const send = (composer: Element): void => {
+    const input = composer.querySelector('[data-loom-composer-input]') as HTMLTextAreaElement | null
+    if (!input || input.disabled) return
+    const text = input.value.trim()
+    if (text === '') return
+    const list = listFor(composer)
+    if (!list) {
+      console.error('Loom: this Composer has no message list to send to. Pick one in "Sends to".')
+      return
+    }
+    const template = list.querySelector('[data-loom-template]')
+    if (!template) {
+      console.error('Loom: the message list has no template message. Mark one bubble as the template.')
+      return
+    }
+    // The unit copied is the list's direct child that holds the template, so a
+    // row of avatar + bubble is copied whole.
+    let unit: Element = template
+    while (unit.parentElement && unit.parentElement !== list) unit = unit.parentElement
+    const copy = unit.cloneNode(true) as Element
+    const bubble = copy.matches('[data-loom-template]') ? copy : copy.querySelector('[data-loom-template]')
+    bubble?.removeAttribute('data-loom-template')
+    // Ids must stay unique; the copy is a new message, not the template.
+    copy.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'))
+    const body = bubble?.querySelector('[data-loom-bubble-text]')
+    if (body) body.textContent = text
+    const time = bubble?.querySelector('[data-loom-bubble-time]')
+    if (time) {
+      const now = new Date()
+      time.textContent = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`
+    }
+    append(list, copy)
+    input.value = ''
+    input.style.height = ''
+    composer.setAttribute('data-loom-empty', '1')
+    // The hook a host page (or a future data runtime) listens for.
+    try {
+      composer.dispatchEvent(new CustomEvent('loom:send', { bubbles: true, detail: { text } }))
+    } catch {
+      // Event unavailable: the message still appeared, which is what a person sees.
+    }
+  }
+  document.addEventListener('input', (e) => {
+    const input = target(e)
+    if (!(input instanceof HTMLTextAreaElement) || !input.hasAttribute('data-loom-composer-input')) return
+    input.closest('[data-loom-composer]')?.setAttribute('data-loom-empty', input.value.trim() === '' ? '1' : '0')
+    grow(input)
+  })
+  document.addEventListener('keydown', (e) => {
+    const input = target(e)
+    if (!(input instanceof HTMLTextAreaElement) || !input.hasAttribute('data-loom-composer-input')) return
+    const composer = input.closest('[data-loom-composer]')
+    if (!composer || composer.getAttribute('data-loom-enter-sends') !== '1') return
+    // Shift+Enter is a new line; Enter while an IME is composing is a
+    // character, not a send.
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
+    e.preventDefault()
+    send(composer)
+  })
+  document.addEventListener('click', (e) => {
+    const sendBtn = closest(e, '[data-loom-composer-send]')
+    if (sendBtn) {
+      const composer = sendBtn.closest('[data-loom-composer]')
+      if (composer) send(composer)
+      return
+    }
+    const jump = closest(e, '[data-loom-list-jump]')
+    const list = jump?.closest('[data-loom-list]')
+    if (list) toBottom(list)
+  })
+  // Reading back up the conversation hides the pill once you are at the end.
+  document.addEventListener(
+    'scroll',
+    (e) => {
+      const list = target(e)
+      if (list instanceof Element && list.hasAttribute('data-loom-list') && atBottom(list)) {
+        list.querySelector('[data-loom-list-jump]')?.setAttribute('data-loom-open', '0')
+      }
+    },
+    true,
+  )
+  // A conversation opens at its newest message.
+  q('[data-loom-list][data-loom-stick="1"]').forEach(toBottom)
 
   // --- the interactions -------------------------------------------------
   document.addEventListener('click', (e) => {

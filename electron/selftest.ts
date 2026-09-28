@@ -27,6 +27,10 @@ import { responsiveCss, breakpointForWidth, CONTAINER_NAME } from '../src/render
 import { ICONS, ICON_NAMES, resolveIcon } from '../src/render/icons'
 import { buildTooltip, tooltipFor } from '../src/model/tooltip'
 import { auditReport, KNOWN_INERT } from './prop-audit'
+import { auditAreas } from './area-audit'
+import { KNOWN_UNREACHABLE } from './area-backlog'
+import { installBehaviourRuntime } from '../src/render/behaviour-mount'
+import { STARTERS } from '../src/model/starters'
 import { unsupportedProps } from '../src/model/registry'
 import { THEME_NAMES } from '../src/render/theme'
 import { PreviewStage } from '../src/preview'
@@ -936,8 +940,13 @@ export async function runSelfTest(): Promise<string> {
   // absolute unless a container explicitly opts into flow. Pin all three so
   // a future default flip breaks loudly instead of silently re-webbing.
   {
-    const nonFree = allComponents().filter((c) => instantiate(c.name).flow !== false)
+    // The one exception, recorded rather than silent: a message list IS a
+    // column that new messages are appended to, which free positioning cannot
+    // express. Adding a name here needs the same kind of reason.
+    const FLOW_BY_NATURE = new Set(['MessageList'])
+    const nonFree = allComponents().filter((c) => instantiate(c.name).flow !== false && !FLOW_BY_NATURE.has(c.name))
     check('every component instantiates free (absolute)', nonFree.length === 0, nonFree.map((c) => c.name).join(','))
+    check('the flow exceptions are real and few', [...FLOW_BY_NATURE].every((n) => instantiate(n).flow === true) && FLOW_BY_NATURE.size <= 1)
     const panel = getComponent('Panel')
     check('Panel defaults to a portable solid surface', panel?.props.surface?.default === 'solid')
     check('Panel glass defaults off (web-only effect)', panel?.props.glass?.default === false)
@@ -2805,6 +2814,7 @@ export async function runSelfTest(): Promise<string> {
     // declares a part it does not draw fails the audit below by design.
     const SEED: Record<string, Record<string, string | boolean>> = {
       Field: { description: 'Help text', message: 'Something is wrong' },
+      MessageBubble: { status: 'read' },
       KpiCard: {},
       Stat: {},
       DataGrid: {},
@@ -2853,6 +2863,8 @@ export async function runSelfTest(): Promise<string> {
       // part with rule lines, it recolours them.
       border: { css: 'border-top-color', lines: 'border-bottom-color', value: '#123456', expect: 'rgb(18, 52, 86)' },
       borderWidth: { css: 'border-left-width', value: 4, expect: '4px' },
+      gap: { css: 'row-gap', value: 17, expect: '17px' },
+      shadow: { css: 'box-shadow', value: 'glow', expect: null },
     }
 
     const missing: string[] = []
@@ -2998,6 +3010,207 @@ export async function runSelfTest(): Promise<string> {
       return { table: Boolean(g?.querySelector('table')), handles: g?.querySelectorAll('[data-loom-handle]').length ?? 0, selected: g?.getAttribute('data-selected') }
     }, [grid])
     check('selected, it is the same grid with handles', picked.table && picked.handles === 4 && picked.selected === 'true', JSON.stringify(picked))
+  }
+
+  // --- 55. every area of every component can be customized ---------------
+  // The area audit renders every component in every probe state and finds
+  // every inner element that sets its own look without a part to reach it.
+  // KNOWN_UNREACHABLE is the ratchet: it may only shrink.
+  {
+    const areas = auditAreas()
+    const found = new Map(areas.findings.map((f) => [`${f.component}|${f.where}`, f]))
+    const fresh = [...found].filter(([k, f]) => !KNOWN_UNREACHABLE[k] || f.needs.some((n) => !KNOWN_UNREACHABLE[k].includes(n)))
+      .map(([k, f]) => `${k} needs ${f.needs.join('/')} ("${f.sample}")`)
+    const stale = Object.keys(KNOWN_UNREACHABLE).filter((k) => !found.has(k))
+    const narrower = Object.entries(KNOWN_UNREACHABLE).filter(([k, needs]) => found.has(k) && needs.some((n) => !(found.get(k)?.needs ?? []).includes(n))).map(([k]) => k)
+    check('no component draws a new area a designer cannot customize', fresh.length === 0, fresh.slice(0, 12).join(' | '))
+    check('the customization backlog has no stale entries', stale.length === 0 && narrower.length === 0,
+      `fixed, remove from area-backlog.ts: ${[...stale, ...narrower].slice(0, 12).join(' | ')}`)
+    check('the area audit reads every inline property it meets', areas.unclassified.length === 0, areas.unclassified.slice(0, 12).join(', '))
+    check('the area audit actually looks', areas.components === allComponents().length && areas.elements > 10000,
+      `${areas.components} components, ${areas.elements} elements, ${found.size} areas still unreachable`)
+  }
+
+  // --- 56. conversation tools: a chat built from separate tools -----------
+  {
+    const s56 = new EditorStore()
+    s56.addComponent('Panel', null, 0, 0)
+    const r56 = s56.doc.root as string
+    s56.commit({ op: 'resize', id: r56, w: 900, h: 600 }, 'size')
+    const before56 = s56.history.length
+    const side = s56.addStarter('chat-sidebar', r56, 0, 0) as string
+    const byType = (t: string, within = side) => [within, ...descendants(s56.doc, within)].filter((id) => s56.doc.nodes[id]?.type === t)
+    const list = byType('MessageList')[0]
+    const composer = byType('Composer')[0]
+    check('the chat starter drops real tools as one undo step',
+      Boolean(list && composer) && s56.history.length === before56 + 1 && byType('MessageBubble').length === 3 && byType('TypingIndicator').length === 1 &&
+      STARTERS.some((st) => st.id === 'chat-sidebar'), `${s56.history.length - before56} steps`)
+    check('the starter wires its composer to its own list', s56.doc.nodes[composer]?.props.sendsTo === list)
+    check('the chat sidebar docks to the left edge', s56.doc.nodes[side]?.props.anchor === 'left')
+    const side2 = s56.addStarter('chat-sidebar', r56, 400, 0) as string
+    check('a second drop is wired to its OWN list', s56.doc.nodes[byType('Composer', side2)[0]]?.props.sendsTo === byType('MessageList', side2)[0])
+    const dup = s56.duplicate(side) as string
+    check('duplicating a chat panel rewires the copy to the copied list',
+      Boolean(dup) && s56.doc.nodes[byType('Composer', dup)[0]]?.props.sendsTo === byType('MessageList', dup)[0])
+    s56.undo()
+    s56.undo()
+
+    // The file trust boundary: a reference that points nowhere, or at the
+    // wrong kind of node, is cleared and reported.
+    const bad = JSON.parse(serialize(s56.doc)) as { nodes: Record<string, { props: Record<string, unknown> }> }
+    bad.nodes[composer].props.sendsTo = side
+    const other = byType('Composer', side)[0]
+    const loadedBad = validate(JSON.stringify(bad))
+    const badIssues = loadedBad.issues.map((i) => `${i.path} ${i.message}`)
+    check('a reference to the wrong kind of node is cleared and reported',
+      loadedBad.doc?.nodes[composer]?.props.sendsTo === '' && badIssues.some((m) => m.includes('sendsTo') && m.includes('expected MessageList')), badIssues.join(' | '))
+    bad.nodes[composer].props.sendsTo = 'nope'
+    const loadedGone = validate(JSON.stringify(bad))
+    check('a reference to a missing node is cleared and reported',
+      loadedGone.doc?.nodes[composer]?.props.sendsTo === '' && loadedGone.issues.some((i) => i.message.includes('missing node')))
+    check('a good reference survives save and load', validate(serialize(s56.doc)).doc?.nodes[composer]?.props.sendsTo === list)
+    void other
+
+    // A style on the template must carry to a sent message: the copy keeps the
+    // part hooks, so the same generated rule reaches it.
+    const template = byType('MessageBubble').find((id) => s56.doc.nodes[id]?.props.template === true) as string
+    s56.commit({ op: 'setPartStyle', id: template, part: 'body', patch: { background: '#123456' } }, 'style template')
+
+    // LIVE: the real runtime, real events, in a real document.
+    installBehaviourRuntime()
+    const style56 = document.createElement('style')
+    style56.textContent = documentCss(s56.doc)
+    document.head.appendChild(style56)
+    const host56 = document.createElement('div')
+    host56.className = 'loom-container'
+    host56.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:420px;z-index:99999'
+    host56.innerHTML = renderToStaticMarkup(renderNode({ doc: s56.doc, selected: new Set(), mode: 'preview' }, r56))
+    document.body.appendChild(host56)
+    const listEl = host56.querySelector(`[data-loom-list="${list}"]`) as HTMLElement
+    const composerEl = host56.querySelector(`[data-loom-sends-to="${list}"]`) as HTMLElement
+    const input = composerEl?.querySelector('textarea') as HTMLTextAreaElement
+    const texts = () => [...(listEl?.querySelectorAll('[data-loom-bubble-text]') ?? [])].map((e) => e.textContent)
+    const type = (text: string) => {
+      input.value = text
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    const press = (key: string, shiftKey = false) => {
+      const ev = new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true })
+      input.dispatchEvent(ev)
+      return ev.defaultPrevented
+    }
+    let sent = ''
+    composerEl?.addEventListener('loom:send', (e) => { sent = String((e as CustomEvent).detail?.text ?? '') })
+    const startCount = texts().length
+    type('Is the launch still on for Friday?')
+    check('typing arms the send button', composerEl?.getAttribute('data-loom-empty') === '0')
+    press('Enter')
+    const afterEnter = texts()
+    const newest = [...listEl.children].filter((c) => c.querySelector('[data-loom-bubble-text]') || c.matches('[data-loom-bubble]')).pop()
+    const typingIsLast = [...listEl.children].filter((c) => !c.hasAttribute('data-loom-list-jump')).pop()?.querySelector?.('[data-loom-typing]') !== null ||
+      [...listEl.children].filter((c) => !c.hasAttribute('data-loom-list-jump')).pop()?.hasAttribute('data-loom-typing')
+    check('Enter sends: the message lands in the list, the composer clears',
+      afterEnter.length === startCount + 1 && afterEnter.includes('Is the launch still on for Friday?') && input.value === '' &&
+      composerEl.getAttribute('data-loom-empty') === '1' && sent === 'Is the launch still on for Friday?', JSON.stringify(afterEnter))
+    check('a new message lands after the last message and before the typing indicator', Boolean(typingIsLast) && Boolean(newest))
+    const copy = [...listEl.querySelectorAll('[data-loom-bubble="sent"]')].pop() as HTMLElement
+    const copyBody = copy?.querySelector('[data-loom-bubble-text]')?.parentElement as HTMLElement | null
+    check('the sent message looks like the template, styling included',
+      Boolean(copy) && !copy.hasAttribute('data-loom-template') && copyBody !== null && getComputedStyle(copyBody).backgroundColor === 'rgb(18, 52, 86)',
+      copyBody ? getComputedStyle(copyBody).backgroundColor : 'missing')
+    check('only one message stays the template', listEl.querySelectorAll('[data-loom-template]').length === 1)
+    type('line one')
+    const shiftPrevented = press('Enter', true)
+    check('Shift+Enter is a new line, not a send', !shiftPrevented && texts().length === startCount + 1 && input.value === 'line one')
+    type('   ')
+    press('Enter')
+    check('an empty message is never sent', texts().length === startCount + 1)
+    type('<img src=x onerror="window.__loomPwned=1">')
+    ;(composerEl.querySelector('[data-loom-composer-send]') as HTMLButtonElement).click()
+    check('the send button sends, and what was typed stays text',
+      texts().length === startCount + 2 && !listEl.querySelector('img') && !(window as unknown as { __loomPwned?: number }).__loomPwned)
+
+    // Staying on the newest message, and not yanking a reader who scrolled up.
+    for (let i = 0; i < 8; i++) { type(`filler ${i}`); press('Enter') }
+    const bottomGap = () => listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight
+    check('the list follows new messages while you are at the bottom', listEl.scrollHeight > listEl.clientHeight && bottomGap() <= 2, `${bottomGap()}`)
+    listEl.scrollTop = 0
+    listEl.dispatchEvent(new Event('scroll'))
+    type('while you were reading')
+    press('Enter')
+    const jump = listEl.querySelector('[data-loom-list-jump]') as HTMLElement
+    check('scrolled up, a new message shows the jump pill instead of moving you',
+      listEl.scrollTop === 0 && jump.getAttribute('data-loom-open') === '1' && getComputedStyle(jump).display !== 'none', `${listEl.scrollTop} ${jump.getAttribute('data-loom-open')}`)
+    jump.click()
+    check('the jump pill takes you to the newest message and goes away', bottomGap() <= 2 && jump.getAttribute('data-loom-open') === '0')
+
+    // A composer that sends nowhere says so and sends nothing.
+    const errors: string[] = []
+    const origError = console.error
+    console.error = (...a: unknown[]) => { errors.push(a.map(String).join(' ')) }
+    composerEl.setAttribute('data-loom-sends-to', 'nowhere')
+    type('lost')
+    press('Enter')
+    console.error = origError
+    check('a composer with no list reports it and sends nothing', errors.some((e) => e.includes('no message list')) && !texts().includes('lost'))
+    host56.remove()
+    style56.remove()
+
+    // The canvas: the composer's own box is a picture; the list's messages are live nodes.
+    const canvas56 = (() => {
+      const h = document.createElement('div')
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: s56.doc, selected: new Set(), mode: 'authoring' }, r56))
+      const out = {
+        inputInert: Boolean(h.querySelector(`[data-loom-id="${composer}"] textarea`)?.hasAttribute('inert')),
+        bubbleIsNode: Boolean(h.querySelector(`[data-loom-id="${template}"]`)) && !h.querySelector(`[data-loom-id="${template}"]`)?.closest('[inert]'),
+      }
+      return out
+    })()
+    check('on the canvas the composer is a picture and the messages are nodes', canvas56.inputInert && canvas56.bubbleIsNode, JSON.stringify(canvas56))
+    const convo = auditAreas((c) => c.category === 'Conversation')
+    check('every area of every conversation tool can be customized', convo.components === 4 && convo.findings.length === 0,
+      convo.findings.map((f) => `${f.component}|${f.where} ${f.needs.join('/')}`).join(' | '))
+  }
+
+  // --- 57. shared styling pass: fixes found while building the chat -------
+  {
+    const s57 = new EditorStore()
+    s57.addComponent('Panel', null, 0, 0)
+    const r57 = s57.doc.root as string
+    s57.commit({ op: 'resize', id: r57, w: 800, h: 400 }, 'size')
+    const avatar = s57.addComponent('Avatar', r57, 10, 10, { initials: 'AI' }) as string
+    const rowId = s57.addComponent('Stack', r57, 10, 80, { direction: 'row', align: 'end' }, { flow: true }) as string
+    const divider = s57.addComponent('Divider', r57, 10, 200, { label: 'Today' }) as string
+    const header = s57.addComponent('HeaderBar', r57, 10, 260, { title: 'Assistant' }) as string
+    const t57 = resolveTheme(s57.doc.meta.theme)
+    const live57 = (mode: 'preview' | 'authoring') => {
+      const h = document.createElement('div')
+      h.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:400px'
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: s57.doc, selected: new Set(), mode }, r57))
+      document.body.appendChild(h)
+      const probe = document.createElement('span')
+      probe.style.color = t57.textOnAccent
+      document.body.appendChild(probe)
+      const want = getComputedStyle(probe).color
+      probe.remove()
+      const byId = (id: string) => h.querySelector(`[data-loom-id="${id}"]`) as HTMLElement | null
+      const out = {
+        initials: getComputedStyle((mode === 'authoring' ? byId(avatar) : h.querySelector('[role="img"]')) as HTMLElement).color,
+        want,
+        rowTextAlign: mode === 'authoring' ? getComputedStyle(byId(rowId) as HTMLElement).textAlign : '',
+        dividerText: mode === 'authoring' ? (byId(divider)?.textContent ?? '') : '',
+        headerText: mode === 'authoring' ? (byId(header)?.textContent ?? '') : '',
+      }
+      h.remove()
+      return out
+    }
+    const a57 = live57('authoring')
+    const p57 = live57('preview')
+    check('an Avatar keeps its own initials colour instead of a tone painting them danger',
+      a57.initials === a57.want && p57.initials === p57.want, JSON.stringify({ a: a57.initials, p: p57.initials, want: a57.want }))
+    check('a row aligned to the end does not right-align the text inside it', a57.rowTextAlign !== 'end' && a57.rowTextAlign !== 'right', a57.rowTextAlign)
+    check('the canvas draws a divider\'s label property', a57.dividerText.includes('Today'), a57.dividerText)
+    check('the canvas draws a header\'s title', a57.headerText.includes('Assistant'), a57.headerText)
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

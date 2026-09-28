@@ -105,6 +105,10 @@ export interface PartStyle {
   /** Border colour. */
   border?: string
   borderWidth?: number
+  /** Space between the items a part lays out. */
+  gap?: number
+  /** A named elevation from the theme. */
+  shadow?: 'none' | 'sm' | 'md' | 'lg' | 'glow'
 }
 
 export type PartStyles = Record<string, PartStyle>

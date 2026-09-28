@@ -41,7 +41,21 @@ export interface RenderCtx {
    * pointer, so the state being edited is the state on screen.
    */
   forceState?: { id: NodeId; state: InteractionState }
+  /**
+   * Tooling only (the customization audit): in preview output, EVERY node and
+   * every declared part carries its hook, so each element can be attributed
+   * to the component and part that drew it. Never set for a real surface.
+   */
+  hookAll?: boolean
 }
+
+/**
+ * Components the canvas draws with their real output body although they
+ * declare no parts yet: the canvas stub dropped something the output shows (a
+ * header's title, a divider's label). Every component moves to the real body
+ * as it gains parts; this set is the bridge until then, and only shrinks.
+ */
+const REAL_ON_CANVAS: ReadonlySet<string> = new Set(['HeaderBar', 'FooterBar'])
 
 export const CORNERS = ['nw', 'ne', 'sw', 'se'] as const
 export type Corner = (typeof CORNERS)[number]
@@ -192,12 +206,15 @@ function LabelledDivider({
   style,
   middle,
   nodeKey,
+  attrs,
 }: {
   p: Record<string, PropValue>
   t: Theme
   style: React.CSSProperties
   middle: React.ReactNode
   nodeKey?: string | number
+  /** The editor's attributes and handlers, so the canvas can select it. */
+  attrs?: Record<string, unknown>
 }) {
   const thickness = num(p.thickness, 1)
   const colour = str(p.color) || t.borderStrong
@@ -212,6 +229,7 @@ function LabelledDivider({
   return (
     <div
       key={nodeKey}
+      {...attrs}
       role={named ? 'separator' : undefined}
       aria-label={named || undefined}
       style={{
@@ -316,12 +334,16 @@ function applyCommonStyle(
   // toast, a callout, a slider or a checkbox. Two deliberate rules:
   //   - an explicit `color` always wins, because the designer chose it;
   //   - `accentColor` is set too, which is the right knob for native controls.
+  // Only tones it KNOWS: an unknown tone (an Avatar's `accent`) used to fall
+  // through to danger and paint the initials red. And a component that set
+  // its own text colour (white initials on a coloured disc) keeps it: a tone
+  // that fills a surface is not a tone that colours text.
   const tone = str(p.tone)
-  if (tone && tone !== 'neutral' && tone !== 'inherit') {
-    const toneColor =
-      tone === 'info' ? t.accent : tone === 'success' ? t.success : tone === 'warning' ? t.warning : t.danger
+  const toneColor =
+    tone === 'info' || tone === 'accent' ? t.accent : tone === 'success' ? t.success : tone === 'warning' ? t.warning : tone === 'danger' ? t.danger : ''
+  if (toneColor) {
     s.accentColor = toneColor
-    if (str(p.color) === '') s.color = toneColor
+    if (str(p.color) === '' && s.color === undefined) s.color = toneColor
   }
   const bg = str(p.background)
   if (bg) s.background = bg
@@ -350,7 +372,8 @@ function applyCommonStyle(
   if (gap >= 0) s.gap = `${gap}px`
 
   // --- flow ---
-  if (s.display === 'flex') {
+  // Inline flex boxes too: a spinner beside its label is a row like any other.
+  if (s.display === 'flex' || s.display === 'inline-flex') {
     if (str(p.direction) === 'row') s.flexDirection = 'row'
     else if (str(p.direction) === 'column') s.flexDirection = 'column'
     const align = str(p.align)
@@ -367,8 +390,16 @@ function applyCommonStyle(
   if (fw > 0) s.fontWeight = fw
   const col = str(p.color)
   if (col) s.color = col
+  // `align` is TEXT alignment where the component declares the text
+  // vocabulary (left/right/justify), or where it is not a flex box and text
+  // is all there is to align. On a flex box with the layout vocabulary it is
+  // item alignment only, handled above: a row aligned to the end used to
+  // right-align every line of text inside it, down to a chat bubble.
   const align = str(p.align)
-  if (align && (s.display === 'flex' || s.display === 'block' || s.textAlign !== undefined || true)) {
+  const alignOptions = getComponent(nodeType)?.props.align?.options ?? []
+  const textual = alignOptions.includes('left') || alignOptions.includes('right') || alignOptions.includes('justify')
+  const flexBox = s.display === 'flex' || s.display === 'inline-flex'
+  if (align && (textual || !flexBox)) {
     s.textAlign = align as React.CSSProperties['textAlign']
   }
   const lh = num(p.lineHeight, UNSET)
@@ -800,6 +831,36 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space2)
       s.width = px(p.width, 240); s.padding = `${t.space4}px`
       s.background = t.surface; s.borderRight = `1px solid ${t.border}`
+      break
+    }
+    // --- conversation ---------------------------------------------------
+    case 'MessageList': {
+      // A column that scrolls, newest at the bottom. `flex: 1` so that inside
+      // a sidebar column it takes the height the header and composer leave.
+      s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, 10)
+      s.overflowY = 'auto'; s.flex = '1 1 auto'; s.minHeight = '0'
+      s.padding = `${t.space3}px`
+      // A thin scrollbar in the theme's own line colour: the platform default
+      // is a bright white gutter on a dark conversation.
+      s.scrollbarWidth = 'thin'; s.scrollbarColor = `${t.borderStrong} transparent`
+      break
+    }
+    case 'MessageBubble': {
+      const sent = str(p.side) === 'sent'
+      s.display = 'flex'; s.flexDirection = 'column'; s.gap = '3px'
+      s.alignSelf = sent ? 'flex-end' : 'flex-start'
+      s.alignItems = sent ? 'flex-end' : 'flex-start'
+      s.maxWidth = `${Math.min(100, Math.max(30, num(p.widthCap, 80)))}%`
+      break
+    }
+    case 'Composer': {
+      s.display = 'flex'; s.alignItems = 'flex-end'; s.gap = `${t.space2}px`
+      s.padding = `${t.space2}px ${t.space2}px ${t.space2}px ${t.space3}px`
+      s.background = t.surface; s.border = `1px solid ${t.borderStrong}`; s.borderRadius = `${t.radiusLg}px`
+      break
+    }
+    case 'TypingIndicator': {
+      s.display = 'flex'; s.alignItems = 'center'; s.gap = `${t.space2}px`; s.alignSelf = 'flex-start'
       break
     }
     case 'FormGrid': {
@@ -1655,7 +1716,7 @@ function renderPreviewNode(
   // sibling wrapper would break the absolute-positioning contract that every
   // free-positioned node depends on.
   const layers = eff.layers
-  const content = withOutputHook(node, renderPreviewBody(node, style, children, t, key, parentId, ctx))
+  const content = withOutputHook(node, renderPreviewBody(node, style, children, t, key, parentId, ctx), ctx.hookAll === true)
 
   if (!layers.length) return content
 
@@ -1688,9 +1749,10 @@ function renderPreviewNode(
  * responsive overrides silently did nothing in the preview and both exports.
  * Only nodes that NEED it carry it, so a plain export stays free of hooks.
  */
-function withOutputHook(node: Node, el: React.ReactElement): React.ReactElement {
-  if (!isResponsive(node) && !hasStates(node)) return el
+function withOutputHook(node: Node, el: React.ReactElement, always = false): React.ReactElement {
+  if (!always && !isResponsive(node) && !hasStates(node)) return el
   if (el.type === React.Fragment) {
+    if (always) return el
     // Fail loudly: an override that cannot attach would silently not apply.
     throw new Error(`${node.type} has no root element, so its overrides and states cannot apply`)
   }
@@ -1710,7 +1772,11 @@ function renderPreviewBody(
   const p = node.props
   // The hook a named part carries (see render/parts.ts): always on the canvas,
   // in output only when that part is styled.
-  const part = (name: string) => partAttrs(node, name, ctx.mode !== 'preview')
+  const part = (name: string) => partAttrs(node, name, ctx.mode !== 'preview' || ctx.hookAll === true)
+  // A container's OWN controls (a Composer's text box) are a picture on the
+  // canvas, like a leaf's; its child nodes stay live, so this is applied per
+  // control rather than to the whole body.
+  const canvasInert: { inert?: boolean } = ctx.mode === 'preview' ? {} : { inert: true }
 
   switch (node.type) {
     case 'Button': {
@@ -1777,6 +1843,167 @@ function renderPreviewBody(
       return (
         <div key={key} style={style}>
           {str(p.text)}
+        </div>
+      )
+    // --- conversation -----------------------------------------------------
+    case 'MessageList': {
+      // `role="log"` is what a chat IS to a screen reader: new entries are
+      // announced politely, in order, without stealing focus.
+      return (
+        <div
+          key={key}
+          style={style}
+          role="log"
+          aria-live="polite"
+          aria-label={str(p.ariaLabel) || undefined}
+          data-loom-list={node.id}
+          data-loom-stick={p.stickToBottom !== false ? '1' : '0'}
+        >
+          {children.length === 0 ? (
+            <div data-loom-list-empty {...part('empty')} style={{ margin: 'auto', color: t.textMuted, fontSize: `${t.textSm}px`, textAlign: 'center', padding: `${t.space4}px` }}>
+              {str(p.emptyText)}
+            </div>
+          ) : null}
+          {children}
+          {/* Shown by the runtime only when a message arrives while the reader
+              is scrolled up; sticky so it floats over the list's bottom edge. */}
+          <button
+            type="button"
+            data-loom-list-jump
+            {...part('jump')}
+            {...canvasInert}
+            style={{ position: 'sticky', bottom: 0, alignSelf: 'center', display: 'none', border: 'none', cursor: 'pointer', background: t.accent, color: t.textOnAccent, fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, padding: '5px 12px', borderRadius: `${t.radiusFull}px`, boxShadow: t.shadowMd }}
+          >
+            ↓ {str(p.jumpLabel)}
+          </button>
+        </div>
+      )
+    }
+    case 'MessageBubble': {
+      const sent = str(p.side) === 'sent'
+      const grouped = p.grouped === true
+      const r = t.radiusLg + 4
+      // The tail is the one small corner on the sender's side at the bottom;
+      // a grouped message also tightens the corner that joins it to the one
+      // above, so a run of messages reads as one turn.
+      const tight = 5
+      const corners = sent
+        ? `${r}px ${grouped ? tight : r}px ${p.tail !== false ? tight : r}px ${r}px`
+        : `${grouped ? tight : r}px ${r}px ${r}px ${p.tail !== false ? tight : r}px`
+      const status = str(p.status) || 'none'
+      const showMeta = p.showTime !== false || status !== 'none'
+      return (
+        <div key={key} style={style} data-loom-bubble={sent ? 'sent' : 'received'} {...(p.template === true ? { 'data-loom-template': '' } : {})}>
+          {p.showAuthor !== false && !grouped && str(p.author) ? (
+            <span {...part('author')} style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: t.textSecondary, padding: '0 4px' }}>
+              {str(p.author)}
+            </span>
+          ) : null}
+          <div
+            {...part('body')}
+            style={{
+              background: sent ? t.accent : t.surface,
+              color: sent ? t.textOnAccent : t.textPrimary,
+              border: sent ? 'none' : `1px solid ${t.border}`,
+              borderRadius: corners,
+              padding: `${t.space2}px ${t.space3}px`,
+              fontSize: `${t.textSm}px`,
+              lineHeight: 1.45,
+              textAlign: 'start',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: `${t.space2}px`,
+              overflowWrap: 'anywhere',
+            }}
+          >
+            <span data-loom-bubble-text style={{ whiteSpace: 'pre-wrap' }}>{str(p.text)}</span>
+            {children}
+          </div>
+          {showMeta ? (
+            <span {...part('meta')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0 4px', fontSize: `${t.textXs}px`, color: t.textMuted }}>
+              {p.showTime !== false ? (
+                <span data-loom-bubble-time {...part('time')} style={{ color: t.textMuted }}>{str(p.time)}</span>
+              ) : null}
+              {status !== 'none' ? (
+                <span
+                  data-loom-bubble-status={status}
+                  {...part('status')}
+                  aria-label={status}
+                  style={{ color: status === 'read' ? t.accent : t.textMuted }}
+                >
+                  {status === 'sending' ? '○' : status === 'sent' ? '✓' : '✓✓'}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+      )
+    }
+    case 'Composer': {
+      const target = str(p.sendsTo)
+      const rows = Math.max(1, Math.min(20, num(p.maxRows, 6)))
+      return (
+        <div
+          key={key}
+          style={style}
+          data-loom-composer=""
+          data-loom-sends-to={target || undefined}
+          data-loom-enter-sends={p.enterSends !== false ? '1' : '0'}
+          data-loom-empty="1"
+        >
+          <textarea
+            data-loom-composer-input
+            {...part('input')}
+            {...canvasInert}
+            rows={1}
+            placeholder={str(p.placeholder)}
+            aria-label={str(p.placeholder) || 'Message'}
+            disabled={p.disabled === true}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              resize: 'none',
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              color: t.textPrimary,
+              fontFamily: 'inherit',
+              fontSize: `${t.textSm}px`,
+              lineHeight: 1.45,
+              padding: '6px 0',
+              maxHeight: `${Math.round(rows * t.textSm * 1.45 + 12)}px`,
+            }}
+          />
+          <div data-loom-composer-actions {...part('actions')} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {children}
+            {p.showSend !== false ? (
+              <button
+                type="button"
+                data-loom-composer-send
+                {...part('send')}
+                {...canvasInert}
+                aria-label={str(p.sendLabel) || 'Send'}
+                disabled={p.disabled === true}
+                style={{ border: 'none', cursor: 'pointer', background: t.accent, color: t.textOnAccent, fontSize: `${t.textSm}px`, fontWeight: t.weightSemibold, padding: '6px 12px', borderRadius: `${t.radiusMd}px` }}
+              >
+                {str(p.sendLabel) || 'Send'}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      )
+    }
+    case 'TypingIndicator':
+      return (
+        <div key={key} style={style} data-loom-typing="" role="status" aria-label={str(p.label) || 'Someone is typing'}>
+          <span {...part('bubble')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: `${t.space2 + 2}px ${t.space3}px`, background: t.surface, border: `1px solid ${t.border}`, borderRadius: `${t.radiusLg + 4}px ${t.radiusLg + 4}px ${t.radiusLg + 4}px 5px` }}>
+            {[0, 1, 2].map((i) => (
+              <span key={i} data-loom-typing-dot {...part('dot')} aria-hidden="true" style={{ width: '6px', height: '6px', borderRadius: '50%', background: t.textMuted }} />
+            ))}
+          </span>
+          {p.showLabel !== false && str(p.label) ? (
+            <span {...part('label')} style={{ fontSize: `${t.textXs}px`, color: t.textMuted }}>{str(p.label)}</span>
+          ) : null}
         </div>
       )
     case 'Field': {
@@ -2202,7 +2429,9 @@ function renderPreviewBody(
           >
             {side ? '›' : '‹'}
           </button>
-          <div data-loom-body style={{ display: 'flex', flexDirection: 'column', gap: `${t.space2}px`, flex: 1 }}>{children}</div>
+          {/* `minHeight: 0` lets a child that scrolls (a message list) scroll
+              inside instead of stretching past the window. */}
+          <div data-loom-body style={{ display: 'flex', flexDirection: 'column', gap: `${t.space2}px`, flex: 1, minHeight: 0 }}>{children}</div>
         </div>
       )
     }
@@ -2734,7 +2963,9 @@ function renderPreviewBody(
           >
             {collapsed ? '›' : '‹'}
           </button>
-          <div data-loom-body style={{ display: 'flex', flexDirection: 'column', gap: `${t.space2}px`, flex: 1 }}>{children}</div>
+          {/* `minHeight: 0` lets a child that scrolls (a message list) scroll
+              inside instead of stretching past the window. */}
+          <div data-loom-body style={{ display: 'flex', flexDirection: 'column', gap: `${t.space2}px`, flex: 1, minHeight: 0 }}>{children}</div>
         </div>
       )
     }
@@ -5400,7 +5631,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
   // output's own body, wearing the editor's attributes. A stub ("48200" in an
   // empty box) cannot show a part being styled, and an editor that cannot show
   // what it is editing is guesswork. Selected or not, it looks the same.
-  if (spec.parts) {
+  if (spec.parts || REAL_ON_CANVAS.has(node.type)) {
     const body = renderPreviewBody(node, { ...authored, ...themeVars(t) }, children, t, key, parentOf(ctx.doc, id), ctx)
     if (body.type === React.Fragment) throw new Error(`${node.type} declares parts but has no root element`)
     const own = body.props as { style?: React.CSSProperties; children?: React.ReactNode }
@@ -5650,8 +5881,13 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
       // The canvas draws the labelled divider too: an editor that renders a
       // bare rule while the output renders a heading is an editor that cannot
       // be used to check the output.
-      if (node.children.length === 0) return <hr key={key} {...common} />
-      return <LabelledDivider key={key} p={node.props} t={t} style={common.style as React.CSSProperties} middle={children} />
+      // The label is a property OR a child, exactly as in the output.
+      const label = str(node.props.label)
+      if (node.children.length === 0 && !label) return <hr key={key} {...common} />
+      // With the editor's attributes, or a labelled divider could not be
+      // selected, moved or deleted on the canvas.
+      const { style: dividerStyle, ...dividerAttrs } = common
+      return <LabelledDivider key={key} p={node.props} t={t} style={dividerStyle as React.CSSProperties} attrs={dividerAttrs} middle={label ? label : children} />
     }
     case 'Badge':
       return <span key={key} {...common}>{str(node.props.text)}</span>

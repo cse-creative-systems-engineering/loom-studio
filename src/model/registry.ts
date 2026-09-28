@@ -11,7 +11,7 @@
 import type { NodeId, PropValue } from './types'
 import { positionProps, STYLING_KEYS, universalStyleProps } from './prop-vocab'
 
-export type PropKind = 'string' | 'number' | 'boolean' | 'enum' | 'color' | 'delimiter'
+export type PropKind = 'string' | 'number' | 'boolean' | 'enum' | 'color' | 'delimiter' | 'node'
 
 /**
  * The characters a `delimiter` prop can name.
@@ -69,6 +69,12 @@ export interface PropSpec {
    * advanced property is always shown, so a value can never hide.
    */
   advanced?: boolean
+  /**
+   * For a `node` property: the component types it may point at. A reference
+   * is a node id, picked from the document in the inspector, never typed: a
+   * Composer's "Sends to" names a real MessageList or nothing.
+   */
+  accepts?: string[]
 }
 
 export type Capability =
@@ -106,7 +112,7 @@ export interface ComponentSpec {
 }
 
 /** The field groups a part can accept (see `render/parts.ts`). */
-export type PartFieldGroup = 'text' | 'box' | 'surface'
+export type PartFieldGroup = 'text' | 'box' | 'surface' | 'layout'
 
 export interface PartSpec {
   label: string
@@ -115,7 +121,8 @@ export interface PartSpec {
   /**
    * Which fields apply. `text` is type; `box` is background, padding, radius
    * and border; `surface` is background alone, for a part (a table row) that
-   * has no box of its own to pad or round.
+   * has no box of its own to pad or round; `layout` is the spacing between
+   * the items a part holds, for a part that lays out a row or column.
    */
   fields: PartFieldGroup[]
   /**
@@ -279,6 +286,10 @@ function propValueMatches(ps: PropSpec, v: unknown): boolean {
       return typeof v === 'string' && (ps.options ?? []).includes(v)
     case 'delimiter':
       return typeof v === 'string' && v in DELIMITERS
+    case 'node':
+      // Shape only; whether the node exists and is an accepted type is a
+      // document-level question, answered by the file loader's second pass.
+      return typeof v === 'string'
   }
 }
 
@@ -296,6 +307,8 @@ function describeProp(ps: PropSpec): string {
       return `one of ${(ps.options ?? []).join('|')}`
     case 'delimiter':
       return 'a list separator name'
+    case 'node':
+      return `a reference to ${(ps.accepts ?? ['a node']).join(' or ')}`
   }
 }
 

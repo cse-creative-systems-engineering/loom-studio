@@ -15,6 +15,7 @@ import { tooltipText } from './model/tooltip'
 import { inspectorView, propLabel } from './model/inspector-view'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
+import { STARTERS, getStarter } from './model/starters'
 import { StatesPanel } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
 import { partStyled } from './render/parts'
@@ -372,6 +373,9 @@ function TitleBar({ s, previewOpen, onTogglePreview }: { s: EditorStore; preview
  * Toolbox
  * ------------------------------------------------------------------ */
 
+/** Drag payloads that name a starter rather than a component. */
+const STARTER_PREFIX = 'starter:'
+
 function Toolbox({
   s,
   onDragChange,
@@ -411,7 +415,8 @@ function Toolbox({
       // root, so it is free-positioned (a flow root would ignore x/y).
       const flowParent = hit.parent !== null && s.doc.nodes[hit.parent]?.flow === true
       const { x, y } = snapTo(hit.host, ev)
-      s.addComponent(type, hit.parent, flowParent ? 0 : x, flowParent ? 0 : y)
+      if (type.startsWith(STARTER_PREFIX)) s.addStarter(type.slice(STARTER_PREFIX.length), hit.parent, flowParent ? 0 : x, flowParent ? 0 : y)
+      else s.addComponent(type, hit.parent, flowParent ? 0 : x, flowParent ? 0 : y)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -460,7 +465,8 @@ function Toolbox({
     if (!g) return
     g.style.transform = `translate(${x + 14}px, ${y + 14}px)`
     g.dataset.valid = at ? 'yes' : 'no'
-    g.innerHTML = `<span class="ghost-name">${type}</span>${
+    const name = type.startsWith(STARTER_PREFIX) ? getStarter(type.slice(STARTER_PREFIX.length))?.label ?? type : type
+    g.innerHTML = `<span class="ghost-name">${name}</span>${
       at ? `<span class="ghost-coord">x ${at.x} · y ${at.y}</span>` : '<span class="ghost-coord">drop on the canvas</span>'
     }`
   }
@@ -503,6 +509,24 @@ function Toolbox({
             limited on {s.target === 'web' ? 'Desktop' : 'Web'}
           </div>
           <div className="scroll">
+            {/* Starters first: a finished arrangement of real tools is the
+                fastest way in, and everything it drops stays editable. */}
+            {STARTERS.some((st) => st.label.toLowerCase().includes(filter.toLowerCase())) && (
+              <section>
+                <h3>Starters</h3>
+                {STARTERS.filter((st) => st.label.toLowerCase().includes(filter.toLowerCase())).map((st) => (
+                  <button
+                    key={st.id}
+                    className="tool"
+                    title={st.description}
+                    onPointerDown={(e) => startDrag(e, STARTER_PREFIX + st.id)}
+                  >
+                    <span className="tool-icon">{st.icon}</span>
+                    <span className="tool-name">{st.label}</span>
+                  </button>
+                ))}
+              </section>
+            )}
             {[...cats.entries()].map(([cat, list]) => {
               const items = list.filter((c) => c.name.toLowerCase().includes(filter.toLowerCase()))
               if (items.length === 0) return null
@@ -1359,6 +1383,7 @@ function Inspector({
                   s.commit({ op: 'setProp', id: node.id, key: row.key, value: row.spec.default }, `Reset ${row.key}`)
                 }
                 badge={supportedIn(spec, row.key, s.target) ? undefined : s.target}
+                refs={row.spec.type === 'node' ? nodeRefs(s.doc, row.spec.accepts) : undefined}
               />
             ))}
           </section>
@@ -1387,6 +1412,23 @@ function Inspector({
   )
 }
 
+/**
+ * The nodes a reference property may point at, labelled the way the Layers
+ * panel labels them, numbered when two would read the same.
+ */
+function nodeRefs(doc: EditorStore['doc'], accepts: string[] | undefined): Array<{ id: NodeId; label: string }> {
+  const out: Array<{ id: NodeId; label: string }> = []
+  const seen = new Map<string, number>()
+  for (const n of Object.values(doc.nodes)) {
+    if (accepts && !accepts.includes(n.type)) continue
+    const base = [n.type, layerDetail(n) || (typeof n.props.ariaLabel === 'string' ? n.props.ariaLabel : '')].filter(Boolean).join(' · ')
+    const k = (seen.get(base) ?? 0) + 1
+    seen.set(base, k)
+    out.push({ id: n.id, label: k > 1 ? `${base} (${k})` : base })
+  }
+  return out
+}
+
 function supportedIn(spec: NonNullable<ReturnType<typeof getComponent>>, key: string, t: 'web' | 'desktop') {
   // Single source of truth: registry.propSupported. A hand-copied capability
   // list lived here before and was already diverging from the registry.
@@ -1402,9 +1444,11 @@ interface FieldProps {
   /** The value differs from the schema default; shows a marker and a reset. */
   modified?: boolean
   onReset?: () => void
+  /** For a `node` property: the nodes it may point at. */
+  refs?: Array<{ id: NodeId; label: string }>
 }
 
-function Field({ name, ps, value, onChange, badge, modified, onReset }: FieldProps) {
+function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: FieldProps) {
   const label = propLabel(name, ps)
   // -1 is the shared vocabulary's "the designer did not set this". Showing it
   // as a number reads as a real value of minus one, so it shows as empty.
@@ -1467,6 +1511,23 @@ function Field({ name, ps, value, onChange, badge, modified, onReset }: FieldPro
         />
       )}
       {ps.type === 'color' && <ColorField value={String(value ?? '')} onChange={onChange} />}
+      {ps.type === 'node' && (
+        <div className="select-wrap">
+          <select aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
+            <option value="">nothing</option>
+            {(refs ?? []).map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label}
+              </option>
+            ))}
+            {/* A reference to a node that is gone stays visible as exactly that. */}
+            {typeof value === 'string' && value !== '' && !(refs ?? []).some((r) => r.id === value) && (
+              <option value={value}>missing node</option>
+            )}
+          </select>
+          <span className="chevron" aria-hidden="true" />
+        </div>
+      )}
       {ps.type === 'number' && (
         <NumField
           ariaLabel={label}

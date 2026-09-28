@@ -8,7 +8,7 @@
  */
 
 import type { Document, Node, NodeId, Op, PropValue } from './types'
-import { normalizeProps } from './registry'
+import { getComponent, normalizeProps } from './registry'
 // Effects are a pure data module (values in, style out) with no model
 // dependency, so importing it here does NOT invert the model->render
 // layering. Keeping the normaliser in one place is worth more than the
@@ -502,6 +502,10 @@ export function duplicateSubtree(
       children: n.children.map((c) => remap.get(c) ?? c),
     }
   }
+  // A reference inside the copied subtree follows the copy: a duplicated chat
+  // panel's Composer sends to the DUPLICATED list, not the original. A
+  // reference outside the subtree keeps pointing where it did.
+  for (const n of Object.values(tree)) remapRefs(n, remap)
   const rootId = remap.get(id)
   const node = rootId ? tree[rootId] : undefined
   if (!node) return undefined
@@ -510,4 +514,15 @@ export function duplicateSubtree(
 
 function num(v: PropValue | undefined): number {
   return typeof v === 'number' ? v : 0
+}
+
+/** Rewrite a node's `node`-kind props through `remap`, in place. */
+export function remapRefs(node: Node, remap: Map<NodeId, NodeId>): void {
+  const spec = getComponent(node.type)
+  if (!spec) return
+  for (const [key, ps] of Object.entries(spec.props)) {
+    if (ps.type !== 'node') continue
+    const ref = node.props[key]
+    if (typeof ref === 'string' && remap.has(ref)) node.props[key] = remap.get(ref) as string
+  }
 }

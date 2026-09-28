@@ -37,6 +37,7 @@ import { defineComponent, type PropSpec } from '../model/registry'
 import { boxProps, controlProps, flowProps, listProps, scrollProps, spaceProps, textProps } from './prop-vocab'
 import './catalog1'
 import './catalog2'
+import './conversation'
 
 type Props = Record<string, PropSpec>
 

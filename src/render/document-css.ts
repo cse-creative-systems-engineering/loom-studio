@@ -15,5 +15,5 @@ import { stateCss } from './states'
 import { partCss } from './parts'
 
 export function documentCss(doc: Document, theme?: Theme): string {
-  return [responsiveCss(doc), partCss(doc), stateCss(doc, theme)].filter(Boolean).join('\n')
+  return [responsiveCss(doc), partCss(doc, theme), stateCss(doc, theme)].filter(Boolean).join('\n')
 }
