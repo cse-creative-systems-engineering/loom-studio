@@ -44,6 +44,8 @@ export const PART_FIELDS: readonly PartField[] = [
   { key: 'letterSpacing', label: 'Tracking', group: 'text', kind: 'number', min: -4, max: 12, step: 0.1, unit: 'px' },
   { key: 'textTransform', label: 'Case', group: 'text', kind: 'enum', options: ['none', 'uppercase', 'lowercase', 'capitalize'] },
   { key: 'align', label: 'Align', group: 'text', kind: 'enum', options: ['left', 'center', 'right'] },
+  { key: 'fontFamily', label: 'Font', group: 'text', kind: 'enum', options: ['sans', 'mono'] },
+  { key: 'decoration', label: 'Decoration', group: 'text', kind: 'enum', options: ['none', 'underline', 'line-through'] },
   { key: 'background', label: 'Background', group: 'surface', kind: 'color' },
   { key: 'paddingX', label: 'Padding X', group: 'box', kind: 'number', min: 0, max: 64, step: 1, unit: 'px' },
   { key: 'paddingY', label: 'Padding Y', group: 'box', kind: 'number', min: 0, max: 64, step: 1, unit: 'px' },
@@ -113,14 +115,25 @@ export function partHook(id: string, part: string): string {
  * The attribute a renderer puts on a part's element(s). The editor always
  * carries it, so the panel can point at a part before it is styled; output
  * carries it only when the part IS styled, so a plain export stays clean.
+ *
+ * An element can be more than one part: the active link is a `link` AND the
+ * `active` one. The hooks are a space-separated list (matched with `~=`), and
+ * a later-declared part's rule wins over an earlier one's.
  */
-export function partAttrs(node: Node, part: string, editor: boolean): Record<string, string> {
-  return editor || partStyled(node, part) ? { [PART_ATTR]: partHook(node.id, part) } : {}
+export function partAttrs(node: Node, part: string | string[], editor: boolean): Record<string, string> {
+  const names = (Array.isArray(part) ? part : [part]).filter((n) => editor || partStyled(node, n))
+  return names.length > 0 ? { [PART_ATTR]: names.map((n) => partHook(node.id, n)).join(' ') } : {}
+}
+
+/** The part names an element's hook carries for node `id`. */
+export function partsInHook(hook: string | null, id: string): string[] {
+  if (!hook) return []
+  return hook.split(/\s+/).filter((h) => h.startsWith(`${id}/`)).map((h) => h.slice(id.length + 1))
 }
 
 /** The selector for one part of one node, on every surface. */
 export function partSelector(id: string, part: string): string {
-  return `[${PART_ATTR}=${cssString(partHook(id, part))}]`
+  return `[${PART_ATTR}~=${cssString(partHook(id, part))}]`
 }
 
 /** A named elevation, from the document's own theme: never a raw value. */
@@ -137,6 +150,10 @@ function decls(st: PartStyle, lines: boolean, t: Theme): string[] {
   if (st.letterSpacing !== undefined) out.push(`letter-spacing:${st.letterSpacing}px`)
   if (st.textTransform !== undefined) out.push(`text-transform:${st.textTransform}`)
   if (st.align !== undefined) out.push(`text-align:${st.align}`)
+  // The theme's own faces, by role: a raw font stack typed into a part would
+  // be the one place a design stops following its theme.
+  if (st.fontFamily !== undefined) out.push(`font-family:${st.fontFamily === 'mono' ? t.fontMono : t.fontFamily}`)
+  if (st.decoration !== undefined) out.push(`text-decoration-line:${st.decoration}`)
   if (st.background !== undefined) out.push(`background:${st.background}`)
   if (st.paddingX !== undefined) out.push(`padding-left:${st.paddingX}px`, `padding-right:${st.paddingX}px`)
   if (st.paddingY !== undefined) out.push(`padding-top:${st.paddingY}px`, `padding-bottom:${st.paddingY}px`)
@@ -163,7 +180,12 @@ export function partCss(doc: Document, theme: Theme = resolveTheme(doc.meta.them
   const rules: string[] = []
   for (const node of Object.values(doc.nodes)) {
     if (!node.parts) continue
-    for (const [part, raw] of Object.entries(node.parts)) {
+    // In DECLARED order, not the order they were styled in: where an element
+    // is two parts (a link that is the active one), the later part wins.
+    const declared = Object.keys(partsOf(node.type) ?? {})
+    for (const part of declared) {
+      const raw = node.parts[part]
+      if (!raw) continue
       const d = decls(cleanPartStyle(node.type, part, raw as Record<string, unknown>).style, partsOf(node.type)?.[part]?.lines === true, theme)
       if (d.length > 0) rules.push(`${partSelector(node.id, part)}{${d.join(';')}}`)
     }

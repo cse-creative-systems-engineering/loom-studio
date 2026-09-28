@@ -28,7 +28,7 @@
 
 import { allComponents, type ComponentSpec } from '../src/model/registry'
 import { renderNode } from '../src/render/web'
-import { fieldsFor, PART_ATTR } from '../src/render/parts'
+import { fieldsFor, PART_ATTR, partsInHook } from '../src/render/parts'
 import { OUTPUT_HOOK } from '../src/render/responsive'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { docWith, ID, probeStates } from './prop-audit'
@@ -111,6 +111,9 @@ function lookOf(el: Element): { fields: Set<string>; unknown: string[] } {
       if (hit) {
         // A transparent or inherited value is the absence of a look.
         const v = st.getPropertyValue(prop).trim()
+        // `text-decoration: none` expands to a style and colour for a line
+        // that is not drawn.
+        if (hit[1] === 'decoration' && st.getPropertyValue('text-decoration-line').trim() === 'none') continue
         if (v === 'transparent' || v === 'inherit' || v === 'none' || v === 'currentcolor' || v === 'initial' || v === 'unset' || v === '0px' && hit[1] !== 'radius') continue
         fields.add(hit[1])
       } else if (!STRUCTURE.test(prop)) {
@@ -165,11 +168,13 @@ export function auditAreas(only?: (spec: ComponentSpec) => boolean): AreaReport 
         const { fields, unknown } = lookOf(el)
         for (const u of unknown) unclassified.add(`${spec.name}: ${u}`)
         if (fields.size === 0) continue
-        const hook = el.getAttribute(PART_ATTR)
-        const partName = hook && hook.startsWith(`${ID}/`) ? hook.slice(ID.length + 1) : null
-        const accepted = partName && parts[partName] ? new Set(fieldsFor(parts[partName].fields).map((f) => f.key as string)) : null
+        // An element can be several parts (the active link is `link` and
+        // `active`): it is reachable through any of them.
+        const names = partsInHook(el.getAttribute(PART_ATTR), ID).filter((n) => parts[n])
+        const accepted = names.length > 0 ? new Set(names.flatMap((n) => fieldsFor(parts[n].fields).map((f) => f.key as string))) : null
         const needs = [...fields].filter((f) => !accepted || !accepted.has(f)).sort()
         if (needs.length === 0) continue
+        const partName = names.join('+')
         const where = `${partName ? `[${partName}] ` : ''}${describe(el, root)}`
         const key = `${spec.name}|${where}`
         const prev = byKey.get(key)

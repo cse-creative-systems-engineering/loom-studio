@@ -14,7 +14,10 @@
  *  - MessageBubble is not a Card: it knows which side it is on, groups with
  *    the message before it, and carries the time and delivery status.
  *  - Composer is not a Field: it grows as you type and Enter sends.
- *  - TypingIndicator animates, which nothing else in the toolbox does.
+ *
+ * Messages are added from the list's own panel ("Add received", "Add sent"),
+ * and the typing indicator is an option of the list: on their own, neither
+ * means anything, so neither is a separate tool.
  */
 
 import { defineComponent, type PropSpec } from './registry'
@@ -34,9 +37,18 @@ defineComponent({
   // The inspector's Flow switch still turns it off.
   defaultFlow: true,
   icon: '☰',
-  description: 'A conversation: messages in order, opening at the newest. What a Composer sends lands here.',
+  description: 'A conversation: messages in order, opening at the newest. Add messages from its panel; what a Composer sends lands here.',
+  adds: [
+    { type: 'MessageBubble', label: 'Add received', props: { side: 'received', text: 'New message' } },
+    { type: 'MessageBubble', label: 'Add sent', props: { side: 'sent', text: 'New reply', showAuthor: false } },
+  ],
   props: {
     stickToBottom: bool(true, 'Behaviour'),
+    // Someone is writing: three moving dots after the newest message. An
+    // option of the list rather than a tool, because it only means anything
+    // at the end of a conversation.
+    showTyping: bool(false, 'Content'),
+    typingLabel: str('Ada is typing'),
     gap: num(10, 'Layout', 0, 48),
     emptyText: str('No messages yet'),
     jumpLabel: str('New messages'),
@@ -45,6 +57,10 @@ defineComponent({
   parts: {
     empty: { label: 'Empty', hint: 'What the list says before the first message', fields: ['text', 'box'] },
     jump: { label: 'Jump', hint: 'The pill that appears when a message arrives while you are scrolled up', fields: ['text', 'box'] },
+    typingRow: { label: 'Typing row', hint: 'The dots and who is typing, side by side', fields: ['layout'] },
+    typing: { label: 'Typing', hint: 'The bubble around the moving dots', fields: ['box', 'layout'] },
+    typingDot: { label: 'Dots', hint: 'Each dot; the background is its colour', fields: ['box'] },
+    typingLabel: { label: 'Typing label', hint: 'Who is typing', fields: ['text', 'box'] },
   },
 })
 
@@ -100,21 +116,5 @@ defineComponent({
     input: { label: 'Input', hint: 'The text box', fields: ['text', 'box'] },
     actions: { label: 'Actions', hint: 'The row holding your buttons and Send', fields: ['box', 'layout'] },
     send: { label: 'Send', hint: 'The send button', fields: ['text', 'box'] },
-  },
-})
-
-defineComponent({
-  name: 'TypingIndicator',
-  category: 'Conversation',
-  icon: '⋯',
-  description: 'Someone is writing: three dots that move, and who it is.',
-  props: {
-    label: str('Ada is typing'),
-    showLabel: bool(true),
-  },
-  parts: {
-    bubble: { label: 'Bubble', hint: 'The bubble around the dots', fields: ['box', 'layout'] },
-    dot: { label: 'Dots', hint: 'Each dot; the background is its colour', fields: ['box'] },
-    label: { label: 'Label', hint: 'Who is typing', fields: ['text', 'box'] },
   },
 })

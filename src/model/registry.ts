@@ -8,7 +8,7 @@
  * component" is reachable — adding one is a single file.
  */
 
-import type { NodeId, PropValue } from './types'
+import type { ListItem, NodeId, PropValue } from './types'
 import { positionProps, STYLING_KEYS, universalStyleProps } from './prop-vocab'
 
 export type PropKind = 'string' | 'number' | 'boolean' | 'enum' | 'color' | 'delimiter' | 'node'
@@ -109,6 +109,46 @@ export interface ComponentSpec {
    * field it accepts must change what that part looks like.
    */
   parts?: Record<string, PartSpec>
+  /**
+   * Item lists this component draws from data (see `Node.lists`), edited in
+   * its own panel. Each list declares its fields like props, so an item is
+   * validated exactly as a property is.
+   */
+  lists?: Record<string, ListSpec>
+  /**
+   * Children this component creates from its OWN panel ("Add tab"). A type
+   * named here is not a separate tool: it leaves the toolbox, because on its
+   * own it means nothing.
+   */
+  adds?: AddSpec[]
+  /**
+   * When set, the only child types this container accepts. A tab set holds
+   * tabs; a button dropped on it belongs in the tab, not beside it.
+   */
+  childTypes?: string[]
+}
+
+
+export interface ListSpec {
+  /** The list's name in the panel ("Events"). */
+  label: string
+  /** One item's name ("Event"), for "Add event". */
+  itemLabel: string
+  /** The field shown as each row's title in the panel. */
+  titleField: string
+  fields: Record<string, PropSpec>
+  /** What a new component starts with. */
+  default: ListItem[]
+  /** A cap, so a file cannot make a component draw a million rows. */
+  max: number
+}
+
+export interface AddSpec {
+  type: string
+  /** The button's words ("Add tab"). */
+  label: string
+  /** Props the new child starts with, beyond its own defaults. */
+  props?: Record<string, PropValue>
 }
 
 /** The field groups a part can accept (see `render/parts.ts`). */
@@ -271,6 +311,11 @@ export function validateProps(
   return { props, issues }
 }
 
+/** True when `v` is a legal value for `ps`: the one check props and list items share. */
+export function valueMatches(ps: PropSpec, v: unknown): boolean {
+  return propValueMatches(ps, v)
+}
+
 function propValueMatches(ps: PropSpec, v: unknown): boolean {
   switch (ps.type) {
     case 'string':
@@ -327,6 +372,29 @@ function previewValue(v: unknown): string {
   }
 }
 
+/** Types some other component creates from its own panel: not toolbox tools. */
+export function addedTypes(): Set<string> {
+  const out = new Set<string>()
+  for (const spec of registry.values()) for (const a of spec.adds ?? []) out.add(a.type)
+  return out
+}
+
+/** Whether `parentType` accepts a child of `childType`. */
+export function acceptsChild(parentType: string, childType: string): boolean {
+  const spec = registry.get(parentType)
+  if (!spec?.container) return false
+  return !spec.childTypes || spec.childTypes.includes(childType)
+}
+
+/** A fresh copy of each list's declared default. */
+export function defaultLists(name: string): Record<string, ListItem[]> | undefined {
+  const spec = registry.get(name)
+  if (!spec?.lists) return undefined
+  const out: Record<string, ListItem[]> = {}
+  for (const [key, ls] of Object.entries(spec.lists)) out[key] = ls.default.map((it) => ({ ...it }))
+  return out
+}
+
 /** A fresh node with every declared default applied. */
 export function instantiate(name: string): {
   type: string
@@ -336,6 +404,7 @@ export function instantiate(name: string): {
   visible: boolean
   locked: boolean
   opacity: number
+  lists?: Record<string, ListItem[]>
 } {
   const spec = registry.get(name)
   if (!spec) throw new Error(`unknown component: ${name}`)
@@ -354,6 +423,7 @@ export function instantiate(name: string): {
     visible: true,
     locked: false,
     opacity: 1,
+    ...(spec.lists ? { lists: defaultLists(name) } : {}),
   }
 }
 

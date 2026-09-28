@@ -184,7 +184,7 @@ function probeChildren(): Node[] {
   // Accordion.open needs AccordionItems, not labels: a property whose effect is
   // "how many of MY children start open" is inert against the wrong child type.
   // One of each plausible child makes the retry context real.
-  return (['Label', 'Button', 'AccordionItem', 'SettingsRow'] as const).map((type, i) => ({
+  return (['Label', 'Button', 'AccordionItem', 'SettingsRow', 'TabPanel'] as const).map((type, i) => ({
     id: `${ID}-${i}`,
     type,
     props: validateProps(type, instantiate(type).props).props,

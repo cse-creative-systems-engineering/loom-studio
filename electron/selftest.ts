@@ -31,6 +31,8 @@ import { auditAreas } from './area-audit'
 import { KNOWN_UNREACHABLE } from './area-backlog'
 import { installBehaviourRuntime } from '../src/render/behaviour-mount'
 import { STARTERS } from '../src/model/starters'
+import { addedTypes } from '../src/model/registry'
+import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
 import { THEME_NAMES } from '../src/render/theme'
 import { PreviewStage } from '../src/preview'
@@ -943,10 +945,12 @@ export async function runSelfTest(): Promise<string> {
     // The one exception, recorded rather than silent: a message list IS a
     // column that new messages are appended to, which free positioning cannot
     // express. Adding a name here needs the same kind of reason.
-    const FLOW_BY_NATURE = new Set(['MessageList'])
+    // Tabs, accordions and settings sections stack their own sections, which
+    // their panels add: free-positioned sections would pile up at 0,0.
+    const FLOW_BY_NATURE = new Set(['MessageList', 'Tabs', 'Accordion', 'SettingsSection'])
     const nonFree = allComponents().filter((c) => instantiate(c.name).flow !== false && !FLOW_BY_NATURE.has(c.name))
     check('every component instantiates free (absolute)', nonFree.length === 0, nonFree.map((c) => c.name).join(','))
-    check('the flow exceptions are real and few', [...FLOW_BY_NATURE].every((n) => instantiate(n).flow === true) && FLOW_BY_NATURE.size <= 1)
+    check('the flow exceptions are real and few', [...FLOW_BY_NATURE].every((n) => instantiate(n).flow === true) && FLOW_BY_NATURE.size <= 4)
     const panel = getComponent('Panel')
     check('Panel defaults to a portable solid surface', panel?.props.surface?.default === 'solid')
     check('Panel glass defaults off (web-only effect)', panel?.props.glass?.default === false)
@@ -1331,10 +1335,10 @@ export async function runSelfTest(): Promise<string> {
   {
     // The contract table is explicit and total for the control families.
     const expected: Record<string, string> = {
-      Button: 'press', IconButton: 'press', BackButton: 'press', MenuItem: 'press',
-      NavLink: 'press', Link: 'press', FileUpload: 'press',
+      Button: 'press', IconButton: 'press', BackButton: 'press',
+      Link: 'press', FileUpload: 'press',
       Switch: 'toggle', ToggleButton: 'toggle', DropdownButton: 'toggle',
-      Checkbox: 'check', Checklist: 'check', Radio: 'radio',
+      Checkbox: 'check', Checklist: 'check',
       TabPanel: 'panel', AccordionItem: 'disclosure',
     }
     const wrong = Object.entries(expected).filter(([type, role]) => ROLE_OF[type] !== role)
@@ -1859,8 +1863,8 @@ export async function runSelfTest(): Promise<string> {
     // Every list-valued property ships its separator, so no list can be
     // half-declared. This walks the registry rather than a hand-kept list.
     const listProps: Array<[string, string]> = [
-      ['Tabs', 'tabs'], ['TabBar', 'tabs'], ['Select', 'options'], ['Segmented', 'options'],
-      ['RadioGroup', 'options'], ['ComboBox', 'options'], ['DropdownButton', 'items'],
+      ['TabBar', 'tabs'], ['Select', 'options'], ['Segmented', 'options'],
+      ['ComboBox', 'options'], ['DropdownButton', 'items'],
       ['Checklist', 'items'], ['BulletList', 'items'], ['NumberedList', 'items'],
       ['TreeList', 'items'], ['DataList', 'items'], ['Breadcrumbs', 'trail'],
       ['Stepper', 'steps'], ['AnchorList', 'links'], ['AvatarGroup', 'names'],
@@ -1880,7 +1884,7 @@ export async function runSelfTest(): Promise<string> {
     const r41 = withRoot(s41)
     // "Ada, Countess of Lovelace" contains a comma: with a comma separator that
     // is three broken items, and with a pipe it is exactly one.
-    const tabs = s41.addComponent('Tabs', r41, 0, 0, { tabs: 'Ada, Countess of Lovelace', tabsSep: 'comma' })
+    const tabs = s41.addComponent('TabBar', r41, 0, 0, { tabs: 'Ada, Countess of Lovelace', tabsSep: 'comma' })
     const commaHtml = emitHtml(s41.doc)
     // One comma in the text: with a comma separator that is two items, and the
     // second one is not what the author meant.
@@ -1913,16 +1917,16 @@ export async function runSelfTest(): Promise<string> {
 
     // A separator is a property, so it must survive a save/load round trip.
     const rt = validate(serialize(s41.doc))
-    const rtTabs = Object.values((rt.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'Tabs')
+    const rtTabs = Object.values((rt.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'TabBar')
     check('the separator survives save/load', rtTabs?.props.tabsSep === 'comma' || rtTabs?.props.tabsSep === 'pipe')
 
     // And a hand-written file cannot smuggle in a separator we do not know.
     const hostile = JSON.parse(serialize(s41.doc))
-    const anyTab = Object.values(hostile.nodes as Record<string, LoomNode>).find((n) => n.type === 'Tabs')
+    const anyTab = Object.values(hostile.nodes as Record<string, LoomNode>).find((n) => n.type === 'TabBar')
     if (anyTab) {
       anyTab.props.tabsSep = 'backslash'
       const repaired = validate(hostile)
-      const fixedTab = Object.values((repaired.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'Tabs')
+      const fixedTab = Object.values((repaired.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'TabBar')
       check('an unknown separator is repaired toward comma', fixedTab?.props.tabsSep === 'comma')
       check('the repair is reported', repaired.issues.some((i) => i.path.includes('tabsSep')))
     }
@@ -2815,6 +2819,8 @@ export async function runSelfTest(): Promise<string> {
     const SEED: Record<string, Record<string, string | boolean>> = {
       Field: { description: 'Help text', message: 'Something is wrong' },
       MessageBubble: { status: 'read' },
+      MessageList: { showTyping: true },
+      RadioGroup: { label: 'Plan' },
       KpiCard: {},
       Stat: {},
       DataGrid: {},
@@ -2843,11 +2849,11 @@ export async function runSelfTest(): Promise<string> {
       }
     }
     const partEls = (host: HTMLElement, id: string, part: string) =>
-      [...host.querySelectorAll(`[data-loom-part]`)].filter((e) => e.getAttribute('data-loom-part') === `${id}/${part}`) as HTMLElement[]
+      [...host.querySelectorAll(`[data-loom-part]`)].filter((e) => (e.getAttribute('data-loom-part') ?? '').split(/\s+/).includes(`${id}/${part}`)) as HTMLElement[]
 
     // What each field is measured by: the CSS property on the part element,
     // the value set, and the computed value expected (null: must differ).
-    const PROBE: Record<string, { css: string; value: string | number; lines?: string; expect: string | null }> = {
+    const PROBE: Record<string, { css: string; value: string | number | ((base: string) => string); lines?: string; expect: string | null }> = {
       fontSize: { css: 'font-size', value: 23, expect: '23px' },
       fontWeight: { css: 'font-weight', value: 800, expect: '800' },
       color: { css: 'color', value: '#123456', expect: 'rgb(18, 52, 86)' },
@@ -2865,6 +2871,10 @@ export async function runSelfTest(): Promise<string> {
       borderWidth: { css: 'border-left-width', value: 4, expect: '4px' },
       gap: { css: 'row-gap', value: 17, expect: '17px' },
       shadow: { css: 'box-shadow', value: 'glow', expect: null },
+      // Whichever face the part is NOT already in: a mono shortcut set to mono
+      // changes nothing, and that is not the field lying.
+      fontFamily: { css: 'font-family', value: (base) => (base.includes('mono') ? 'sans' : 'mono'), expect: null },
+      decoration: { css: 'text-decoration-line', value: 'line-through', expect: 'line-through' },
     }
 
     const missing: string[] = []
@@ -2878,6 +2888,8 @@ export async function runSelfTest(): Promise<string> {
         const r = st.doc.root as string
         const id = st.addComponent(comp.name, r, 20, 20, SEED[comp.name] ?? {}) as string
         if (comp.name === 'Field') st.addComponent('Input', id, 0, 0)
+        // Rows that only appear in a state: a current menu command.
+        if (comp.name === 'Menu') st.commit({ op: 'setList', id, key: 'items', items: [{ label: 'Profile', icon: 'user', shortcut: '⌘P', active: true }, { label: 'Sign out', danger: true }] }, 'seed')
         const baseDoc = st.doc
         // The part must exist on the canvas before it is styled (the panel
         // points at it), and in the output once it is.
@@ -2899,7 +2911,8 @@ export async function runSelfTest(): Promise<string> {
           const prop = partSpec.lines && probe.lines ? probe.lines : probe.css
           baseValues[f.key] = mounted(baseDoc, 'authoring', (h) => getComputedStyle(partEls(h, id, partName)[0]).getPropertyValue(prop))
           const rootBefore = mounted(baseDoc, 'authoring', (h) => getComputedStyle(h.querySelector(`[data-loom-id="${id}"]`) as HTMLElement).getPropertyValue(prop))
-          st.commit({ op: 'setPartStyle', id, part: partName, patch: { [f.key]: probe.value } }, 'probe')
+          const value = typeof probe.value === 'function' ? probe.value(baseValues[f.key]) : probe.value
+          st.commit({ op: 'setPartStyle', id, part: partName, patch: { [f.key]: value } }, 'probe')
           for (const mode of ['preview', 'authoring'] as const) {
             mounted(st.doc, mode, (h) => {
               const els = partEls(h, id, partName)
@@ -3043,7 +3056,7 @@ export async function runSelfTest(): Promise<string> {
     const list = byType('MessageList')[0]
     const composer = byType('Composer')[0]
     check('the chat starter drops real tools as one undo step',
-      Boolean(list && composer) && s56.history.length === before56 + 1 && byType('MessageBubble').length === 3 && byType('TypingIndicator').length === 1 &&
+      Boolean(list && composer) && s56.history.length === before56 + 1 && byType('MessageBubble').length === 3 && s56.doc.nodes[list]?.props.showTyping === true &&
       STARTERS.some((st) => st.id === 'chat-sidebar'), `${s56.history.length - before56} steps`)
     check('the starter wires its composer to its own list', s56.doc.nodes[composer]?.props.sendsTo === list)
     check('the chat sidebar docks to the left edge', s56.doc.nodes[side]?.props.anchor === 'left')
@@ -3168,7 +3181,7 @@ export async function runSelfTest(): Promise<string> {
     })()
     check('on the canvas the composer is a picture and the messages are nodes', canvas56.inputInert && canvas56.bubbleIsNode, JSON.stringify(canvas56))
     const convo = auditAreas((c) => c.category === 'Conversation')
-    check('every area of every conversation tool can be customized', convo.components === 4 && convo.findings.length === 0,
+    check('every area of every conversation tool can be customized', convo.components === 3 && convo.findings.length === 0,
       convo.findings.map((f) => `${f.component}|${f.where} ${f.needs.join('/')}`).join(' | '))
   }
 
@@ -3211,6 +3224,176 @@ export async function runSelfTest(): Promise<string> {
     check('a row aligned to the end does not right-align the text inside it', a57.rowTextAlign !== 'end' && a57.rowTextAlign !== 'right', a57.rowTextAlign)
     check('the canvas draws a divider\'s label property', a57.dividerText.includes('Today'), a57.dividerText)
     check('the canvas draws a header\'s title', a57.headerText.includes('Assistant'), a57.headerText)
+  }
+
+  // --- 58. a component's pieces live in ITS panel, not the toolbox --------
+  {
+    const gone = ['TimelineItem', 'MenuItem', 'NavLink', 'Radio', 'TypingIndicator']
+    check('child-only tools are gone from the registry', gone.every((n) => !getComponent(n)), gone.filter((n) => getComponent(n)).join(', '))
+    const added = addedTypes()
+    check('tools a parent creates are not toolbox tools', ['TabPanel', 'AccordionItem', 'SettingsRow', 'MessageBubble'].every((n) => added.has(n)), [...added].join(', '))
+    check('every listed type declares a real list', allComponents().every((c) => Object.values(c.lists ?? {}).every((l) =>
+      l.fields[l.titleField] !== undefined && l.max > 0 && l.default.length <= l.max)))
+
+    // The list op: whole-list replace, exact undo, validated items.
+    const s58 = new EditorStore()
+    s58.addComponent('Panel', null, 0, 0)
+    const r58 = s58.doc.root as string
+    s58.commit({ op: 'resize', id: r58, w: 900, h: 600 }, 'size')
+    const tl = s58.addComponent('Timeline', r58, 10, 10) as string
+    const shipped = itemsOf(s58.doc.nodes[tl], 'events').length
+    check('a new timeline starts with its sample events', shipped === 3 && Array.isArray(s58.doc.nodes[tl].lists?.events))
+    s58.commit({ op: 'setList', id: tl, key: 'events', items: [{ title: 'Kickoff', tone: 'success' }, { title: 'Launch', tone: 'nope', bogus: 1 } as never] }, 'events')
+    const ev = itemsOf(s58.doc.nodes[tl], 'events')
+    check('list items are validated field by field', ev.length === 2 && ev[0].title === 'Kickoff' && ev[0].time === '2h ago' && ev[1].tone === 'accent' && !('bogus' in ev[1]),
+      JSON.stringify(ev))
+    s58.undo()
+    check('undoing a list edit restores the list exactly', itemsOf(s58.doc.nodes[tl], 'events').length === 3)
+    s58.redo()
+    s58.commit({ op: 'setList', id: tl, key: 'nonsense', items: [] }, 'bad')
+    check('a list the component does not declare is refused', s58.doc.nodes[tl].lists?.nonsense === undefined)
+    s58.commit({ op: 'setList', id: tl, key: 'events', items: Array.from({ length: 500 }, (_, i) => ({ title: `e${i}` })) }, 'flood')
+    check('a list is capped', itemsOf(s58.doc.nodes[tl], 'events').length === 200)
+    s58.undo()
+
+    // The trust boundary.
+    const hostile58 = JSON.parse(serialize(s58.doc)) as { nodes: Record<string, Record<string, unknown>> }
+    hostile58.nodes[tl].lists = { events: [{ title: 5, time: 'now' }, 'x', { title: 'ok', extra: true }], ghosts: [] }
+    const loaded58 = validate(JSON.stringify(hostile58))
+    const lp = loaded58.issues.map((i) => `${i.path} ${i.message}`)
+    check('a hostile list is repaired and reported', itemsOf(loaded58.doc?.nodes[tl] as LoomNode, 'events').length === 2 &&
+      lp.some((m) => m.includes('events[0].title')) && lp.some((m) => m.includes('not an item')) && lp.some((m) => m.includes('unknown field')) && lp.some((m) => m.includes('no list "ghosts"')),
+      lp.join(' | '))
+    check('lists survive save and load', JSON.stringify(validate(serialize(s58.doc)).doc?.nodes[tl].lists) === JSON.stringify(s58.doc.nodes[tl].lists))
+
+    // Every field of every list changes the output.
+    const inert: string[] = []
+    for (const comp of allComponents()) {
+      for (const [key, ls] of Object.entries(comp.lists ?? {})) {
+        for (const [field, ps] of Object.entries(ls.fields)) {
+          const st = new EditorStore()
+          st.addComponent('Panel', null, 0, 0)
+          const id = st.addComponent(comp.name, st.doc.root as string, 0, 0) as string
+          const base = { ...ls.default[0] }
+          const alt = ps.type === 'boolean' ? !base[field] : ps.type === 'enum' ? (ps.options ?? []).find((o) => o !== base[field]) ?? base[field] : field === 'icon' ? (base[field] ? '' : 'star') : `${String(base[field] ?? '')}Z`
+          st.commit({ op: 'setList', id, key, items: [base] }, 'a')
+          const before = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, st.doc.root as string))
+          st.commit({ op: 'setList', id, key, items: [{ ...base, [field]: alt as string | number | boolean }] }, 'b')
+          const after = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, st.doc.root as string))
+          if (before === after) inert.push(`${comp.name}.${key}.${field}`)
+        }
+      }
+    }
+    check('every field of every list changes the output', inert.length === 0, inert.join(', '))
+
+    // A container that names its children refuses anything else.
+    const tabs = s58.addComponent('Tabs', r58, 10, 200) as string
+    const before58 = s58.doc.nodes[tabs].children.length
+    s58.addComponent('Button', tabs, 0, 0)
+    check('a tab set refuses a stray button', s58.doc.nodes[tabs].children.length === before58)
+    const t1 = s58.addComponent('TabPanel', tabs, 0, 0, { title: 'Overview' }) as string
+    s58.addComponent('TabPanel', tabs, 0, 0, { title: 'Activity' })
+    const hiddenTab = s58.addComponent('TabPanel', tabs, 0, 0, { title: 'Secret' }) as string
+    s58.commit({ op: 'setVisible', id: hiddenTab, visible: false }, 'hide')
+    const btn = s58.addComponent('Button', r58, 400, 10) as string
+    s58.commit({ op: 'reparent', id: btn, parent: tabs }, 'sneak')
+    check('reparenting into a tab set is refused too', !s58.doc.nodes[tabs].children.includes(btn))
+    const strip = (() => {
+      const h = document.createElement('div')
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: s58.doc, selected: new Set(), mode: 'preview' }, r58))
+      return [...h.querySelectorAll(`[data-loom-tabs] [role="tab"]`)].map((b) => b.textContent)
+    })()
+    check('the strip\'s labels are the tabs\' own titles, and a hidden tab has none', JSON.stringify(strip) === '["Overview","Activity"]', JSON.stringify(strip))
+    void t1
+
+    // The active link is its own part: styled apart from the other links.
+    const nav = s58.addComponent('NavBar', r58, 10, 400) as string
+    s58.commit({ op: 'setPartStyle', id: nav, part: 'link', patch: { color: '#123456' } }, 'links')
+    s58.commit({ op: 'setPartStyle', id: nav, part: 'active', patch: { color: '#abcdef' } }, 'current')
+    const style58 = document.createElement('style')
+    style58.textContent = documentCss(s58.doc)
+    document.head.appendChild(style58)
+    const h58 = document.createElement('div')
+    h58.innerHTML = renderToStaticMarkup(renderNode({ doc: s58.doc, selected: new Set(), mode: 'preview' }, r58))
+    document.body.appendChild(h58)
+    const links = [...h58.querySelectorAll('nav a')].map((a) => ({ current: a.getAttribute('aria-current'), color: getComputedStyle(a).color }))
+    h58.remove()
+    style58.remove()
+    const navRow = (() => {
+      const h = document.createElement('div')
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: s58.doc, selected: new Set(), mode: 'preview' }, r58))
+      document.body.appendChild(h)
+      const navEl = h.querySelector('nav') as HTMLElement
+      const out = navEl ? getComputedStyle(navEl).flexDirection : 'missing'
+      h.remove()
+      return out
+    })()
+    check('a nav bar lays its title and links out in a row', navRow === 'row', navRow)
+    check('the current link wears the "current" part; the others wear "links"',
+      links.length === 3 && links.filter((l) => l.current === 'page').every((l) => l.color === 'rgb(171, 205, 239)') &&
+      links.filter((l) => l.current !== 'page').every((l) => l.color === 'rgb(18, 52, 86)'), JSON.stringify(links))
+  }
+
+  // --- 59. old files open with their pieces folded into their owners --------
+  {
+    const n = (id: string, type: string, props: Record<string, unknown>, children: string[] = []) =>
+      ({ id, type, props, children, flow: false, visible: true, locked: false, opacity: 1 })
+    const old = {
+      version: 1,
+      meta: { name: 'old', targets: ['web'], created: 0 },
+      root: 'r',
+      nodes: {
+        r: n('r', 'Panel', {}, ['tl', 'stray', 'menu', 'nav', 'lone', 'rg', 'form', 'tabs', 'emptyTl', 'ml']),
+        tl: n('tl', 'Timeline', {}, ['e1', 'keep', 'e2']),
+        e1: n('e1', 'TimelineItem', { title: 'First', time: 'Mon', size: 'lg', markerSize: 14 }),
+        keep: n('keep', 'Button', { label: 'Kept' }),
+        e2: n('e2', 'TimelineItem', { title: 'Second', tone: 'danger' }),
+        stray: n('stray', 'TimelineItem', { title: 'Alone', x: 5, y: 6 }),
+        menu: n('menu', 'Menu', {}, ['m1', 'm2']),
+        m1: n('m1', 'MenuItem', { label: 'Open', shortcut: '⌘O' }),
+        m2: n('m2', 'MenuItem', { label: 'Delete', danger: true }),
+        nav: n('nav', 'NavBar', {}, ['l1', 'l2']),
+        l1: n('l1', 'NavLink', { label: 'Home', active: true, size: 'sm' }),
+        l2: n('l2', 'NavLink', { label: 'Docs', href: '/docs' }),
+        lone: n('lone', 'NavLink', { label: 'Help', href: '/help' }),
+        rg: n('rg', 'RadioGroup', { options: 'Free|Pro', optionsSep: 'pipe', value: 'Pro' }, ['rr']),
+        rr: n('rr', 'Radio', { label: 'Team' }),
+        form: n('form', 'Stack', {}, ['ra', 'rb']),
+        ra: n('ra', 'Radio', { label: 'Monthly', group: 'billing' }),
+        rb: n('rb', 'Radio', { label: 'Yearly', group: 'billing', checked: true }),
+        tabs: n('tabs', 'Tabs', { tabs: 'One, Two, Three' }, ['p1']),
+        p1: n('p1', 'TabPanel', { title: 'x' }),
+        emptyTl: n('emptyTl', 'Timeline', {}),
+        ml: n('ml', 'MessageList', {}, ['typing']),
+        typing: n('typing', 'TypingIndicator', { label: 'Grace is typing' }),
+      },
+    }
+    const res = validate(JSON.stringify(old))
+    const d = res.doc
+    const rows = (id: string, key: string) => (d ? itemsOf(d.nodes[id], key) : [])
+    const said = res.issues.map((i) => i.message).join(' | ')
+    check('an old timeline keeps its events, in order, with their size', d !== null &&
+      JSON.stringify(rows('tl', 'events').map((e) => e.title)) === '["First","Second"]' && rows('tl', 'events')[1].tone === 'danger' &&
+      d.nodes.tl.props.size === 'lg' && d.nodes.tl.props.markerSize === 14, JSON.stringify(rows('tl', 'events')))
+    check('what else a timeline held moves beside it, not away', d !== null && Boolean(d.nodes.keep) &&
+      d.nodes.r.children.indexOf('keep') === d.nodes.r.children.indexOf('tl') + 1 && d.nodes.tl.children.length === 0, JSON.stringify(d?.nodes.r.children))
+    check('a stray event becomes a timeline of one', d?.nodes.stray?.type === 'Timeline' && rows('stray', 'events')[0]?.title === 'Alone' && d?.nodes.stray.props.x === 5)
+    check('an old empty timeline stays empty, not sample content', rows('emptyTl', 'events').length === 0)
+    check('menu commands fold into their menu', JSON.stringify(rows('menu', 'items').map((i) => [i.label, i.shortcut, i.danger])) === '[["Open","⌘O",false],["Delete","",true]]')
+    check('nav links fold into their bar, the current one kept', JSON.stringify(rows('nav', 'links').map((l) => [l.label, l.active, l.href])) === '[["Home",true,"#"],["Docs",false,"/docs"]]' &&
+      d?.nodes.nav.props.size === 'sm')
+    check('a nav link on its own becomes a link', d?.nodes.lone?.type === 'Link' && d?.nodes.lone.props.text === 'Help' && d?.nodes.lone.props.href === '/help')
+    check('radio options: the old string first, then the radios inside',
+      JSON.stringify(rows('rg', 'options').map((o) => o.label)) === '["Free","Pro","Team"]' && d?.nodes.rg.props.value === 'Pro' && !('options' in (d?.nodes.rg.props ?? {})))
+    const billing = d ? Object.values(d.nodes).filter((x) => x.type === 'RadioGroup' && d.nodes.form.children.includes(x.id)) : []
+    check('radios that were one choice become ONE group, keeping the checked one',
+      billing.length === 1 && JSON.stringify(itemsOf(billing[0], 'options').map((o) => o.label)) === '["Monthly","Yearly"]' && billing[0].props.value === 'Yearly',
+      JSON.stringify(billing.map((b) => b.lists)))
+    const tabTitles = d ? d.nodes.tabs.children.map((c) => d.nodes[c]?.props.title) : []
+    check('old tab labels become the tabs\' titles, with a tab for each', JSON.stringify(tabTitles) === '["One","Two","Three"]' && !('tabs' in (d?.nodes.tabs.props ?? {})), JSON.stringify(tabTitles))
+    check('a typing indicator becomes its list\'s typing option', d?.nodes.ml.props.showTyping === true && d?.nodes.ml.props.typingLabel === 'Grace is typing' && !d?.nodes.typing)
+    check('every migration is reported', ['row of its Timeline', 'became a Timeline', 'row of its Menu', 'row of its NavBar', 'became a Link', 'joined the others', 'tabs\' own titles', 'Show typing'].every((m) => said.includes(m)), said)
+    check('a migrated file saves and reloads clean', d !== null && validate(serialize(d)).issues.length === 0, d ? validate(serialize(d)).issues.map((i) => i.message).join(' | ') : 'no doc')
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

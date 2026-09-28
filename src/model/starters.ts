@@ -62,13 +62,13 @@ export const STARTERS: Starter[] = [
           type: 'MessageList',
           ref: 'list',
           flow: true,
+          props: { showTyping: true, typingLabel: 'Assistant is typing' },
           children: [
             { type: 'Divider', props: { label: 'Today', margin: 4 } },
             assistant('Hi! I can find anything in your workspace. What are you looking for?', '9:41'),
             // The template: what a message you send in the preview looks like.
             { type: 'MessageBubble', props: { side: 'sent', text: 'What shipped last week?', time: '9:42', status: 'read', showAuthor: false, template: true } },
             assistant('Three releases: the new billing page, faster search, and dark mode for exports.', '9:42'),
-            { type: 'TypingIndicator', props: { label: 'Assistant is typing' } },
           ],
         },
         {

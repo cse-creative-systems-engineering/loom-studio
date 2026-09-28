@@ -8,7 +8,7 @@
  */
 
 import type { Document, Node, NodeId, Op, PropValue } from './types'
-import { getComponent, normalizeProps } from './registry'
+import { acceptsChild, getComponent, normalizeProps } from './registry'
 // Effects are a pure data module (values in, style out) with no model
 // dependency, so importing it here does NOT invert the model->render
 // layering. Keeping the normaliser in one place is worth more than the
@@ -16,6 +16,7 @@ import { getComponent, normalizeProps } from './registry'
 import { normalizeEffects } from '../render/effects'
 import { cleanStateStyle } from '../render/states'
 import { cleanPartStyle } from '../render/parts'
+import { cleanList, itemsOf, normalizeLists } from './lists'
 
 let counter = 0
 
@@ -106,6 +107,9 @@ export function apply(doc: Document, op: Op): Document {
       }
       const parent = next.nodes[op.parent]
       if (!parent) return doc
+      // A container that names its children (a tab set holds tabs) refuses
+      // anything else, whoever sends the op.
+      if (getComponent(parent.type)?.childTypes && !acceptsChild(parent.type, node.type)) return doc
       const index = op.index ?? parent.children.length
       parent.children.splice(Math.max(0, Math.min(index, parent.children.length)), 0, node.id)
       return next
@@ -192,6 +196,13 @@ export function apply(doc: Document, op: Op): Document {
       return next
     }
 
+    case 'setList': {
+      const node = next.nodes[op.id]
+      if (!node || !getComponent(node.type)?.lists?.[op.key]) return doc
+      node.lists = { ...(node.lists ?? {}), [op.key]: cleanList(node.type, op.key, op.items).items }
+      return next
+    }
+
     case 'setPartStyle': {
       const node = next.nodes[op.id]
       if (!node) return doc
@@ -268,6 +279,7 @@ export function apply(doc: Document, op: Op): Document {
       if (op.id === next.root) return doc
       // Refuse to build a cycle: a node cannot become its own descendant.
       if (op.id === op.parent || descendants(next, op.id).includes(op.parent)) return doc
+      if (getComponent(target.type)?.childTypes && !acceptsChild(target.type, node.type)) return doc
 
       detach(next, op.id)
       // `op.index` is a slot in the destination list AFTER the node is removed
@@ -303,6 +315,7 @@ function cloneNode(node: Node): Node {
     ...node,
     props: normalizeProps(node.type, node.props),
     children: [...node.children],
+    ...(getComponent(node.type)?.lists ? { lists: normalizeLists(node) } : {}),
     z: clampZ(node.z ?? 0),
   }
 }
@@ -387,6 +400,12 @@ export function invert(doc: Document, op: Op): Op | undefined {
       const inverse: Record<string, string | number | null> = {}
       for (const k of Object.keys(op.patch)) inverse[k] = before[k] ?? null
       return { op: 'setStateStyle', id: op.id, state: op.state, patch: inverse }
+    }
+
+    case 'setList': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      return { op: 'setList', id: op.id, key: op.key, items: itemsOf(node, op.key).map((it) => ({ ...it })) }
     }
 
     case 'setPartStyle': {

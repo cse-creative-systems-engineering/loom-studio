@@ -9,7 +9,8 @@
  * was fixed: delete it, so the table cannot hide a regression). The goal is an
  * empty table: every area of every component customizable.
  *
- * Seeded 2026-09-27 at 193 areas across 87 of 117 components.
+ * Seeded 2026-09-27 at 193 areas across 87 of 117 components. Entries only
+ * ever leave this table.
  */
 export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   // AccordionItem
@@ -171,17 +172,11 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "LoadingBar|div": ["background", "radius"],
   "LoadingBar|div>div": ["background", "radius"],
   "LoadingBar|div>div data-loom-indeterminate": ["background", "radius"],
-  // MenuItem
-  "MenuItem|span": ["color", "fontFamily", "fontSize", "lineHeight"],
   // Modal
   "Modal|div": ["gap"],
   "Modal|div data-loom-footer": ["gap"],
   "Modal|div>button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "lineHeight", "paddingX", "paddingY", "radius"],
   "Modal|div>div": ["color", "fontSize", "fontWeight"],
-  // NavBar
-  "NavBar|span": ["color", "fontWeight"],
-  // NavLink
-  "NavLink|span": ["gap"],
   // OtpInput
   "OtpInput|input": ["align", "background", "border", "borderWidth", "color", "fontFamily", "fontSize", "radius"],
   // Pagination
@@ -207,10 +202,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "ProgressRing|svg>text": ["fill"],
   // Quote
   "Quote|cite": ["color", "fontSize", "fontStyle"],
-  // Radio
-  "Radio|input": ["accent"],
-  // RadioGroup
-  "RadioGroup|label data-loom-b": ["color", "fontSize", "gap"],
   // Rating
   "Rating|span": ["color", "fontFamily", "fontSize"],
   "Rating|span data-loom-i": ["color"],
@@ -277,10 +268,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "TagInput|span": ["background", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
   // Timeline
   "Timeline|span": ["background", "radius"],
-  // TimelineItem
-  "TimelineItem|div": ["gap"],
-  "TimelineItem|div>span": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "radius"],
-  "TimelineItem|span": ["color", "fontSize", "paddingX"],
   // Toast
   "Toast|button data-loom-dismiss": ["color", "lineHeight"],
   "Toast|svg": ["stroke"],

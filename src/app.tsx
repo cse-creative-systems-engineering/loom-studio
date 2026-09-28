@@ -10,6 +10,8 @@ import {
   unsupportedProps,
   DELIMITERS,
   delimiterLabel,
+  acceptsChild,
+  addedTypes,
 } from './model/registry'
 import { tooltipText } from './model/tooltip'
 import { inspectorView, propLabel } from './model/inspector-view'
@@ -18,6 +20,7 @@ import { EffectsPanel } from './effects-inspector'
 import { STARTERS, getStarter } from './model/starters'
 import { StatesPanel } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
+import { AddsPanel, ListsPanel } from './list-inspector'
 import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
 import { Toggle } from './ui-primitives'
@@ -386,11 +389,14 @@ function Toolbox({
   zoom: number
 }) {
   const cats = componentsByCategory()
+  const added = addedTypes()
   const [filter, setFilter] = React.useState('')
   const [tab, setTab] = React.useState<'components' | 'layers'>('components')
+  const draggedType = React.useRef<string | null>(null)
 
   const startDrag = (e: React.PointerEvent, type: string) => {
     e.preventDefault()
+    draggedType.current = type
     const ghost = document.createElement('div')
     ghost.className = 'drag-ghost'
     document.body.appendChild(ghost)
@@ -434,7 +440,16 @@ function Toolbox({
     const el = document.elementFromPoint(x, y) as HTMLElement | null
     if (!el) return null
 
-    const container = el.closest('[data-loom-container="true"]') as HTMLElement | null
+    // The deepest container under the pointer that ACCEPTS this type: a
+    // button dropped on a tab set's strip belongs in a tab, not beside it.
+    const dragged = draggedType.current
+    let container = el.closest('[data-loom-container="true"]') as HTMLElement | null
+    while (container?.dataset.loomId) {
+      const parentType = s.doc.nodes[container.dataset.loomId]?.type
+      const childType = dragged && dragged.startsWith(STARTER_PREFIX) ? getStarter(dragged.slice(STARTER_PREFIX.length))?.tree.type : dragged
+      if (!parentType || !childType || !getComponent(parentType)?.childTypes || acceptsChild(parentType, childType)) break
+      container = container.parentElement?.closest('[data-loom-container="true"]') as HTMLElement | null
+    }
     if (container?.dataset.loomId) {
       return { host: container, parent: container.dataset.loomId }
     }
@@ -528,7 +543,9 @@ function Toolbox({
               </section>
             )}
             {[...cats.entries()].map(([cat, list]) => {
-              const items = list.filter((c) => c.name.toLowerCase().includes(filter.toLowerCase()))
+              // A type another component creates from its own panel (a tab, a
+              // message) is not a tool: on its own it means nothing.
+              const items = list.filter((c) => !added.has(c.name) && c.name.toLowerCase().includes(filter.toLowerCase()))
               if (items.length === 0) return null
               return (
                 <section key={cat}>
@@ -1334,6 +1351,14 @@ function Inspector({
             })}
           </section>
         )}
+
+        {/* What the component is made of comes first: its tabs, its events. */}
+        <AddsPanel s={s} node={node} />
+        <ListsPanel
+          s={s}
+          node={node}
+          renderField={(key, ps, value, onChange) => <Field name={key} ps={ps} value={value} onChange={onChange} />}
+        />
 
         <StatesPanel s={s} node={node} editing={editState} onEditing={onEditState} />
 

@@ -20,6 +20,7 @@ import { behaviourAttrs, groupId } from './behaviour'
 import { OUTPUT_HOOK, isResponsive } from './responsive'
 import { FORCE_ATTR, hasStates } from './states'
 import { partAttrs } from './parts'
+import { itemsOf } from '../model/lists'
 import type { Document, InteractionState, Node, NodeId, PropValue } from '../model/types'
 
 export interface RenderCtx {
@@ -55,7 +56,7 @@ export interface RenderCtx {
  * header's title, a divider's label). Every component moves to the real body
  * as it gains parts; this set is the bridge until then, and only shrinks.
  */
-const REAL_ON_CANVAS: ReadonlySet<string> = new Set(['HeaderBar', 'FooterBar'])
+const REAL_ON_CANVAS: ReadonlySet<string> = new Set(['HeaderBar', 'FooterBar', 'Tabs', 'TabPanel', 'Accordion', 'AccordionItem', 'SettingsSection', 'SettingsRow'])
 
 export const CORNERS = ['nw', 'ne', 'sw', 'se'] as const
 export type Corner = (typeof CORNERS)[number]
@@ -200,6 +201,58 @@ function feedbackIcon(props: Record<string, PropValue>, tone: string, size: numb
  * identical elements. Shared by the preview and the canvas, because a labelled
  * divider that only exists in the output is a divider nobody can lay out.
  */
+/**
+ * A tab set's panels, in order. In output a hidden panel is not drawn, so it
+ * has no tab either: the Nth tab is always the Nth panel that exists.
+ */
+function tabPanelsOf(doc: Document, tabs: Node, output: boolean): NodeId[] {
+  return tabs.children.filter((c) => doc.nodes[c]?.type === 'TabPanel' && (!output || doc.nodes[c]?.visible !== false))
+}
+
+/**
+ * A nav bar's or side nav's links, from its list. How every link is drawn
+ * (size, icon side, underline, truncation) is the owner's; which link is where
+ * and which is current is the row's.
+ */
+function navLinks(node: Node, t: Theme, part: (names: string | string[]) => Record<string, string>): React.ReactNode {
+  const p = node.props
+  const size = str(p.size) || 'md'
+  const padY = size === 'sm' ? `${t.space1}px` : size === 'lg' ? `${t.space2 + 2}px` : `${t.space1 + 2}px`
+  const padX = size === 'sm' ? `${t.space2}px` : size === 'lg' ? `${t.space4}px` : `${t.space3}px`
+  const iconEnd = str(p.iconPosition) === 'end'
+  return itemsOf(node, 'links').map((l, i) => {
+    const off = l.disabled === true
+    const active = l.active === true
+    const label = str(l.label)
+    const icon = str(l.icon) ? <IconGlyph value={str(l.icon)} size={14} /> : null
+    return (
+      <a
+        key={i}
+        href={off ? undefined : str(l.href) || '#'}
+        aria-current={active ? 'page' : undefined}
+        aria-disabled={off ? 'true' : undefined}
+        {...part(active ? ['link', 'active'] : 'link')}
+        {...(off ? {} : behaviourAttrs({ role: 'press' }))}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: '6px',
+          fontSize: `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`,
+          fontWeight: active ? t.weightSemibold : t.weightMedium,
+          color: active ? t.accent : t.textSecondary,
+          padding: `${padY} ${padX}`, borderRadius: `${t.radiusSm}px`,
+          background: active ? `${t.accent}14` : 'transparent',
+          ...(p.underline === true ? { textDecoration: 'underline' } : { textDecoration: 'none' }),
+          cursor: off ? 'not-allowed' : 'pointer',
+          ...(off ? { opacity: 0.5 } : {}),
+          ...(p.truncate === true ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } : {}),
+        }}
+      >
+        {iconEnd ? label : icon}
+        {iconEnd ? icon : label}
+      </a>
+    )
+  })
+}
+
 function LabelledDivider({
   p,
   t,
@@ -859,10 +912,6 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.background = t.surface; s.border = `1px solid ${t.borderStrong}`; s.borderRadius = `${t.radiusLg}px`
       break
     }
-    case 'TypingIndicator': {
-      s.display = 'flex'; s.alignItems = 'center'; s.gap = `${t.space2}px`; s.alignSelf = 'flex-start'
-      break
-    }
     case 'FormGrid': {
       s.display = 'grid'
       s.gridTemplateColumns = `repeat(${num(p.columns, 2) || 2}, minmax(0, 1fr))`
@@ -900,7 +949,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.opacity = p.disabled === true ? 0.5 : 1
       break
     }
-    case 'Checkbox': case 'Radio': case 'Switch': {
+    case 'Checkbox': case 'Switch': {
       s.display = 'inline-flex'; s.alignItems = 'center'; s.gap = `${t.space2}px`
       // size is the LABEL scale here: the box is the browser's, and a control
       // whose own text disagrees with the form around it is the thing this
@@ -1277,13 +1326,6 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.paddingLeft = `${num(p.indent, 16)}px`
       break
     }
-    case 'TimelineItem': {
-      s.display = 'flex'; s.flexDirection = 'column'; s.gap = '2px'
-      const size = str(p.size) || 'md'
-      s.fontSize = `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`
-      s.paddingBottom = `${t.space2}px`
-      break
-    }
     case 'TreeList': case 'DataList': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, 4)
       s.fontSize = `${t.textSm}px`; s.color = t.textPrimary
@@ -1356,27 +1398,6 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.borderRadius = `${t.radiusMd}px`
       break
     }
-    case 'NavLink': {
-      const size = str(p.size) || 'md'
-      // size -> padding and type together. A small nav link that keeps the
-      // medium link's padding is not a small link.
-      const padY = size === 'sm' ? `${t.space1}px` : size === 'lg' ? `${t.space2 + 2}px` : `${t.space1 + 2}px`
-      const padX = size === 'sm' ? `${t.space2}px` : size === 'lg' ? `${t.space4}px` : `${t.space3}px`
-      s.fontSize = `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`
-      s.fontWeight = p.active === true ? t.weightSemibold : t.weightMedium
-      s.color = p.active === true ? t.accent : t.textSecondary
-      s.padding = `${padY} ${padX}`
-      s.borderRadius = `${t.radiusSm}px`
-      s.background = p.active === true ? `${t.accent}14` : 'transparent'
-      s.textDecoration = p.underline === true ? 'underline' : 'none'
-      s.cursor = 'pointer'
-      if (p.truncate === true) {
-        s.overflow = 'hidden'
-        s.textOverflow = 'ellipsis'
-        s.whiteSpace = 'nowrap'
-      }
-      break
-    }
     case 'SideNav': {
       const rail = p.collapsed === true
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, 4)
@@ -1416,17 +1437,6 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const w = num(p.width, -1)
       if (w > 0) { s.width = px(p.width, 180); s.minWidth = px(p.width, 180) }
       else s.minWidth = '180px'
-      break
-    }
-    case 'MenuItem': {
-      s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'; s.gap = `${t.space2}px`
-      const size = str(p.size) || 'md'
-      s.fontSize = `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`
-      s.padding = size === 'sm' ? `4px ${t.space2 + 2}px` : size === 'lg' ? `${t.space2 + 2}px ${t.space4}px` : `${t.space2}px ${t.space3}px`
-      s.borderRadius = `${t.radiusSm}px`
-      s.background = p.active === true ? `${t.accent}14` : 'transparent'
-      s.color = p.danger === true ? t.danger : p.active === true ? t.accent : t.textPrimary
-      s.cursor = 'pointer'
       break
     }
     case 'CommandBar': {
@@ -1772,7 +1782,7 @@ function renderPreviewBody(
   const p = node.props
   // The hook a named part carries (see render/parts.ts): always on the canvas,
   // in output only when that part is styled.
-  const part = (name: string) => partAttrs(node, name, ctx.mode !== 'preview' || ctx.hookAll === true)
+  const part = (name: string | string[]) => partAttrs(node, name, ctx.mode !== 'preview' || ctx.hookAll === true)
   // A container's OWN controls (a Composer's text box) are a picture on the
   // canvas, like a leaf's; its child nodes stay live, so this is applied per
   // control rather than to the whole body.
@@ -1865,6 +1875,16 @@ function renderPreviewBody(
             </div>
           ) : null}
           {children}
+          {p.showTyping === true ? (
+            <div data-loom-typing="" role="status" aria-label={str(p.typingLabel) || 'Someone is typing'} {...part('typingRow')} style={{ display: 'flex', alignItems: 'center', gap: `${t.space2}px`, alignSelf: 'flex-start' }}>
+              <span {...part('typing')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: `${t.space2 + 2}px ${t.space3}px`, background: t.surface, border: `1px solid ${t.border}`, borderRadius: `${t.radiusLg + 4}px ${t.radiusLg + 4}px ${t.radiusLg + 4}px 5px` }}>
+                {[0, 1, 2].map((i) => (
+                  <span key={i} data-loom-typing-dot {...part('typingDot')} aria-hidden="true" style={{ width: '6px', height: '6px', borderRadius: '50%', background: t.textMuted }} />
+                ))}
+              </span>
+              {str(p.typingLabel) ? <span {...part('typingLabel')} style={{ fontSize: `${t.textXs}px`, color: t.textMuted }}>{str(p.typingLabel)}</span> : null}
+            </div>
+          ) : null}
           {/* Shown by the runtime only when a message arrives while the reader
               is scrolled up; sticky so it floats over the list's bottom edge. */}
           <button
@@ -1993,19 +2013,6 @@ function renderPreviewBody(
         </div>
       )
     }
-    case 'TypingIndicator':
-      return (
-        <div key={key} style={style} data-loom-typing="" role="status" aria-label={str(p.label) || 'Someone is typing'}>
-          <span {...part('bubble')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: `${t.space2 + 2}px ${t.space3}px`, background: t.surface, border: `1px solid ${t.border}`, borderRadius: `${t.radiusLg + 4}px ${t.radiusLg + 4}px ${t.radiusLg + 4}px 5px` }}>
-            {[0, 1, 2].map((i) => (
-              <span key={i} data-loom-typing-dot {...part('dot')} aria-hidden="true" style={{ width: '6px', height: '6px', borderRadius: '50%', background: t.textMuted }} />
-            ))}
-          </span>
-          {p.showLabel !== false && str(p.label) ? (
-            <span {...part('label')} style={{ fontSize: `${t.textXs}px`, color: t.textMuted }}>{str(p.label)}</span>
-          ) : null}
-        </div>
-      )
     case 'Field': {
       const inline = str(p.layout) === 'inline'
       const validation = str(p.state) || 'default'
@@ -2176,7 +2183,9 @@ function renderPreviewBody(
       )
     }
     case 'Tabs': {
-      const tabs = list(p.tabs, p.tabsSep)
+      // The strip's labels ARE the tabs' titles: one source, so a label can
+      // never name a panel that is not there.
+      const tabs = tabPanelsOf(ctx.doc, node, ctx.mode === 'preview').map((id) => str(ctx.doc.nodes[id]?.props.title) || 'Tab')
       const active = num(p.active, 0)
       const variant = str(p.variant) || 'underline'
       const full = p.fullWidth === true
@@ -2233,8 +2242,8 @@ function renderPreviewBody(
       // The Nth TabPanel is the Nth tab's content. It ships SHOWN so a panel
       // dropped on its own is never invisible, and hidden the moment its tab
       // is switched away from.
-      const sibs = parentId ? (ctx.doc.nodes[parentId]?.children ?? []) : []
-      const index = Math.max(0, sibs.indexOf(node.id))
+      const owner = parentId ? ctx.doc.nodes[parentId] : undefined
+      const index = owner?.type === 'Tabs' ? Math.max(0, tabPanelsOf(ctx.doc, owner, ctx.mode === 'preview').indexOf(node.id)) : 0
       const aria = str(p.ariaLabel)
       return (
         <div
@@ -3034,28 +3043,8 @@ function renderPreviewBody(
         </label>
       )
     }
-    case 'Radio': {
-      const group = str(p.group) || node.id
-      const on = p.checked === true
-      const off = p.disabled === true
-      const accent = str(p.tone) === 'inherit' ? t.accent : toneColor(t, str(p.tone))
-      return (
-        <label key={key} style={style} {...behaviourAttrs({ role: 'radio', group, on })}>
-          <input
-            type="radio"
-            name={group}
-            defaultChecked={on}
-            disabled={off}
-            required={p.required === true}
-            aria-label={str(p.ariaLabel) || undefined}
-            style={{ accentColor: accent, width: 16, height: 16 }}
-          />
-          <span>{str(p.label)}</span>
-        </label>
-      )
-    }
     case 'RadioGroup': {
-      const opts = list(p.options, p.optionsSep)
+      const opts = itemsOf(node, 'options')
       const fs = str(p.size) === 'sm' ? t.textXs : str(p.size) === 'lg' ? t.textMd : t.textSm
       const name = str(p.ariaLabel) || str(p.label)
       return (
@@ -3069,19 +3058,24 @@ function renderPreviewBody(
           aria-label={name || undefined}
         >
           {str(p.label) ? (
-            <span style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: t.textSecondary }}>{str(p.label)}</span>
+            <span {...part('legend')} style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: t.textSecondary }}>{str(p.label)}</span>
           ) : null}
-          {opts.map((o) => (
-            <label
-              key={o}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: `${fs}px`, color: t.textPrimary }}
-              {...behaviourAttrs({ role: 'radio', group: node.id, index: opts.indexOf(o), on: str(p.value) === o })}
-            >
-              <input type="radio" name={node.id} defaultChecked={str(p.value) === o} disabled={p.disabled === true} />
-              <span>{o}</span>
-            </label>
-          ))}
-          {children}
+          {opts.map((o, i) => {
+            // An option with no value stands for its label: what a person
+            // types in the panel is what the group reports.
+            const value = str(o.value) || str(o.label)
+            return (
+              <label
+                key={i}
+                {...part('option')}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: `${fs}px`, color: t.textPrimary }}
+                {...behaviourAttrs({ role: 'radio', group: node.id, index: i, on: str(p.value) === value })}
+              >
+                <input type="radio" name={node.id} value={value} defaultChecked={str(p.value) === value} disabled={p.disabled === true || o.disabled === true} required={p.required === true} />
+                <span>{str(o.label)}</span>
+              </label>
+            )
+          })}
         </div>
       )
     }
@@ -4409,42 +4403,44 @@ function renderPreviewBody(
         </div>
       )
     }
-    case 'Timeline':
+    case 'Timeline': {
+      const size = str(p.size) || 'md'
+      const small = size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm
+      const marker = num(p.markerSize, 10)
+      const minor = `${Math.max(t.textXs, small - 2)}px`
       return (
-        <div key={key} style={style}>
+        <div key={key} style={style} role="list">
           {p.rail === true ? (
             <span
               aria-hidden="true"
               style={{ position: 'absolute', left: Math.max(1, num(p.indent, 16) / 2 - 1), top: 0, bottom: 0, width: '2px', background: t.border, borderRadius: '1px', pointerEvents: 'none' }}
             />
           ) : null}
-          {children}
-        </div>
-      )
-    case 'TimelineItem': {
-      const size = str(p.size) || 'md'
-      const small = size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm
-      const marker = num(p.markerSize, 10)
-      const tone = toneColor(t, str(p.tone))
-      const shape = str(p.markerStyle) || 'dot'
-      return (
-        <div key={key} style={style}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span
-              aria-hidden="true"
-              style={{
-                width: `${marker}px`,
-                height: `${marker}px`,
-                flexShrink: 0,
-                borderRadius: shape === 'square' ? '2px' : shape === 'ring' ? '999px' : '999px',
-                background: shape === 'ring' ? 'transparent' : tone,
-                border: shape === 'ring' ? `2px solid ${tone}` : undefined,
-              }}
-            />
-            <span style={{ fontWeight: t.weightSemibold, color: t.textPrimary, fontSize: `${small}px` }}>{str(p.title)}</span>
-          </div>
-          {str(p.time) ? <span style={{ fontSize: `${Math.max(t.textXs, small - 2)}px`, color: t.textMuted, paddingLeft: `${marker + 8}px` }}>{str(p.time)}</span> : null}
-          {str(p.description) ? <span style={{ fontSize: `${Math.max(t.textXs, small - 2)}px`, color: t.textSecondary, paddingLeft: `${marker + 8}px` }}>{str(p.description)}</span> : null}
+          {itemsOf(node, 'events').map((ev, i) => {
+            const tone = toneColor(t, str(ev.tone))
+            const shape = str(ev.markerStyle) || 'dot'
+            return (
+              <div key={i} role="listitem" {...part('event')} style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: `${small}px`, paddingBottom: `${t.space2}px` }}>
+                <div {...part('head')} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span
+                    aria-hidden="true"
+                    {...part('marker')}
+                    style={{
+                      width: `${marker}px`,
+                      height: `${marker}px`,
+                      flexShrink: 0,
+                      borderRadius: shape === 'square' ? '2px' : '999px',
+                      background: shape === 'ring' ? 'transparent' : tone,
+                      border: shape === 'ring' ? `2px solid ${tone}` : undefined,
+                    }}
+                  />
+                  <span {...part('title')} style={{ fontWeight: t.weightSemibold, color: t.textPrimary, fontSize: `${small}px` }}>{str(ev.title)}</span>
+                </div>
+                {str(ev.time) ? <span {...part('time')} style={{ fontSize: minor, color: t.textMuted, paddingLeft: `${marker + 8}px` }}>{str(ev.time)}</span> : null}
+                {str(ev.description) ? <span {...part('description')} style={{ fontSize: minor, color: t.textSecondary, paddingLeft: `${marker + 8}px` }}>{str(ev.description)}</span> : null}
+              </div>
+            )
+          })}
         </div>
       )
     }
@@ -4718,37 +4714,18 @@ function renderPreviewBody(
     case 'NavBar':
       return (
         <nav key={key} style={style} aria-label={str(p.ariaLabel) || 'Main'}>
-          {p.showTitle !== false ? <span style={{ fontWeight: t.weightBold, color: t.textPrimary }}>{str(p.title)}</span> : null}
+          {p.showTitle !== false ? <span {...part('title')} style={{ fontWeight: t.weightBold, color: t.textPrimary }}>{str(p.title)}</span> : null}
+          {navLinks(node, t, part)}
           {children}
         </nav>
       )
-    case 'NavLink': {
-      const off = p.disabled === true
-      const label = str(p.label)
-      const icon = str(p.icon) ? <IconGlyph value={str(p.icon)} size={14} /> : null
-      return (
-        <a
-          key={key}
-          style={style}
-          href={off ? undefined : str(p.href) || '#'}
-          aria-current={p.active === true ? 'page' : undefined}
-          aria-disabled={off ? 'true' : undefined}
-          aria-label={str(p.ariaLabel) || undefined}
-          {...(off ? {} : behaviourAttrs({ role: 'press' }))}
-        >
-          {icon ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              {str(p.iconPosition) === 'end' ? label : icon}
-              {str(p.iconPosition) === 'end' ? icon : label}
-            </span>
-          ) : (
-            label
-          )}
-        </a>
-      )
-    }
     case 'SideNav':
-      return <nav key={key} style={style} aria-label={str(p.ariaLabel) || undefined} data-loom-collapsed={p.collapsed === true ? '1' : '0'}>{children}</nav>
+      return (
+        <nav key={key} style={style} aria-label={str(p.ariaLabel) || undefined} data-loom-collapsed={p.collapsed === true ? '1' : '0'}>
+          {navLinks(node, t, part)}
+          {children}
+        </nav>
+      )
     case 'Breadcrumbs': {
       const all = list(p.trail, p.trailSep)
       // Past a certain depth, keep the first crumb and the last few and elide
@@ -4921,25 +4898,42 @@ function renderPreviewBody(
         </ol>
       )
     }
-    case 'Menu':
-      return <div key={key} style={style} role="menu" aria-label={str(p.ariaLabel) || undefined}>{children}</div>
-    case 'MenuItem': {
-      const off = p.disabled === true
+    case 'Menu': {
+      const size = str(p.size) || 'md'
+      const pad = size === 'sm' ? `4px ${t.space2 + 2}px` : size === 'lg' ? `${t.space2 + 2}px ${t.space4}px` : `${t.space2}px ${t.space3}px`
+      const fs = size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm
       return (
-        <div
-          key={key}
-          style={style}
-          role="menuitem"
-          aria-disabled={off ? 'true' : undefined}
-          tabIndex={off ? -1 : 0}
-          aria-label={str(p.ariaLabel) || undefined}
-          {...(off ? {} : behaviourAttrs({ role: 'press' }))}
-        >
-          <IconGlyph value={str(p.icon)} size={16} />
-          <span style={{ flex: 1, minWidth: 0 }}>{str(p.label)}</span>
-          {/* The chord on the right: it tells you the shortcut before you press
-              it, which is the only reason to look at a menu row. */}
-          {str(p.shortcut) ? <span style={{ marginLeft: 'auto', fontSize: `${t.textXs}px`, color: t.textMuted, fontFamily: t.fontMono }}>{str(p.shortcut)}</span> : null}
+        <div key={key} style={style} role="menu" aria-label={str(p.ariaLabel) || undefined}>
+          {itemsOf(node, 'items').map((it, i) => {
+            const off = it.disabled === true
+            const active = it.active === true
+            const danger = it.danger === true
+            return (
+              <div
+                key={i}
+                role="menuitem"
+                aria-disabled={off ? 'true' : undefined}
+                tabIndex={off ? -1 : 0}
+                {...part(['item', ...(active ? ['active'] : []), ...(danger ? ['danger'] : [])])}
+                {...(off ? {} : behaviourAttrs({ role: 'press' }))}
+                style={{
+                  display: 'flex', flexDirection: 'row', alignItems: 'center', gap: `${t.space2}px`,
+                  fontSize: `${fs}px`, padding: pad, borderRadius: `${t.radiusSm}px`,
+                  background: active ? `${t.accent}14` : 'transparent',
+                  color: danger ? t.danger : active ? t.accent : t.textPrimary,
+                  cursor: off ? 'not-allowed' : 'pointer',
+                  ...(off ? { opacity: 0.5 } : {}),
+                }}
+              >
+                {str(it.icon) ? <span {...part('icon')} style={{ display: 'inline-flex' }}><IconGlyph value={str(it.icon)} size={16} /></span> : null}
+                <span style={{ flex: 1, minWidth: 0 }}>{str(it.label)}</span>
+                {/* The chord on the right: it tells you the shortcut before you
+                    press it, which is the only reason to look at a menu row. */}
+                {str(it.shortcut) ? <span {...part('shortcut')} style={{ marginLeft: 'auto', fontSize: `${t.textXs}px`, color: t.textMuted, fontFamily: t.fontMono }}>{str(it.shortcut)}</span> : null}
+              </div>
+            )
+          })}
+          {children}
         </div>
       )
     }
@@ -5371,8 +5365,6 @@ function authorInner(node: Node, t: Theme): React.ReactNode {
       return <button type="button" tabIndex={-1} disabled={p.disabled === true}><IconGlyph value={str(p.icon)} size={str(p.size) === 'sm' ? 14 : str(p.size) === 'lg' ? 20 : 16} /></button>
     case 'Checkbox':
       return <label><input type="checkbox" tabIndex={-1} checked={p.checked === true} disabled={p.disabled === true} readOnly /> {str(p.label)}</label>
-    case 'Radio':
-      return <label><input type="radio" tabIndex={-1} checked={p.checked === true} disabled={p.disabled === true} readOnly /> {str(p.label)}</label>
     case 'Switch':
       return <span>{str(p.label)} {p.on === true ? '●' : '○'}</span>
     case 'Slider':
@@ -5478,8 +5470,6 @@ function authorInner(node: Node, t: Theme): React.ReactNode {
       return <span>pie</span>
     case 'LineChart':
       return <span>trend</span>
-    case 'TimelineItem':
-      return <span>{str(p.title)}</span>
     case 'TreeList':
       return <span>{list(p.items, p.itemsSep).join(', ')}</span>
     case 'DataList':
@@ -5492,16 +5482,12 @@ function authorInner(node: Node, t: Theme): React.ReactNode {
       return <span>{str(p.title)}</span>
     case 'Skeleton':
       return <span>loading…</span>
-    case 'NavLink':
-      return <a tabIndex={-1}>{str(p.label)}</a>
     case 'Breadcrumbs':
       return <span>{list(p.trail, p.trailSep).join(' / ')}</span>
     case 'Pagination':
       return <span>{num(p.page, 1)} / {num(p.total, 12)}</span>
     case 'Stepper':
       return <span>{list(p.steps, p.stepsSep).join(' → ')}</span>
-    case 'MenuItem':
-      return <span>{str(p.label)}</span>
     case 'TabBar':
       return <span>{list(p.tabs, p.tabsSep).join(' · ')}</span>
     case 'AnchorList':
@@ -5555,7 +5541,6 @@ function authorInner(node: Node, t: Theme): React.ReactNode {
     case 'RadioGroup':
     case 'ButtonGroup':
     case 'Checklist':
-    case 'Timeline':
     case 'KanbanColumn':
     case 'DataCard':
     case 'NavBar':
@@ -5796,7 +5781,6 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     case 'RadioGroup':
     case 'ButtonGroup':
     case 'Checklist':
-    case 'Timeline':
     case 'KanbanColumn':
     case 'DataCard':
     case 'NavBar':
@@ -5818,8 +5802,6 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
       )
     case 'Checkbox':
       return <label key={key} {...common}><input type="checkbox" tabIndex={-1} checked={node.props.checked === true} disabled={node.props.disabled === true} readOnly /> {str(node.props.label)}</label>
-    case 'Radio':
-      return <label key={key} {...common}><input type="radio" tabIndex={-1} checked={node.props.checked === true} disabled={node.props.disabled === true} readOnly /> {str(node.props.label)}</label>
     case 'Switch':
       return <div key={key} {...common}><span>{str(node.props.label)}</span></div>
     case 'Slider':
@@ -5917,8 +5899,6 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
       return <div key={key} {...common}>pie</div>
     case 'LineChart':
       return <div key={key} {...common}>trend</div>
-    case 'TimelineItem':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
     case 'TreeList':
       return <div key={key} {...common}>{list(node.props.items, node.props.itemsSep).join(', ')}</div>
     case 'DataList':
@@ -5931,16 +5911,12 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
       return <div key={key} {...common}>{str(node.props.title)}</div>
     case 'Skeleton':
       return <div key={key} {...common}>loading…</div>
-    case 'NavLink':
-      return <a key={key} {...common} href={str(node.props.href) || '#'}>{str(node.props.label)}</a>
     case 'Breadcrumbs':
       return <div key={key} {...common}>{list(node.props.trail, node.props.trailSep).join(' / ')}</div>
     case 'Pagination':
       return <div key={key} {...common}>{num(node.props.page, 1)} / {num(node.props.total, 12)}</div>
     case 'Stepper':
       return <div key={key} {...common}>{list(node.props.steps, node.props.stepsSep).join(' → ')}</div>
-    case 'MenuItem':
-      return <div key={key} {...common}>{str(node.props.label)}</div>
     case 'TabBar':
       return <div key={key} {...common}>{list(node.props.tabs, node.props.tabsSep).join(' · ')}</div>
     case 'AnchorList':

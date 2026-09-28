@@ -17,6 +17,8 @@ import { clampZ } from './ops'
 import { normalizeEffects } from '../render/effects'
 import { cleanStateStyle } from '../render/states'
 import { cleanPartStyle, partsOf } from '../render/parts'
+import { cleanList } from './lists'
+import { migrateNodes } from './migrate'
 import './toolbox'
 
 /**
@@ -115,6 +117,10 @@ export function validate(input: unknown): Validated {
   if (typeof raw.root !== 'string' || !raw.nodes[raw.root]) {
     return { doc: null, issues: [{ path: '$.root', message: 'root does not exist' }] }
   }
+
+  // Tools that became rows of their parent fold in before anything is checked,
+  // so an old file's timeline keeps its events (see migrate.ts).
+  issues.push(...migrateNodes(raw.nodes as Record<string, unknown>))
 
   // Copy nodes, dropping anything structurally invalid.
   const nodes: Record<NodeId, Node> = {}
@@ -277,6 +283,30 @@ export function validate(input: unknown): Validated {
       issues.push({ path: `$.nodes.${id}.parts`, message: 'not an object (dropped)' })
       parts = undefined
     }
+    // Item lists: each row checked field by field, like props. A list the
+    // component does not declare is dropped; a missing list takes its default.
+    let lists: Node['lists']
+    const listSpecs = getComponent(node.type)?.lists
+    if (node.lists !== undefined && (!node.lists || typeof node.lists !== 'object' || Array.isArray(node.lists))) {
+      issues.push({ path: `$.nodes.${id}.lists`, message: 'not an object (dropped)' })
+    }
+    if (listSpecs) {
+      const bag: NonNullable<Node['lists']> = {}
+      const rawLists = node.lists && typeof node.lists === 'object' && !Array.isArray(node.lists) ? (node.lists as Record<string, unknown>) : {}
+      for (const key of Object.keys(listSpecs)) {
+        if (!Object.prototype.hasOwnProperty.call(rawLists, key)) {
+          bag[key] = listSpecs[key].default.map((it) => ({ ...it }))
+          continue
+        }
+        const { items, dropped } = cleanList(node.type, key, rawLists[key])
+        for (const d of dropped) issues.push({ path: `$.nodes.${id}.lists`, message: d })
+        bag[key] = items
+      }
+      lists = bag
+    }
+    for (const key of Object.keys(node.lists && typeof node.lists === 'object' && !Array.isArray(node.lists) ? node.lists : {})) {
+      if (!listSpecs?.[key]) issues.push({ path: `$.nodes.${id}.lists.${key}`, message: `${node.type} has no list "${key}" (dropped)` })
+    }
     // Opacity repairs toward 1, clamped into range like the op does.
     let opacity = 1
     if (node.opacity !== undefined) {
@@ -300,6 +330,7 @@ export function validate(input: unknown): Validated {
       responsive,
       states,
       parts,
+      lists,
     }
   }
 

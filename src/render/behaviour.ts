@@ -54,8 +54,6 @@ export const ROLE_OF: Record<string, Role> = {
   Button: 'press',
   IconButton: 'press',
   BackButton: 'press',
-  MenuItem: 'press',
-  NavLink: 'press',
   Link: 'press',
   FileUpload: 'press',
   // Two-state
@@ -65,7 +63,6 @@ export const ROLE_OF: Record<string, Role> = {
   // Boolean / exclusive input
   Checkbox: 'check',
   Checklist: 'check',
-  Radio: 'radio',
   // The panel a tab reveals
   TabPanel: 'panel',
   // Disclosure

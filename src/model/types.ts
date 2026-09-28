@@ -83,7 +83,20 @@ export interface Node {
    * same discipline as `states`: a small typed bag, only for styled parts.
    */
   parts?: PartStyles
+  /**
+   * Item lists: the rows a component draws from data rather than from child
+   * nodes (a timeline's events, a menu's commands, a nav bar's links). Keyed
+   * by the list name the component declares in the registry. A list is data
+   * edited in the component's own panel, so the parts are not separate tools a
+   * person has to find, drag and stack by hand.
+   */
+  lists?: NodeLists
 }
+
+/** One row of an item list: field name to value, validated per field. */
+export type ListItem = Record<string, string | number | boolean>
+
+export type NodeLists = Record<string, ListItem[]>
 
 /**
  * What a part may change. Type and box only: a part is placed by its
@@ -98,6 +111,9 @@ export interface PartStyle {
   letterSpacing?: number
   textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
   align?: 'left' | 'center' | 'right'
+  /** The theme's sans or mono face. */
+  fontFamily?: 'sans' | 'mono'
+  decoration?: 'none' | 'underline' | 'line-through'
   background?: string
   paddingX?: number
   paddingY?: number
@@ -282,6 +298,13 @@ export type Op =
    * declares and the key one that part accepts.
    */
   | { op: 'setPartStyle'; id: NodeId; part: string; patch: Record<string, string | number | null> }
+  /**
+   * Replace one item list on a node. Whole-list, not per-row, so add, remove,
+   * reorder and edit are all ONE op with an exact inverse (the previous list),
+   * and the assistant can express "these five events" atomically. Items are
+   * validated against the list's declared fields on apply.
+   */
+  | { op: 'setList'; id: NodeId; key: string; items: ListItem[] }
   | { op: 'rename'; name: string }
   /**
    * Set the document's design theme. `null` clears it back to the default.
