@@ -13,7 +13,9 @@
 
 import React from 'react'
 import { behaviourCss, installBehaviour } from './behaviour'
-import { responsiveCss, CONTAINER_NAME } from './responsive'
+import { CONTAINER_NAME } from './responsive'
+import { documentCss } from './document-css'
+import type { Theme } from './theme'
 import type { Document } from '../model/types'
 
 let styleEl: HTMLStyleElement | null = null
@@ -49,7 +51,8 @@ export function useBehaviour(): void {
 }
 
 /**
- * The document's responsive layout, injected as one stylesheet.
+ * The document's generated stylesheets (responsive layout + interaction
+ * states), injected as one.
  *
  * Re-derived whenever the document changes, because the rules are generated
  * from the document: a node that gains a phone override has to appear in the
@@ -58,9 +61,9 @@ export function useBehaviour(): void {
  */
 let responsiveEl: HTMLStyleElement | null = null
 
-export function installResponsiveCss(doc: Document): void {
+export function installDocumentCss(doc: Document, theme?: Theme): void {
   if (typeof document === 'undefined') return
-  const css = responsiveCss(doc)
+  const css = documentCss(doc, theme)
   if (!responsiveEl || !responsiveEl.isConnected) {
     responsiveEl = document.createElement('style')
     responsiveEl.setAttribute('data-loom-responsive', '')

@@ -327,6 +327,10 @@ defineComponent({ name: 'DataGrid', category: 'Data', icon: '▦', description: 
   // that appears to work and does not.
   ...boxProps(),
   ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
+}, parts: {
+  header: { label: 'Header', hint: 'The column titles', fields: ['text', 'box'], lines: true },
+  row: { label: 'Rows', hint: 'Each data row, behind its cells', fields: ['surface'] },
+  cell: { label: 'Cells', hint: 'Every data cell', fields: ['text', 'box'], lines: true },
 }})
 defineComponent({ name: 'Stat', category: 'Data', icon: '📊', description: 'KPI stat with delta.', props: {
   label: { type: 'string', default: 'Revenue', group: 'Content' },
@@ -351,6 +355,11 @@ defineComponent({ name: 'Stat', category: 'Data', icon: '📊', description: 'KP
   // NOT `...textProps()`: the label, the value and the delta each set their own
   // size and colour, so the fragment's type controls would be inherited and
   // immediately overridden. `size` is the scale that does reach all three.
+  // Their own type is reached through the parts below.
+}, parts: {
+  label: { label: 'Label', hint: 'The small caption above the number', fields: ['text', 'box'] },
+  value: { label: 'Value', hint: 'The number itself', fields: ['text', 'box'] },
+  delta: { label: 'Delta', hint: 'The comparison under the number', fields: ['text', 'box'] },
 }})
 defineComponent({ name: 'KpiCard', category: 'Data', icon: '◧', description: 'KPI card: one number, one comparison, one visual.', props: {
   label: { type: 'string', default: 'Monthly revenue', group: 'Content' },
@@ -373,6 +382,11 @@ defineComponent({ name: 'KpiCard', category: 'Data', icon: '◧', description: '
   ...stackAlign('start'),
   ...padProps(),
   accent: { type: 'color', default: '', group: 'Style' },
+}, parts: {
+  label: { label: 'Label', hint: 'The small caption above the number', fields: ['text', 'box'] },
+  value: { label: 'Value', hint: 'The number itself', fields: ['text', 'box'] },
+  delta: { label: 'Delta', hint: 'The change, with its arrow', fields: ['text', 'box'] },
+  caption: { label: 'Comparison', hint: 'What the change is measured against', fields: ['text', 'box'] },
 }})
 defineComponent({ name: 'ProgressBar', category: 'Data', icon: '▰', description: "Progress towards a known total. If the total is unknown, use LoadingBar.", props: {
   value: { type: 'number', default: 62, min: 0, max: 100, group: 'Data', bindable: true },
@@ -527,27 +541,47 @@ defineComponent({ name: 'LineChart', category: 'Data', icon: '📈', description
   accent: { type: 'color', default: '', group: 'Style' },
   ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
 }})
-defineComponent({ name: 'Timeline', category: 'Data', container: true, icon: '🕒', description: 'Vertical event timeline.', props: {
+// Events are DATA, edited as rows in the Timeline's own panel. They used to
+// be TimelineItem nodes: a separate tool that meant nothing on its own and
+// landed wherever the pointer was when dropped. Old files fold them in.
+defineComponent({ name: 'Timeline', category: 'Data', icon: '🕒', description: 'Vertical event timeline. Add and order its events in the panel.', props: {
   gap: { type: 'number', default: 12, min: 0, max: 48, group: 'Layout' },
   // The rail the markers sit on, and how far the markers are inset from it.
   rail: { type: 'boolean', default: false, group: 'Style' },
   indent: { type: 'number', default: 16, min: 0, max: 96, group: 'Layout' },
+  size: { type: 'enum', options: ['sm', 'md', 'lg'], default: 'md', group: 'Size' },
+  markerSize: { type: 'number', default: 10, min: 4, max: 32, group: 'Layout' },
   overflow: { type: 'enum', options: ['visible', 'auto', 'scroll', 'hidden'], default: 'visible', group: 'Layout' },
   ...stackFlow(),
   // NOT `...padProps()`: the timeline's own left inset IS the rail's position,
   // and a `padding` shorthand would land on top of it.
-}})
-defineComponent({ name: 'TimelineItem', category: 'Data', icon: '•', description: 'One timeline event.', props: {
-  title: { type: 'string', default: 'Deployed v2.4', group: 'Content' },
-  time: { type: 'string', default: '2h ago', group: 'Content' },
-  description: { type: 'string', default: '', group: 'Content', bindable: true },
-  tone: { type: 'enum', options: ['accent', 'success', 'warning', 'danger', 'neutral'], default: 'accent', group: 'Style' },
-  // The marker, in the three shapes a timeline actually uses. A ring is the
-  // "this one is still running" mark, and a dot alone cannot say that.
-  markerStyle: { type: 'enum', options: ['dot', 'ring', 'square'], default: 'dot', group: 'Style' },
-  markerSize: { type: 'number', default: 10, min: 4, max: 32, group: 'Layout' },
-  size: { type: 'enum', options: ['sm', 'md', 'lg'], default: 'md', group: 'Size' },
-  maxWidth: { type: 'number', default: -1, min: -1, max: 2000, group: 'Type' },
+}, lists: {
+  events: {
+    label: 'Events',
+    itemLabel: 'Event',
+    titleField: 'title',
+    max: 200,
+    fields: {
+      title: { type: 'string', default: 'Deployed v2.4', group: 'Content', bindable: true },
+      time: { type: 'string', default: '2h ago', group: 'Content' },
+      description: { type: 'string', default: '', group: 'Content' },
+      tone: { type: 'enum', options: ['accent', 'success', 'warning', 'danger', 'neutral'], default: 'accent', group: 'Style' },
+      // A ring is the "this one is still running" mark; a dot alone cannot say that.
+      markerStyle: { type: 'enum', options: ['dot', 'ring', 'square'], default: 'dot', group: 'Style' },
+    },
+    default: [
+      { title: 'Deployed v2.4', time: '2h ago', description: 'Billing page and faster search', tone: 'success', markerStyle: 'dot' },
+      { title: 'Review requested', time: 'Yesterday', description: '', tone: 'accent', markerStyle: 'ring' },
+      { title: 'Incident resolved', time: 'Mon', description: '', tone: 'neutral', markerStyle: 'dot' },
+    ],
+  },
+}, parts: {
+  event: { label: 'Event', hint: 'Each event as a whole', fields: ['text', 'box', 'layout'] },
+  head: { label: 'Head', hint: 'The marker and title line', fields: ['layout'] },
+  marker: { label: 'Marker', hint: 'The dot, ring or square; its background overrides the tone', fields: ['box'] },
+  title: { label: 'Title', hint: 'What happened', fields: ['text', 'box'] },
+  time: { label: 'Time', hint: 'When it happened', fields: ['text', 'box'] },
+  description: { label: 'Detail', hint: 'The line under the title', fields: ['text', 'box'] },
 }})
 defineComponent({ name: 'TreeList', category: 'Data', icon: '🌲', description: 'Indented tree list.', props: {
   ...listProps('items', 'src,src/app.tsx,src/model,docs,package.json'),
@@ -643,7 +677,7 @@ defineComponent({ name: 'EmptyState', category: 'Data', icon: '○', description
   maxWidth: { type: 'number', default: -1, min: -1, max: 2000, group: 'Type' },
   ...padProps(),
 }})
-defineComponent({ name: 'Skeleton', category: 'Data', icon: '▒', description: "The shape of content that is still arriving. Prefer it to a spinner for page loads.", props: {
+defineComponent({ name: 'Skeleton', category: 'Data', icon: '▒', description: "The shape of content that is still arriving. Prefer it to a spinner for page loads.", rendersText: false, props: {
   lines: { type: 'number', default: 3, min: 1, max: 12, group: 'Layout' },
   height: { type: 'number', default: 14, min: 8, max: 48, group: 'Layout' },
   // The three shapes a placeholder is drawn in: a paragraph of lines, one
@@ -685,7 +719,7 @@ defineComponent({ name: 'DataCard', category: 'Data', container: true, icon: '�
 
 /* ---------------- Navigation (12) ---------------- */
 
-defineComponent({ name: 'NavBar', category: 'Navigation', container: true, icon: '🧭', description: 'Top navigation bar.', props: {
+defineComponent({ name: 'NavBar', category: 'Navigation', container: true, icon: '🧭', description: 'Top navigation bar. Its links are rows in its panel; drop buttons in for actions.', props: {
   title: { type: 'string', default: 'Acme', group: 'Content' },
   showTitle: { type: 'boolean', default: true, group: 'Content' },
   height: { type: 'number', default: 56, min: 32, max: 120, group: 'Layout' },
@@ -696,6 +730,9 @@ defineComponent({ name: 'NavBar', category: 'Navigation', container: true, icon:
   // A nav row is the one place `justify` earns its keep: `end` for actions on
   // the right, `between` for a brand on the left and a menu in the middle.
   ...flowProps(),
+  // A nav BAR is a row. The shared flow fragment defaults to a column, which
+  // stacked the title over the links and spilled them out of the bar.
+  direction: { type: 'enum', options: ['row', 'column'], default: 'row', group: 'Layout' },
   // AFTER the fragment: a bar centres its contents vertically, which is not the
   // flow fragment's neutral `stretch` default.
   align: { type: 'enum', options: ['stretch', 'start', 'center', 'end', 'baseline'], default: 'center', group: 'Layout' },
@@ -704,21 +741,37 @@ defineComponent({ name: 'NavBar', category: 'Navigation', container: true, icon:
   // A `<nav>` with no accessible name is two landmarks with one name, which is
   // worse than one.
   ariaLabel: { type: 'string', default: 'Main', group: 'Accessibility' },
-}})
-defineComponent({ name: 'NavLink', category: 'Navigation', icon: '🔗', description: 'Navigation link.', props: {
-  label: { type: 'string', default: 'Dashboard', group: 'Content', bindable: true },
-  active: { type: 'boolean', default: false, group: 'State' },
-  href: { type: 'string', default: '#', group: 'Logic' },
+  // How every link is drawn; which link is where is the list below.
   size: { type: 'enum', options: ['sm', 'md', 'lg'], default: 'md', group: 'Size' },
-  icon: { type: 'string', default: '', group: 'Content' },
   iconPosition: { type: 'enum', options: ['start', 'end'], default: 'start', group: 'Content' },
-  disabled: { type: 'boolean', default: false, group: 'State' },
   underline: { type: 'boolean', default: false, group: 'Style' },
   truncate: { type: 'boolean', default: false, group: 'Type' },
-  ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
-  ...textProps(),
+}, lists: {
+  links: {
+    label: 'Links',
+    itemLabel: 'Link',
+    titleField: 'label',
+    max: 40,
+    fields: {
+      label: { type: 'string', default: 'Link', group: 'Content', bindable: true },
+      href: { type: 'string', default: '#', group: 'Logic' },
+      icon: { type: 'string', default: '', group: 'Content' },
+      active: { type: 'boolean', default: false, group: 'State' },
+      disabled: { type: 'boolean', default: false, group: 'State' },
+    },
+    default: [
+      { label: 'Overview', href: '#', icon: 'home', active: true, disabled: false },
+      { label: 'Projects', href: '#', icon: '', active: false, disabled: false },
+      { label: 'Team', href: '#', icon: '', active: false, disabled: false },
+    ],
+  },
+}, parts: {
+  title: { label: 'Title', hint: 'The product name at the start', fields: ['text', 'box'] },
+  link: { label: 'Links', hint: 'Every link', fields: ['text', 'box', 'layout'] },
+  active: { label: 'Current', hint: 'The link for the page you are on', fields: ['text', 'box'] },
 }})
-defineComponent({ name: 'SideNav', category: 'Navigation', container: true, icon: '▥', description: 'Vertical side navigation.', props: {
+
+defineComponent({ name: 'SideNav', category: 'Navigation', container: true, icon: '▥', description: 'Vertical side navigation. Its links are rows in its panel.', props: {
   width: { type: 'number', default: 220, min: 120, max: 480, group: 'Layout' },
   // Collapsed is a RAIL: the authored width is swapped for the rail width and
   // the labels are clipped away, so collapsing is a real collapse rather than a
@@ -731,7 +784,36 @@ defineComponent({ name: 'SideNav', category: 'Navigation', container: true, icon
   ...padProps(),
   ...surfaceProps(),
   ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
+  // How every link is drawn; which link is where is the list below.
+  size: { type: 'enum', options: ['sm', 'md', 'lg'], default: 'md', group: 'Size' },
+  iconPosition: { type: 'enum', options: ['start', 'end'], default: 'start', group: 'Content' },
+  underline: { type: 'boolean', default: false, group: 'Style' },
+  truncate: { type: 'boolean', default: false, group: 'Type' },
+}, lists: {
+  links: {
+    label: 'Links',
+    itemLabel: 'Link',
+    titleField: 'label',
+    max: 60,
+    fields: {
+      label: { type: 'string', default: 'Link', group: 'Content', bindable: true },
+      href: { type: 'string', default: '#', group: 'Logic' },
+      icon: { type: 'string', default: '', group: 'Content' },
+      active: { type: 'boolean', default: false, group: 'State' },
+      disabled: { type: 'boolean', default: false, group: 'State' },
+    },
+    default: [
+      { label: 'Home', href: '#', icon: 'home', active: true, disabled: false },
+      { label: 'Projects', href: '#', icon: 'folder', active: false, disabled: false },
+      { label: 'Team', href: '#', icon: 'users', active: false, disabled: false },
+      { label: 'Settings', href: '#', icon: 'settings', active: false, disabled: false },
+    ],
+  },
+}, parts: {
+  link: { label: 'Links', hint: 'Every link', fields: ['text', 'box', 'layout'] },
+  active: { label: 'Current', hint: 'The link for the page you are on', fields: ['text', 'box'] },
 }})
+
 defineComponent({ name: 'Breadcrumbs', category: 'Navigation', icon: '›', description: "The path to where you are. Show it past the second level.", props: {
   ...listProps('trail', 'Home,Projects,Loom'),
   separator: { type: 'string', default: '/', group: 'Content' },
@@ -775,7 +857,7 @@ defineComponent({ name: 'Stepper', category: 'Navigation', icon: '👣', descrip
   interactive: { type: 'boolean', default: true, group: 'Behaviour' },
   ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
 }})
-defineComponent({ name: 'Menu', category: 'Navigation', container: true, icon: '☰', description: "A list of commands. Put MenuItems inside; a DropdownButton is the usual trigger.", props: {
+defineComponent({ name: 'Menu', category: 'Navigation', container: true, icon: '☰', description: "A list of commands, edited as rows in its panel. A DropdownButton is the usual trigger.", props: {
   gap: { type: 'number', default: 2, min: 0, max: 24, group: 'Layout' },
   // A menu's own width, which is how a context menu becomes a narrow one.
   width: { type: 'number', default: -1, min: -1, max: 800, group: 'Layout' },
@@ -784,19 +866,36 @@ defineComponent({ name: 'Menu', category: 'Navigation', container: true, icon: '
   ...padProps(),
   ...surfaceProps(),
   ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
-}})
-defineComponent({ name: 'MenuItem', category: 'Navigation', icon: '•', description: 'One menu row.', props: {
-  label: { type: 'string', default: 'Settings', group: 'Content' },
-  icon: { type: 'string', default: '⚙', group: 'Content' },
-  active: { type: 'boolean', default: false, group: 'State' },
-  danger: { type: 'boolean', default: false, group: 'State' },
-  disabled: { type: 'boolean', default: false, group: 'State' },
-  // The chord on the right, which is the whole reason a menu row is worth
-  // looking at: it tells you the shortcut before you press it.
-  shortcut: { type: 'string', default: '', group: 'Content' },
   size: { type: 'enum', options: ['sm', 'md', 'lg'], default: 'md', group: 'Size' },
-  ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
+}, lists: {
+  items: {
+    label: 'Commands',
+    itemLabel: 'Command',
+    titleField: 'label',
+    max: 60,
+    fields: {
+      label: { type: 'string', default: 'Command', group: 'Content', bindable: true },
+      icon: { type: 'string', default: '', group: 'Content' },
+      // The chord on the right: it tells you the shortcut before you press it.
+      shortcut: { type: 'string', default: '', group: 'Content' },
+      active: { type: 'boolean', default: false, group: 'State' },
+      danger: { type: 'boolean', default: false, group: 'State' },
+      disabled: { type: 'boolean', default: false, group: 'State' },
+    },
+    default: [
+      { label: 'Profile', icon: 'user', shortcut: '', active: false, danger: false, disabled: false },
+      { label: 'Settings', icon: 'settings', shortcut: '⌘,', active: false, danger: false, disabled: false },
+      { label: 'Sign out', icon: 'x', shortcut: '', active: false, danger: true, disabled: false },
+    ],
+  },
+}, parts: {
+  item: { label: 'Commands', hint: 'Every row', fields: ['text', 'box', 'layout'] },
+  active: { label: 'Current', hint: 'The row marked active', fields: ['text', 'box'] },
+  danger: { label: 'Danger', hint: 'Rows marked as destructive', fields: ['text', 'box'] },
+  icon: { label: 'Icon', hint: 'The icon at the start of a row; colour and size', fields: ['text'] },
+  shortcut: { label: 'Shortcut', hint: 'The key chord on the right', fields: ['text', 'box'] },
 }})
+
 defineComponent({ name: 'CommandBar', category: 'Navigation', container: true, icon: '⌘', description: "A strip of tools for the current surface.", props: {
   gap: { type: 'number', default: 8, min: 0, max: 32, group: 'Layout' },
   // A toolbar is a row, and the two flow axes are what turn a row of buttons

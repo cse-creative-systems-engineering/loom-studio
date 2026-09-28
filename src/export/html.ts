@@ -20,9 +20,10 @@
  */
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { pageFill as pageBackgroundFill } from '../model/page'
 import { renderNode } from '../render/web'
 import { behaviourCss, behaviourRuntime } from '../render/behaviour'
-import { responsiveCss } from '../render/responsive'
+import { documentCss } from '../render/document-css'
 import { resolveTheme } from '../render/theme'
 import type { Document } from '../model/types'
 
@@ -75,6 +76,8 @@ export function emitHtml(doc: Document): string {
   const pageFill = rootNode && rootUntouched
     ? '.loom-export>:first-child{position:relative !important;left:auto !important;top:auto !important;width:100% !important;min-height:100vh}'
     : ''
+  // The page is only painted when the document chose a background.
+  const pageBg = pageBackgroundFill(doc.meta.page, theme.bg)
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -84,13 +87,13 @@ export function emitHtml(doc: Document): string {
 <style>
 *,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;padding:0}
-body{background:${theme.bg};color:${theme.textPrimary};font-family:${theme.fontFamily}}
+body{${pageBg ? `background:${pageBg};` : ''}color:${theme.textPrimary};font-family:${theme.fontFamily}}
 .loom-export{position:relative;min-height:100vh;width:100%}
 ${pageFill}
 /* Built-in control behaviour: the same state rules the editor preview uses. */
 ${behaviourCss()}
-/* Per-breakpoint layout: the same generated rules the editor authors against. */
-${responsiveCss(doc)}
+/* Per-breakpoint layout, part styling and interaction states: the same generated rules the editor authors against. */
+${documentCss(doc, theme)}
 </style>
 </head>
 <body>

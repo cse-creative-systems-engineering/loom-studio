@@ -8,13 +8,17 @@
  * headless. Usage: `npm run probe:preview` (builds first).
  */
 
-import { app, BrowserWindow } from 'electron'
-import path from 'node:path'
+import { app, BrowserWindow, screen } from 'electron'
 // Side effect: registers the REAL preview/save IPC handlers from main.ts,
 // so this probe drives production code, not a copy.
-import './main'
+import { setClosePromptForProbe } from './main'
 
-const here = __dirname
+// The editor window main.ts creates loads the seeded demo scene. It must be
+// THAT window the probe drives: preview IPC is honoured only from the editor
+// window main.ts registered (see `fromEditor`), so a second window of the
+// probe's own is refused, which is how this probe went red after the IPC
+// guard landed. Set before `whenReady`, when main.ts reads it.
+process.env.LOOM_DEMO = '1'
 
 interface Step {
   name: string
@@ -29,18 +33,13 @@ async function run() {
     console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
   }
 
-  const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    show: false,
-    webPreferences: {
-      preload: path.join(here, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
-  await win.loadFile(path.join(here, '../renderer/index.html'), { search: 'demo=1' })
+  let win: BrowserWindow | undefined
+  for (let i = 0; i < 60 && !win; i++) {
+    win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.getURL().includes('index.html'))
+    if (!win) await new Promise((r) => setTimeout(r, 250))
+  }
+  if (!win) throw new Error('main.ts created no editor window')
+  if (win.webContents.isLoading()) await new Promise((r) => win?.webContents.once('did-finish-load', () => r(undefined)))
   await new Promise((r) => setTimeout(r, 1500))
 
   const hasBridge = await win.webContents.executeJavaScript('Boolean(window.loomPreview && window.__loomStore)', true)
@@ -100,6 +99,64 @@ async function run() {
     await new Promise((r) => setTimeout(r, 800))
     step('close destroys the preview window', previewWindows().length === 0 && pv.isDestroyed())
   }
+
+  // Run on desktop: a sidebar docked left in the design runs docked to the
+  // left edge of the real screen, full usable height, transparent, and
+  // follows the dock when it changes. Driven through the editor's button.
+  {
+    await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore;
+      s.loadDocument({ version: 1, meta: { name: 'run', targets: ['web'], created: 0 }, root: null, nodes: {} });
+      s.addStarter('chat-sidebar', null, 0, 0); s.select([]); return true })()`, true)
+    await new Promise((r) => setTimeout(r, 600))
+    await win.webContents.executeJavaScript(`document.querySelector('.titlebar .tb-run')?.click()`, true)
+    let dw: BrowserWindow | undefined
+    for (let i = 0; i < 40 && !dw; i++) {
+      await new Promise((r) => setTimeout(r, 250))
+      dw = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.getTitle() === 'Loom — Running on desktop')
+    }
+    step('Run opens the design as its own window', !!dw)
+    if (dw) {
+      if (dw.webContents.isLoading()) await new Promise((r) => dw!.webContents.once('did-finish-load', () => r(undefined)))
+      await new Promise((r) => setTimeout(r, 800))
+      const work = screen.getDisplayMatching(win.getBounds()).workArea
+      const b = dw.getBounds()
+      step('docked left, it sits on the left edge of the real screen, full height', b.x === work.x && b.y === work.y && b.height === work.height && Math.abs(b.width - 360) <= 2, `${JSON.stringify(b)} in ${JSON.stringify(work)}`)
+      const inside = await dw.webContents.executeJavaScript(`({ text: document.body.innerText.slice(0, 200), bg: getComputedStyle(document.body).backgroundColor, stage: getComputedStyle(document.querySelector('.dw-stage')).backgroundColor })`, true)
+      step('it draws the design and nothing behind it', /Assistant/.test(inside.text) && inside.bg === 'rgba(0, 0, 0, 0)' && inside.stage === 'rgba(0, 0, 0, 0)', JSON.stringify(inside).slice(0, 160))
+      step('it has no frame and stays on top', !dw.isResizable() && dw.isAlwaysOnTop())
+      await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore; s.commit({ op: 'setProp', id: s.doc.root, key: 'anchor', value: 'right' }, 'dock right'); return true })()`, true)
+      await new Promise((r) => setTimeout(r, 800))
+      const b2 = dw.getBounds()
+      step('docking it right moves it to the right edge, live', b2.x + b2.width === work.x + work.width && b2.height === work.height, JSON.stringify(b2))
+      const closed = new Promise((r) => dw!.once('closed', () => r(true)))
+      await win.webContents.executeJavaScript(`document.querySelector('.titlebar .tb-run')?.click()`, true)
+      const gone = await Promise.race([closed, new Promise((r) => setTimeout(() => r(false), 3000))])
+      const off = await win.webContents.executeJavaScript(`document.querySelector('.titlebar .tb-run')?.getAttribute('aria-pressed')`, true)
+      step('Stop closes it and the button turns off', gone === true && off === 'false', `closed=${gone} pressed=${off}`)
+    }
+  }
+
+  // Closing with unsaved changes: Shane found the window simply would not
+  // close (the page's beforeunload guard, with no question asked). Now the
+  // question is asked, Cancel keeps the window, and closing always works.
+  await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore; s.addComponent('Label', s.doc.root, 10, 10); return s.dirty })()`, true)
+  let asked = 0
+  setClosePromptForProbe(() => {
+    asked++
+    return false
+  })
+  win.close()
+  await new Promise((r) => setTimeout(r, 800))
+  step('closing with unsaved changes asks first', asked === 1, `asked ${asked} time(s)`)
+  step('answering Cancel keeps the window open', !win.isDestroyed())
+  setClosePromptForProbe(() => {
+    asked++
+    return true
+  })
+  const closed = new Promise((r) => win!.once('closed', () => r(true)))
+  win.close()
+  const didClose = await Promise.race([closed, new Promise((r) => setTimeout(() => r(false), 3000))])
+  step('answering Close closes it, unsaved changes or not', didClose === true && asked === 2, `closed=${didClose} asked=${asked}`)
 
   const failed = steps.filter((s) => !s.pass).length
   console.log(`\n${steps.length - failed}/${steps.length} preview probe steps pass`)

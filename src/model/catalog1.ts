@@ -107,10 +107,15 @@ defineComponent({
   name: 'Tabs',
   category: 'Containers',
   container: true,
+  // Tabs stack under their strip; free-positioned panels would sit on it.
+  defaultFlow: true,
   icon: '◫',
-  description: 'Tabbed container.',
+  description: 'Tabbed container. Add tabs from its panel; each tab\'s title is its label in the strip.',
+  // A tab set holds tabs, and the strip reads its labels FROM them: one source,
+  // where a separate "tabs" list used to disagree with the panels it named.
+  childTypes: ['TabPanel'],
+  adds: [{ type: 'TabPanel', label: 'Add tab', props: { title: 'Tab {n}' } }],
   props: {
-    ...listProps('tabs', 'One,Two,Three'),
     ...insetProps(),
     ...flowProps(),
     ...surfaceProps(),
@@ -146,8 +151,11 @@ defineComponent({
   name: 'Accordion',
   category: 'Containers',
   container: true,
+  defaultFlow: true,
   icon: '☰',
-  description: 'Stack of collapsible sections.',
+  description: 'Stack of collapsible sections. Add sections from its panel.',
+  childTypes: ['AccordionItem'],
+  adds: [{ type: 'AccordionItem', label: 'Add section', props: { title: 'Section {n}' } }],
   props: {
     ...insetProps(),
     ...flowProps(),
@@ -460,8 +468,10 @@ defineComponent({
   name: 'SettingsSection',
   category: 'Containers',
   container: true,
+  defaultFlow: true,
   icon: '⚙',
-  description: 'Settings section: title, description, rows, optional save bar.',
+  description: 'Settings section: title, description, rows, optional save bar. Add rows from its panel.',
+  adds: [{ type: 'SettingsRow', label: 'Add row', props: { label: 'Setting {n}' } }],
   props: {
     title: str('Section'),
     description: str(''),
@@ -641,28 +651,11 @@ defineComponent({
 })
 
 defineComponent({
-  name: 'Radio',
-  category: 'Controls',
-  icon: '◯',
-  description: "One option of a set. Pair with RadioGroup, or give radios the same group name.",
-  props: {
-    label: str('Option'),
-    group: str('g1', 'Behaviour'),
-    ...fieldProps(),
-    tone: en(['inherit', 'accent', 'neutral', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
-    checked: bool(false, 'State', { bindable: true }),
-    ...named(),
-  },
-})
-
-defineComponent({
   name: 'RadioGroup',
   category: 'Controls',
-  container: true,
   icon: '◎',
   description: 'Grouped radio options.',
   props: {
-    ...listProps('options', 'A,B,C'),
     // The legend. A set of radios with no name is a set of radios.
     label: str(''),
     ...omit(flowProps(), 'justify'),
@@ -674,7 +667,35 @@ defineComponent({
     wrap: bool(true, 'Layout'),
     gap: num(8, 'Layout', 0, 32),
     disabled: bool(false),
+    required: bool(false, 'State'),
+    // Tints every option's control; `accent-color` inherits, so one value on
+    // the group reaches each radio.
+    tone: en(['inherit', 'accent', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
     ...named(),
+  },
+  // Options are rows in the group's panel, not Radio tools dropped in: a
+  // single radio on its own is never a choice.
+  lists: {
+    options: {
+      label: 'Options',
+      itemLabel: 'Option',
+      titleField: 'label',
+      max: 50,
+      fields: {
+        label: { type: 'string', default: 'Option', group: 'Content' },
+        value: { type: 'string', default: '', group: 'Content' },
+        disabled: { type: 'boolean', default: false, group: 'State' },
+      },
+      default: [
+        { label: 'A', value: 'A', disabled: false },
+        { label: 'B', value: 'B', disabled: false },
+        { label: 'C', value: 'C', disabled: false },
+      ],
+    },
+  },
+  parts: {
+    legend: { label: 'Label', hint: 'The group\'s label above the options', fields: ['text', 'box'] },
+    option: { label: 'Options', hint: 'Every option', fields: ['text', 'box', 'layout'] },
   },
 })
 

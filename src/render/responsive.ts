@@ -29,6 +29,38 @@ import {
   type ResponsiveOverride,
 } from '../model/types'
 
+/**
+ * The attribute an OUTPUT element carries when generated rules must reach it.
+ * Distinct from the editor's `data-loom-id` so exports stay free of editor
+ * hooks, and emitted only on nodes that need it.
+ */
+export const OUTPUT_HOOK = 'data-loom-node'
+
+/**
+ * The selector for one node on every surface: the editor canvas addresses it
+ * by its editor id, the preview and exports by the output hook.
+ */
+export function nodeSelector(id: string): string {
+  const q = cssString(id)
+  return `:is([data-loom-id=${q}],[${OUTPUT_HOOK}=${q}])`
+}
+
+/**
+ * Any string as a quoted CSS string that can carry nothing but itself.
+ *
+ * Node ids come from files, and a file can name a node anything, so an id
+ * written into a stylesheet raw could close its rule, or the `<style>` element
+ * of an HTML export, and inject whatever followed. Every character outside
+ * `[A-Za-z0-9_-]` becomes a CSS hex escape, which the selector engine decodes
+ * back to the same character, so the rule still matches the real attribute.
+ */
+export function cssString(value: string): string {
+  const body = Array.from(value, (ch) =>
+    /^[A-Za-z0-9_-]$/.test(ch) ? ch : `\\${(ch.codePointAt(0) as number).toString(16)} `,
+  ).join('')
+  return `"${body}"`
+}
+
 /** The name of the container every responsive document establishes. */
 export const CONTAINER_NAME = 'loom'
 
@@ -50,9 +82,6 @@ function decls(over: ResponsiveOverride): string[] {
   if (typeof over.w === 'number') out.push(`width:${over.w}px`)
   if (typeof over.h === 'number') out.push(`height:${over.h}px`)
   if (typeof over.opacity === 'number') out.push(`opacity:${over.opacity}`)
-  // `display` is how a free node becomes a flow child at a narrower width, and
-  // the reverse. This is the whole reason flow belongs in the responsive
-  // surface: stacking a row of cards on a phone IS a layout change.
   if (typeof over.flow === 'boolean') {
     out.push(over.flow ? 'display:flex' : 'display:block')
     if (over.flow) {
@@ -60,10 +89,31 @@ function decls(over: ResponsiveOverride): string[] {
       out.push('align-items:stretch')
     }
   }
-  if (typeof over.visible === 'boolean') {
-    out.push(over.visible ? 'display:revert' : 'display:none')
-  }
+  // Only HIDING is expressible: a node hidden in the base layout is not in the
+  // output at all, so there is nothing a breakpoint could reveal, and forcing
+  // `display` on a visible node would erase its own (flex, grid, inline).
+  if (over.visible === false) out.push('display:none')
   return out
+}
+
+/** Every rule one node needs at one breakpoint. */
+function nodeRules(id: string, over: ResponsiveOverride): string[] {
+  const d = decls(over)
+  if (d.length === 0) return []
+  // `!important` is required, not a shortcut: the base layout is INLINE, and
+  // an inline declaration beats any stylesheet rule without it. The override
+  // could never win otherwise — and did not, until it was measured.
+  const rules = [`${nodeSelector(id)}{${d.map((x) => `${x} !important`).join(';')}}`]
+  if (over.flow === true) {
+    // A free container's children are absolutely positioned INLINE, so
+    // `display:flex` on the parent alone moves nothing. Flowing means the
+    // children leave absolute positioning; effect decoration layers
+    // (`data-loom-fx`) stay where they are.
+    rules.push(
+      `${nodeSelector(id)}>:not([data-loom-fx]){position:relative !important;inset:auto !important}`,
+    )
+  }
+  return rules
 }
 
 /**
@@ -86,9 +136,7 @@ export function responsiveCss(doc: Document): string {
     for (const node of Object.values(doc.nodes)) {
       const over = node.responsive?.[bp]
       if (!over) continue
-      const d = decls(over)
-      if (d.length === 0) continue
-      body.push(`[data-loom-id="${node.id}"]{${d.join(';')}}`)
+      body.push(...nodeRules(node.id, over))
     }
     if (body.length === 0) continue
     rules.push(`@container ${CONTAINER_NAME} ${cond}{${body.join('\n')}}`)
@@ -106,11 +154,27 @@ export function responsiveCss(doc: Document): string {
  * CONTAINER widths, not window widths: the artboard is the thing being
  * measured.
  */
-export const VIEWPORTS: ReadonlyArray<{ id: Breakpoint; label: string; width: number }> = [
-  { id: 'sm', label: 'Phone', width: 390 },
-  { id: 'md', label: 'Tablet', width: 834 },
-  { id: 'lg', label: 'Desktop', width: 1280 },
+export const VIEWPORTS: ReadonlyArray<{ id: Breakpoint; label: string; width: number; height: number }> = [
+  // A viewport is a SCREEN, so it has a height too. Design and Preview both
+  // draw exactly this screen (growing only when the content is taller);
+  // with no height each had its own floor (460px, 200px) and anything docked
+  // top-to-bottom, like a sidebar, changed height between them.
+  { id: 'sm', label: 'Phone', width: 390, height: 844 },
+  { id: 'md', label: 'Tablet', width: 834, height: 1194 },
+  { id: 'lg', label: 'Desktop', width: 1280, height: 800 },
 ]
+
+/**
+ * The zoom that shows a whole viewport in `room` px of canvas: never above
+ * 100%, never below 25%. The canvas is ALWAYS the viewport's true width and
+ * scales to fit; narrowing it instead (what it did) moved everything the
+ * designer placed relative to the page, so "centred" in the design landed
+ * left of centre in the preview.
+ */
+export function fitZoom(room: number, viewportWidth: number): number {
+  if (!(room > 0) || !(viewportWidth > 0)) return 1
+  return Math.min(1, Math.max(0.25, Math.floor((room / viewportWidth) * 100) / 100))
+}
 
 /** The viewport a given container width falls into. */
 export function breakpointForWidth(width: number): Breakpoint {

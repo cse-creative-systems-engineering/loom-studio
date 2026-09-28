@@ -10,7 +10,7 @@ what you export.
 ```bash
 npm install
 npm start          # build + launch the app
-npm run verify     # 551 checks
+npm run verify     # 602 checks
 ```
 
 ## The idea
@@ -41,8 +41,10 @@ export, it would be worse than no preview at all.
 ## What is in the box
 
 - **117 components** across containers, controls, data, text, navigation and
-  feedback — with **2,101 properties**, every one of them verified to change the
-  output.
+  feedback — with **3,017 properties**, every one of them verified to change the
+  output. Every component carries the same spacing, surface and type styling;
+  the Properties Panel opens on each component's essentials, with search and
+  the rest one click away.
 - **Built-in control behaviour** via one delegated runtime and one theme-driven
   stylesheet, shared by all three output targets.
 - **Responsive layout** on container queries, so a design adapts to the box it
@@ -94,7 +96,7 @@ behind the build order.
 
 ```bash
 npm run typecheck      # strict, zero errors
-npm run verify         # 551 checks in a real renderer
+npm run verify         # 602 checks in a real renderer
 npm run probe:preview  # 11 live-preview steps
 npm run probe:drag     # 8 real-input drag steps
 ```

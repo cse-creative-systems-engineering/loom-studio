@@ -48,6 +48,30 @@ function sourceChecks(): Array<{ name: string; pass: boolean; detail: string }> 
       detail: '',
     },
     {
+      // Behavioural tests for the guards live in the selftest; these pin that
+      // main.ts actually USES them, which the renderer cannot observe.
+      name: 'every window refuses navigation away from its own page',
+      pass: /web-contents-created[\s\S]*?will-navigate[\s\S]*?preventDefault\(\)/.test(main),
+      detail: '',
+    },
+    {
+      name: 'external links go through the scheme allowlist',
+      pass: !/openExternal\(url\)/.test(main.replace(/if \(isExternalUrlAllowed\(url\)\) void shell\.openExternal\(url\)/g, '')),
+      detail: 'every openExternal must be guarded by isExternalUrlAllowed',
+    },
+    {
+      name: 'file and autosave IPC is honoured only from the editor window',
+      pass: ['doc:save', 'doc:export-html', 'doc:export-react', 'doc:open', 'doc:write-recent', 'doc:read-recent'].every(
+        (ch) => new RegExp(`'${ch}'[^\\n]*\\n\\s*(?:\\/\\/[^\\n]*\\n\\s*)*if \\(!fromEditor\\(e\\)\\) return FORBIDDEN`).test(main),
+      ),
+      detail: '',
+    },
+    {
+      name: 'autosave paths are validated before touching the filesystem',
+      pass: (main.match(/autosaveFileName\(suggestedName\)/g) ?? []).length === 2,
+      detail: '',
+    },
+    {
       name: 'no sample project is restored at launch',
       pass: !/restoreAutosave\(\)/.test(entry) && !/restoreAutosave\(\)/.test(main),
       detail: 'autosave restore must never run unattended',

@@ -42,12 +42,12 @@ import { DELIMITERS } from '../src/model/registry'
 import '../src/model/toolbox'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-const ID = 'auditnode'
+export const ID = 'auditnode'
 
 /** Properties that describe the property rather than the output. */
 const METADATA = new Set(['bindable', 'requires', 'label', 'group'])
 
-function docWith(type: string, props: Record<string, PropValue>, children: Node[] = []): Document {
+export function docWith(type: string, props: Record<string, PropValue>, children: Node[] = []): Document {
   const built = instantiate(type)
   const node: Node = {
     id: ID,
@@ -173,7 +173,7 @@ function candidates(spec: PropSpec, def: PropValue): PropValue[] {
  * component gets the same rigour for free, with two exceptions that are facts
  * about a component rather than about its types (see `IN_USE`).
  */
-interface ProbeState {
+export interface ProbeState {
   base: Record<string, PropValue>
   children: Node[]
   why: string
@@ -184,7 +184,7 @@ function probeChildren(): Node[] {
   // Accordion.open needs AccordionItems, not labels: a property whose effect is
   // "how many of MY children start open" is inert against the wrong child type.
   // One of each plausible child makes the retry context real.
-  return (['Label', 'Button', 'AccordionItem', 'SettingsRow'] as const).map((type, i) => ({
+  return (['Label', 'Button', 'AccordionItem', 'SettingsRow', 'TabPanel'] as const).map((type, i) => ({
     id: `${ID}-${i}`,
     type,
     props: validateProps(type, instantiate(type).props).props,
@@ -281,7 +281,7 @@ const IN_USE: Record<string, Record<string, PropValue>> = {
   CodeBlock: { code: 'for (let i = 0; i < 4; i++) {\n\tstep(i)\n}' },
 }
 
-function probeStates(spec: ComponentSpec): ProbeState[] {
+export function probeStates(spec: ComponentSpec): ProbeState[] {
   const kids = probeChildren()
   const filled = filledIn(spec)
   const out: ProbeState[] = [

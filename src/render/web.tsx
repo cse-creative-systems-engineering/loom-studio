@@ -17,7 +17,11 @@ import { parentOf } from '../model/ops'
 import { typeStep, weightStep, resolveTheme, type Theme } from './theme'
 import { applyEffects, normalizeEffects } from './effects'
 import { behaviourAttrs, groupId } from './behaviour'
-import type { Document, Node, NodeId, PropValue } from '../model/types'
+import { OUTPUT_HOOK, isResponsive } from './responsive'
+import { FORCE_ATTR, hasStates } from './states'
+import { partAttrs } from './parts'
+import { itemsOf } from '../model/lists'
+import type { Document, InteractionState, Node, NodeId, PropValue } from '../model/types'
 
 export interface RenderCtx {
   doc: Document
@@ -33,7 +37,37 @@ export interface RenderCtx {
    * indistinguishable from what a user would actually ship.
    */
   mode?: 'authoring' | 'preview'
+  /**
+   * Authoring only: show this node in an interaction state without the
+   * pointer, so the state being edited is the state on screen.
+   */
+  forceState?: { id: NodeId; state: InteractionState }
+  /**
+   * Tooling only (the customization audit): in preview output, EVERY node and
+   * every declared part carries its hook, so each element can be attributed
+   * to the component and part that drew it. Never set for a real surface.
+   */
+  hookAll?: boolean
 }
+
+/**
+ * The canvas draws EVERY component with its real output body, wearing the
+ * editor's attributes. Hand-written canvas stubs drifted from the output one
+ * component at a time (a GroupBox without its legend, a Section without its
+ * title, a Select without its value: 22 of 112) and were deleted; selftest
+ * §65 holds every tool's canvas to its output, word for word and box for box.
+ *
+ * CHILDLESS: elements that cannot take children (the editor's handles among
+ * them), so the canvas wraps them in a box that can.
+ */
+const CHILDLESS: ReadonlySet<string> = new Set(['input', 'img', 'hr', 'textarea', 'select', 'svg', 'progress', 'meter', 'canvas', 'video', 'iframe', 'br', 'wbr'])
+
+/** Where a node sits and how big it is: the box keeps these, the element the rest. */
+const PLACEMENT: ReadonlySet<string> = new Set([
+  'position', 'left', 'top', 'right', 'bottom', 'inset', 'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+  'zIndex', 'transform', 'translate', 'rotate', 'scale', 'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
+  'flex', 'flexGrow', 'flexShrink', 'flexBasis', 'alignSelf', 'justifySelf', 'gridArea', 'gridColumn', 'gridRow', 'order', 'opacity',
+])
 
 export const CORNERS = ['nw', 'ne', 'sw', 'se'] as const
 export type Corner = (typeof CORNERS)[number]
@@ -178,18 +212,76 @@ function feedbackIcon(props: Record<string, PropValue>, tone: string, size: numb
  * identical elements. Shared by the preview and the canvas, because a labelled
  * divider that only exists in the output is a divider nobody can lay out.
  */
+/**
+ * A tab set's panels, in order. In output a hidden panel is not drawn, so it
+ * has no tab either: the Nth tab is always the Nth panel that exists.
+ */
+function tabPanelsOf(doc: Document, tabs: Node, output: boolean): NodeId[] {
+  return tabs.children.filter((c) => doc.nodes[c]?.type === 'TabPanel' && (!output || doc.nodes[c]?.visible !== false))
+}
+
+/**
+ * A nav bar's or side nav's links, from its list. How every link is drawn
+ * (size, icon side, underline, truncation) is the owner's; which link is where
+ * and which is current is the row's.
+ */
+function navLinks(node: Node, t: Theme, part: (names: string | string[]) => Record<string, string>): React.ReactNode {
+  const p = node.props
+  const size = str(p.size) || 'md'
+  const padY = size === 'sm' ? `${t.space1}px` : size === 'lg' ? `${t.space2 + 2}px` : `${t.space1 + 2}px`
+  const padX = size === 'sm' ? `${t.space2}px` : size === 'lg' ? `${t.space4}px` : `${t.space3}px`
+  const iconEnd = str(p.iconPosition) === 'end'
+  return itemsOf(node, 'links').map((l, i) => {
+    const off = l.disabled === true
+    const active = l.active === true
+    const label = str(l.label)
+    const icon = str(l.icon) ? <IconGlyph value={str(l.icon)} size={14} /> : null
+    return (
+      <a
+        key={i}
+        href={off ? undefined : str(l.href) || '#'}
+        aria-current={active ? 'page' : undefined}
+        aria-disabled={off ? 'true' : undefined}
+        {...part(active ? ['link', 'active'] : 'link')}
+        {...(off ? {} : behaviourAttrs({ role: 'press' }))}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: '6px',
+          fontSize: `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`,
+          fontWeight: active ? t.weightSemibold : t.weightMedium,
+          color: active ? t.accent : t.textSecondary,
+          padding: `${padY} ${padX}`, borderRadius: `${t.radiusSm}px`,
+          background: active ? `${t.accent}14` : 'transparent',
+          ...(p.underline === true ? { textDecoration: 'underline' } : { textDecoration: 'none' }),
+          cursor: off ? 'not-allowed' : 'pointer',
+          ...(off ? { opacity: 0.5 } : {}),
+          ...(p.truncate === true ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } : {}),
+        }}
+      >
+        {iconEnd ? label : icon}
+        {iconEnd ? icon : label}
+      </a>
+    )
+  })
+}
+
 function LabelledDivider({
   p,
   t,
   style,
   middle,
   nodeKey,
+  attrs,
+  extra,
 }: {
   p: Record<string, PropValue>
   t: Theme
   style: React.CSSProperties
   middle: React.ReactNode
   nodeKey?: string | number
+  /** The editor's attributes and handlers, so the canvas can select it. */
+  attrs?: Record<string, unknown>
+  /** Editor chrome drawn inside it on the canvas (selection handles). */
+  extra?: React.ReactNode
 }) {
   const thickness = num(p.thickness, 1)
   const colour = str(p.color) || t.borderStrong
@@ -204,6 +296,7 @@ function LabelledDivider({
   return (
     <div
       key={nodeKey}
+      {...attrs}
       role={named ? 'separator' : undefined}
       aria-label={named || undefined}
       style={{
@@ -223,6 +316,7 @@ function LabelledDivider({
         {middle}
       </span>
       <span style={rule(align === 'end' ? fixed : '1')} />
+      {extra}
     </div>
   )
 }
@@ -308,12 +402,16 @@ function applyCommonStyle(
   // toast, a callout, a slider or a checkbox. Two deliberate rules:
   //   - an explicit `color` always wins, because the designer chose it;
   //   - `accentColor` is set too, which is the right knob for native controls.
+  // Only tones it KNOWS: an unknown tone (an Avatar's `accent`) used to fall
+  // through to danger and paint the initials red. And a component that set
+  // its own text colour (white initials on a coloured disc) keeps it: a tone
+  // that fills a surface is not a tone that colours text.
   const tone = str(p.tone)
-  if (tone && tone !== 'neutral' && tone !== 'inherit') {
-    const toneColor =
-      tone === 'info' ? t.accent : tone === 'success' ? t.success : tone === 'warning' ? t.warning : t.danger
+  const toneColor =
+    tone === 'info' || tone === 'accent' ? t.accent : tone === 'success' ? t.success : tone === 'warning' ? t.warning : tone === 'danger' ? t.danger : ''
+  if (toneColor) {
     s.accentColor = toneColor
-    if (str(p.color) === '') s.color = toneColor
+    if (str(p.color) === '' && s.color === undefined) s.color = toneColor
   }
   const bg = str(p.background)
   if (bg) s.background = bg
@@ -342,7 +440,8 @@ function applyCommonStyle(
   if (gap >= 0) s.gap = `${gap}px`
 
   // --- flow ---
-  if (s.display === 'flex') {
+  // Inline flex boxes too: a spinner beside its label is a row like any other.
+  if (s.display === 'flex' || s.display === 'inline-flex') {
     if (str(p.direction) === 'row') s.flexDirection = 'row'
     else if (str(p.direction) === 'column') s.flexDirection = 'column'
     const align = str(p.align)
@@ -359,8 +458,16 @@ function applyCommonStyle(
   if (fw > 0) s.fontWeight = fw
   const col = str(p.color)
   if (col) s.color = col
+  // `align` is TEXT alignment where the component declares the text
+  // vocabulary (left/right/justify), or where it is not a flex box and text
+  // is all there is to align. On a flex box with the layout vocabulary it is
+  // item alignment only, handled above: a row aligned to the end used to
+  // right-align every line of text inside it, down to a chat bubble.
   const align = str(p.align)
-  if (align && (s.display === 'flex' || s.display === 'block' || s.textAlign !== undefined || true)) {
+  const alignOptions = getComponent(nodeType)?.props.align?.options ?? []
+  const textual = alignOptions.includes('left') || alignOptions.includes('right') || alignOptions.includes('justify')
+  const flexBox = s.display === 'flex' || s.display === 'inline-flex'
+  if (align && (textual || !flexBox)) {
     s.textAlign = align as React.CSSProperties['textAlign']
   }
   const lh = num(p.lineHeight, UNSET)
@@ -395,12 +502,20 @@ function applyCommonStyle(
       case 'bottom-left': s.bottom = '0'; s.left = '0'; break
       case 'left': s.top = '0'; s.bottom = '0'; s.left = '0'; break
       case 'center':
+        // Its CENTRE at the parent's centre: 50%/50% alone put its top-left
+        // corner there.
         s.top = '50%'
         s.left = '50%'
+        s.transform = s.transform ? `translate(-50%, -50%) ${str(s.transform)}` : 'translate(-50%, -50%)'
         break
       case 'fill': s.inset = '0'; break
       default: break
     }
+    // Docked to an edge means spanning it: a top/bottom dock is the parent's
+    // width and a left/right dock its height, whatever size it had. Left in
+    // place, a set width beat `left:0; right:0` and the "dock" did not span.
+    if (anchor === 'top' || anchor === 'bottom' || anchor === 'fill') { s.width = undefined; s.maxWidth = undefined }
+    if (anchor === 'left' || anchor === 'right' || anchor === 'fill') { s.height = undefined; s.maxHeight = undefined }
   }
   if (p.sticky === true) {
     // Sticky is the other half of docking: it keeps a node put while the
@@ -794,6 +909,32 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.background = t.surface; s.borderRight = `1px solid ${t.border}`
       break
     }
+    // --- conversation ---------------------------------------------------
+    case 'MessageList': {
+      // A column that scrolls, newest at the bottom. `flex: 1` so that inside
+      // a sidebar column it takes the height the header and composer leave.
+      s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, 10)
+      s.overflowY = 'auto'; s.flex = '1 1 auto'; s.minHeight = '0'
+      s.padding = `${t.space3}px`
+      // A thin scrollbar in the theme's own line colour: the platform default
+      // is a bright white gutter on a dark conversation.
+      s.scrollbarWidth = 'thin'; s.scrollbarColor = `${t.borderStrong} transparent`
+      break
+    }
+    case 'MessageBubble': {
+      const sent = str(p.side) === 'sent'
+      s.display = 'flex'; s.flexDirection = 'column'; s.gap = '3px'
+      s.alignSelf = sent ? 'flex-end' : 'flex-start'
+      s.alignItems = sent ? 'flex-end' : 'flex-start'
+      s.maxWidth = `${Math.min(100, Math.max(30, num(p.widthCap, 80)))}%`
+      break
+    }
+    case 'Composer': {
+      s.display = 'flex'; s.alignItems = 'flex-end'; s.gap = `${t.space2}px`
+      s.padding = `${t.space2}px ${t.space2}px ${t.space2}px ${t.space3}px`
+      s.background = t.surface; s.border = `1px solid ${t.borderStrong}`; s.borderRadius = `${t.radiusLg}px`
+      break
+    }
     case 'FormGrid': {
       s.display = 'grid'
       s.gridTemplateColumns = `repeat(${num(p.columns, 2) || 2}, minmax(0, 1fr))`
@@ -831,7 +972,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.opacity = p.disabled === true ? 0.5 : 1
       break
     }
-    case 'Checkbox': case 'Radio': case 'Switch': {
+    case 'Checkbox': case 'Switch': {
       s.display = 'inline-flex'; s.alignItems = 'center'; s.gap = `${t.space2}px`
       // size is the LABEL scale here: the box is the browser's, and a control
       // whose own text disagrees with the form around it is the thing this
@@ -1208,13 +1349,6 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.paddingLeft = `${num(p.indent, 16)}px`
       break
     }
-    case 'TimelineItem': {
-      s.display = 'flex'; s.flexDirection = 'column'; s.gap = '2px'
-      const size = str(p.size) || 'md'
-      s.fontSize = `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`
-      s.paddingBottom = `${t.space2}px`
-      break
-    }
     case 'TreeList': case 'DataList': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, 4)
       s.fontSize = `${t.textSm}px`; s.color = t.textPrimary
@@ -1287,27 +1421,6 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.borderRadius = `${t.radiusMd}px`
       break
     }
-    case 'NavLink': {
-      const size = str(p.size) || 'md'
-      // size -> padding and type together. A small nav link that keeps the
-      // medium link's padding is not a small link.
-      const padY = size === 'sm' ? `${t.space1}px` : size === 'lg' ? `${t.space2 + 2}px` : `${t.space1 + 2}px`
-      const padX = size === 'sm' ? `${t.space2}px` : size === 'lg' ? `${t.space4}px` : `${t.space3}px`
-      s.fontSize = `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`
-      s.fontWeight = p.active === true ? t.weightSemibold : t.weightMedium
-      s.color = p.active === true ? t.accent : t.textSecondary
-      s.padding = `${padY} ${padX}`
-      s.borderRadius = `${t.radiusSm}px`
-      s.background = p.active === true ? `${t.accent}14` : 'transparent'
-      s.textDecoration = p.underline === true ? 'underline' : 'none'
-      s.cursor = 'pointer'
-      if (p.truncate === true) {
-        s.overflow = 'hidden'
-        s.textOverflow = 'ellipsis'
-        s.whiteSpace = 'nowrap'
-      }
-      break
-    }
     case 'SideNav': {
       const rail = p.collapsed === true
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, 4)
@@ -1347,17 +1460,6 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const w = num(p.width, -1)
       if (w > 0) { s.width = px(p.width, 180); s.minWidth = px(p.width, 180) }
       else s.minWidth = '180px'
-      break
-    }
-    case 'MenuItem': {
-      s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'; s.gap = `${t.space2}px`
-      const size = str(p.size) || 'md'
-      s.fontSize = `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`
-      s.padding = size === 'sm' ? `4px ${t.space2 + 2}px` : size === 'lg' ? `${t.space2 + 2}px ${t.space4}px` : `${t.space2}px ${t.space3}px`
-      s.borderRadius = `${t.radiusSm}px`
-      s.background = p.active === true ? `${t.accent}14` : 'transparent'
-      s.color = p.danger === true ? t.danger : p.active === true ? t.accent : t.textPrimary
-      s.cursor = 'pointer'
       break
     }
     case 'CommandBar': {
@@ -1647,7 +1749,7 @@ function renderPreviewNode(
   // sibling wrapper would break the absolute-positioning contract that every
   // free-positioned node depends on.
   const layers = eff.layers
-  const content = renderPreviewBody(node, style, children, t, key, parentId, ctx)
+  const content = withOutputHook(node, renderPreviewBody(node, style, children, t, key, parentId, ctx), ctx.hookAll === true)
 
   if (!layers.length) return content
 
@@ -1671,6 +1773,25 @@ function renderPreviewNode(
   )
 }
 
+/**
+ * Give the output element the hook its generated rules address.
+ *
+ * Output carries no editor ids, so a node whose look is adjusted by a
+ * generated stylesheet (per-breakpoint overrides, interaction states) needs its
+ * own stable attribute, or the rules match nothing — which is exactly how
+ * responsive overrides silently did nothing in the preview and both exports.
+ * Only nodes that NEED it carry it, so a plain export stays free of hooks.
+ */
+function withOutputHook(node: Node, el: React.ReactElement, always = false): React.ReactElement {
+  if (!always && !isResponsive(node) && !hasStates(node)) return el
+  if (el.type === React.Fragment) {
+    if (always) return el
+    // Fail loudly: an override that cannot attach would silently not apply.
+    throw new Error(`${node.type} has no root element, so its overrides and states cannot apply`)
+  }
+  return React.cloneElement(el, { [OUTPUT_HOOK]: node.id } as Record<string, unknown>)
+}
+
 /** The node's own element, with no effect decoration. */
 function renderPreviewBody(
   node: Node,
@@ -1682,6 +1803,13 @@ function renderPreviewBody(
   ctx: RenderCtx,
 ): React.ReactElement {
   const p = node.props
+  // The hook a named part carries (see render/parts.ts): always on the canvas,
+  // in output only when that part is styled.
+  const part = (name: string | string[]) => partAttrs(node, name, ctx.mode !== 'preview' || ctx.hookAll === true)
+  // A container's OWN controls (a Composer's text box) are a picture on the
+  // canvas, like a leaf's; its child nodes stay live, so this is applied per
+  // control rather than to the whole body.
+  const canvasInert: { inert?: boolean } = ctx.mode === 'preview' ? {} : { inert: true }
 
   switch (node.type) {
     case 'Button': {
@@ -1750,6 +1878,164 @@ function renderPreviewBody(
           {str(p.text)}
         </div>
       )
+    // --- conversation -----------------------------------------------------
+    case 'MessageList': {
+      // `role="log"` is what a chat IS to a screen reader: new entries are
+      // announced politely, in order, without stealing focus.
+      return (
+        <div
+          key={key}
+          style={style}
+          role="log"
+          aria-live="polite"
+          aria-label={str(p.ariaLabel) || undefined}
+          data-loom-list={node.id}
+          data-loom-stick={p.stickToBottom !== false ? '1' : '0'}
+        >
+          {children.length === 0 ? (
+            <div data-loom-list-empty {...part('empty')} style={{ margin: 'auto', color: t.textMuted, fontSize: `${t.textSm}px`, textAlign: 'center', padding: `${t.space4}px` }}>
+              {str(p.emptyText)}
+            </div>
+          ) : null}
+          {children}
+          {p.showTyping === true ? (
+            <div data-loom-typing="" role="status" aria-label={str(p.typingLabel) || 'Someone is typing'} {...part('typingRow')} style={{ display: 'flex', alignItems: 'center', gap: `${t.space2}px`, alignSelf: 'flex-start' }}>
+              <span {...part('typing')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: `${t.space2 + 2}px ${t.space3}px`, background: t.surface, border: `1px solid ${t.border}`, borderRadius: `${t.radiusLg + 4}px ${t.radiusLg + 4}px ${t.radiusLg + 4}px 5px` }}>
+                {[0, 1, 2].map((i) => (
+                  <span key={i} data-loom-typing-dot {...part('typingDot')} aria-hidden="true" style={{ width: '6px', height: '6px', borderRadius: '50%', background: t.textMuted }} />
+                ))}
+              </span>
+              {str(p.typingLabel) ? <span {...part('typingLabel')} style={{ fontSize: `${t.textXs}px`, color: t.textMuted }}>{str(p.typingLabel)}</span> : null}
+            </div>
+          ) : null}
+          {/* Shown by the runtime only when a message arrives while the reader
+              is scrolled up; sticky so it floats over the list's bottom edge. */}
+          <button
+            type="button"
+            data-loom-list-jump
+            {...part('jump')}
+            {...canvasInert}
+            style={{ position: 'sticky', bottom: 0, alignSelf: 'center', display: 'none', border: 'none', cursor: 'pointer', background: t.accent, color: t.textOnAccent, fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, padding: '5px 12px', borderRadius: `${t.radiusFull}px`, boxShadow: t.shadowMd }}
+          >
+            ↓ {str(p.jumpLabel)}
+          </button>
+        </div>
+      )
+    }
+    case 'MessageBubble': {
+      const sent = str(p.side) === 'sent'
+      const grouped = p.grouped === true
+      const r = t.radiusLg + 4
+      // The tail is the one small corner on the sender's side at the bottom;
+      // a grouped message also tightens the corner that joins it to the one
+      // above, so a run of messages reads as one turn.
+      const tight = 5
+      const corners = sent
+        ? `${r}px ${grouped ? tight : r}px ${p.tail !== false ? tight : r}px ${r}px`
+        : `${grouped ? tight : r}px ${r}px ${r}px ${p.tail !== false ? tight : r}px`
+      const status = str(p.status) || 'none'
+      const showMeta = p.showTime !== false || status !== 'none'
+      return (
+        <div key={key} style={style} data-loom-bubble={sent ? 'sent' : 'received'} {...(p.template === true ? { 'data-loom-template': '' } : {})}>
+          {p.showAuthor !== false && !grouped && str(p.author) ? (
+            <span {...part('author')} style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: t.textSecondary, padding: '0 4px' }}>
+              {str(p.author)}
+            </span>
+          ) : null}
+          <div
+            {...part('body')}
+            style={{
+              background: sent ? t.accent : t.surface,
+              color: sent ? t.textOnAccent : t.textPrimary,
+              border: sent ? 'none' : `1px solid ${t.border}`,
+              borderRadius: corners,
+              padding: `${t.space2}px ${t.space3}px`,
+              fontSize: `${t.textSm}px`,
+              lineHeight: 1.45,
+              textAlign: 'start',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: `${t.space2}px`,
+              overflowWrap: 'anywhere',
+            }}
+          >
+            <span data-loom-bubble-text style={{ whiteSpace: 'pre-wrap' }}>{str(p.text)}</span>
+            {children}
+          </div>
+          {showMeta ? (
+            <span {...part('meta')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0 4px', fontSize: `${t.textXs}px`, color: t.textMuted }}>
+              {p.showTime !== false ? (
+                <span data-loom-bubble-time {...part('time')} style={{ color: t.textMuted }}>{str(p.time)}</span>
+              ) : null}
+              {status !== 'none' ? (
+                <span
+                  data-loom-bubble-status={status}
+                  {...part('status')}
+                  aria-label={status}
+                  style={{ color: status === 'read' ? t.accent : t.textMuted }}
+                >
+                  {status === 'sending' ? '○' : status === 'sent' ? '✓' : '✓✓'}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+      )
+    }
+    case 'Composer': {
+      const target = str(p.sendsTo)
+      const rows = Math.max(1, Math.min(20, num(p.maxRows, 6)))
+      return (
+        <div
+          key={key}
+          style={style}
+          data-loom-composer=""
+          data-loom-sends-to={target || undefined}
+          data-loom-enter-sends={p.enterSends !== false ? '1' : '0'}
+          data-loom-empty="1"
+        >
+          <textarea
+            data-loom-composer-input
+            {...part('input')}
+            {...canvasInert}
+            rows={1}
+            placeholder={str(p.placeholder)}
+            aria-label={str(p.placeholder) || 'Message'}
+            disabled={p.disabled === true}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              resize: 'none',
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              color: t.textPrimary,
+              fontFamily: 'inherit',
+              fontSize: `${t.textSm}px`,
+              lineHeight: 1.45,
+              padding: '6px 0',
+              maxHeight: `${Math.round(rows * t.textSm * 1.45 + 12)}px`,
+            }}
+          />
+          <div data-loom-composer-actions {...part('actions')} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {children}
+            {p.showSend !== false ? (
+              <button
+                type="button"
+                data-loom-composer-send
+                {...part('send')}
+                {...canvasInert}
+                aria-label={str(p.sendLabel) || 'Send'}
+                disabled={p.disabled === true}
+                style={{ border: 'none', cursor: 'pointer', background: t.accent, color: t.textOnAccent, fontSize: `${t.textSm}px`, fontWeight: t.weightSemibold, padding: '6px 12px', borderRadius: `${t.radiusMd}px` }}
+              >
+                {str(p.sendLabel) || 'Send'}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      )
+    }
     case 'Field': {
       const inline = str(p.layout) === 'inline'
       const validation = str(p.state) || 'default'
@@ -1774,12 +2060,12 @@ function renderPreviewBody(
       const described = [description ? helpId : '', message ? msgId : ''].filter(Boolean).join(' ')
       const labelBlock = (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', ...(inline ? { width: px(p.labelWidth, 180), flexShrink: 0 } : {}) }}>
-          <span id={labelId} style={{ fontSize: `${labelPx}px`, fontWeight: t.weightMedium, color: t.textSecondary, lineHeight: t.lineHeight }}>
+          <span id={labelId} {...part('label')} style={{ fontSize: `${labelPx}px`, fontWeight: t.weightMedium, color: t.textSecondary, lineHeight: t.lineHeight }}>
             {str(p.label)}
             {p.required === true ? <span style={{ color: t.danger }} aria-hidden="true"> *</span> : null}
           </span>
           {description ? (
-            <span id={helpId} style={{ fontSize: `${smallPx}px`, color: t.textMuted, lineHeight: 1.4 }}>{description}</span>
+            <span id={helpId} {...part('description')} style={{ fontSize: `${smallPx}px`, color: t.textMuted, lineHeight: 1.4 }}>{description}</span>
           ) : null}
         </div>
       )
@@ -1803,6 +2089,7 @@ function renderPreviewBody(
           {message ? (
             <span
               id={msgId}
+              {...part('message')}
               data-loom-field-message
               role={validation === 'error' ? 'alert' : undefined}
               style={{ fontSize: `${smallPx}px`, color: tone, lineHeight: 1.35 }}
@@ -1919,7 +2206,9 @@ function renderPreviewBody(
       )
     }
     case 'Tabs': {
-      const tabs = list(p.tabs, p.tabsSep)
+      // The strip's labels ARE the tabs' titles: one source, so a label can
+      // never name a panel that is not there.
+      const tabs = tabPanelsOf(ctx.doc, node, ctx.mode === 'preview').map((id) => str(ctx.doc.nodes[id]?.props.title) || 'Tab')
       const active = num(p.active, 0)
       const variant = str(p.variant) || 'underline'
       const full = p.fullWidth === true
@@ -1976,8 +2265,8 @@ function renderPreviewBody(
       // The Nth TabPanel is the Nth tab's content. It ships SHOWN so a panel
       // dropped on its own is never invisible, and hidden the moment its tab
       // is switched away from.
-      const sibs = parentId ? (ctx.doc.nodes[parentId]?.children ?? []) : []
-      const index = Math.max(0, sibs.indexOf(node.id))
+      const owner = parentId ? ctx.doc.nodes[parentId] : undefined
+      const index = owner?.type === 'Tabs' ? Math.max(0, tabPanelsOf(ctx.doc, owner, ctx.mode === 'preview').indexOf(node.id)) : 0
       const aria = str(p.ariaLabel)
       return (
         <div
@@ -2172,7 +2461,9 @@ function renderPreviewBody(
           >
             {side ? '›' : '‹'}
           </button>
-          <div data-loom-body style={{ display: 'flex', flexDirection: 'column', gap: `${t.space2}px`, flex: 1 }}>{children}</div>
+          {/* `minHeight: 0` lets a child that scrolls (a message list) scroll
+              inside instead of stretching past the window. */}
+          <div data-loom-body style={{ display: 'flex', flexDirection: 'column', gap: `${t.space2}px`, flex: 1, minHeight: 0 }}>{children}</div>
         </div>
       )
     }
@@ -2704,7 +2995,9 @@ function renderPreviewBody(
           >
             {collapsed ? '›' : '‹'}
           </button>
-          <div data-loom-body style={{ display: 'flex', flexDirection: 'column', gap: `${t.space2}px`, flex: 1 }}>{children}</div>
+          {/* `minHeight: 0` lets a child that scrolls (a message list) scroll
+              inside instead of stretching past the window. */}
+          <div data-loom-body style={{ display: 'flex', flexDirection: 'column', gap: `${t.space2}px`, flex: 1, minHeight: 0 }}>{children}</div>
         </div>
       )
     }
@@ -2773,28 +3066,8 @@ function renderPreviewBody(
         </label>
       )
     }
-    case 'Radio': {
-      const group = str(p.group) || node.id
-      const on = p.checked === true
-      const off = p.disabled === true
-      const accent = str(p.tone) === 'inherit' ? t.accent : toneColor(t, str(p.tone))
-      return (
-        <label key={key} style={style} {...behaviourAttrs({ role: 'radio', group, on })}>
-          <input
-            type="radio"
-            name={group}
-            defaultChecked={on}
-            disabled={off}
-            required={p.required === true}
-            aria-label={str(p.ariaLabel) || undefined}
-            style={{ accentColor: accent, width: 16, height: 16 }}
-          />
-          <span>{str(p.label)}</span>
-        </label>
-      )
-    }
     case 'RadioGroup': {
-      const opts = list(p.options, p.optionsSep)
+      const opts = itemsOf(node, 'options')
       const fs = str(p.size) === 'sm' ? t.textXs : str(p.size) === 'lg' ? t.textMd : t.textSm
       const name = str(p.ariaLabel) || str(p.label)
       return (
@@ -2808,19 +3081,24 @@ function renderPreviewBody(
           aria-label={name || undefined}
         >
           {str(p.label) ? (
-            <span style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: t.textSecondary }}>{str(p.label)}</span>
+            <span {...part('legend')} style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: t.textSecondary }}>{str(p.label)}</span>
           ) : null}
-          {opts.map((o) => (
-            <label
-              key={o}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: `${fs}px`, color: t.textPrimary }}
-              {...behaviourAttrs({ role: 'radio', group: node.id, index: opts.indexOf(o), on: str(p.value) === o })}
-            >
-              <input type="radio" name={node.id} defaultChecked={str(p.value) === o} disabled={p.disabled === true} />
-              <span>{o}</span>
-            </label>
-          ))}
-          {children}
+          {opts.map((o, i) => {
+            // An option with no value stands for its label: what a person
+            // types in the panel is what the group reports.
+            const value = str(o.value) || str(o.label)
+            return (
+              <label
+                key={i}
+                {...part('option')}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: `${fs}px`, color: t.textPrimary }}
+                {...behaviourAttrs({ role: 'radio', group: node.id, index: i, on: str(p.value) === value })}
+              >
+                <input type="radio" name={node.id} value={value} defaultChecked={str(p.value) === value} disabled={p.disabled === true || o.disabled === true} required={p.required === true} />
+                <span>{str(o.label)}</span>
+              </label>
+            )
+          })}
         </div>
       )
     }
@@ -3596,7 +3874,7 @@ function renderPreviewBody(
               <thead>
                 <tr>
                   {selectable && (
-                    <th scope="col" style={{ width: '38px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, textAlign: 'left', padding: rowPad, borderBottom: line }}>
+                    <th scope="col" {...part('header')} style={{ width: '38px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, textAlign: 'left', padding: rowPad, borderBottom: line }}>
                       <input
                         type="checkbox"
                         data-loom-select-all={node.id}
@@ -3609,6 +3887,7 @@ function renderPreviewBody(
                     <th
                       key={c}
                       scope="col"
+                      {...part('header')}
                       aria-sort={sortCol === ci && sortDir !== 'none' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
                       {...(sortable ? behaviourAttrs({ role: 'sort', group: node.id, index: ci }) : {})}
                       {...(sortCol === ci && sortDir !== 'none' ? { 'data-loom-sort': sortDir } : {})}
@@ -3632,7 +3911,7 @@ function renderPreviewBody(
                       {c}
                     </th>
                   ))}
-                  {rowActions && <th scope="col" style={{ width: '44px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, borderBottom: line }} />}
+                  {rowActions && <th scope="col" {...part('header')} style={{ width: '44px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, borderBottom: line }} />}
                 </tr>
               </thead>
             ) : null}
@@ -3641,6 +3920,7 @@ function renderPreviewBody(
                 <tr
                   key={i}
                   data-loom-row
+                  {...part('row')}
                   style={{
                     background: p.striped === true && i % 2 === 1 ? t.bg : 'transparent',
                     // Numeric cells get tabular figures so digits line up down
@@ -3649,7 +3929,7 @@ function renderPreviewBody(
                   }}
                 >
                   {selectable && (
-                    <td style={{ padding: rowPad, borderBottom: line, width: '38px' }}>
+                    <td {...part('cell')} style={{ padding: rowPad, borderBottom: line, width: '38px' }}>
                       <input
                         type="checkbox"
                         data-loom-select={node.id}
@@ -3666,6 +3946,7 @@ function renderPreviewBody(
                       // "the third child" is not "the third column" — and
                       // sorting by position silently sorted the checkbox.
                       data-loom-cell={ci}
+                      {...part('cell')}
                       style={{
                         padding: rowPad,
                         borderBottom: line,
@@ -3681,7 +3962,7 @@ function renderPreviewBody(
                     </td>
                   ))}
                   {rowActions && (
-                    <td style={{ padding: rowPad, borderBottom: line, textAlign: 'right' }}>
+                    <td {...part('cell')} style={{ padding: rowPad, borderBottom: line, textAlign: 'right' }}>
                       <div data-loom-menu={rowMenu(i)} style={{ display: 'inline-block' }}>
                         <button
                           type="button"
@@ -3737,23 +4018,23 @@ function renderPreviewBody(
       return (
         <div key={key} style={style}>
           {p.showLabel !== false ? (
-            <span style={{ fontSize: `${t.textXs}px`, textTransform: 'uppercase', letterSpacing: '0.6px', color: t.textMuted, fontWeight: t.weightSemibold }}>{str(p.label)}</span>
+            <span {...part('label')} style={{ fontSize: `${t.textXs}px`, textTransform: 'uppercase', letterSpacing: '0.6px', color: t.textMuted, fontWeight: t.weightSemibold }}>{str(p.label)}</span>
           ) : null}
-          <span style={{ fontSize: `${valueSize}px`, fontWeight: t.weightBold, color: str(p.accent) || t.textPrimary }}>{shown}</span>
+          <span {...part('value')} style={{ fontSize: `${valueSize}px`, fontWeight: t.weightBold, color: str(p.accent) || t.textPrimary }}>{shown}</span>
           {p.showDelta !== false && delta ? (
             deltaStyle === 'bar' ? (
               // A bar is the quiet comparison: the same delta, without a
               // coloured word, for a card that sits next to nine others.
-              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
+              <span {...part('delta')} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
                 <span aria-hidden="true" style={{ display: 'inline-block', width: tone === 'flat' ? '8px' : '18px', height: '3px', borderRadius: '2px', background: deltaToneColour, transform: tone === 'down' ? 'scaleX(-1)' : undefined }} />
                 <span>{delta}</span>
               </span>
             ) : deltaStyle === 'badge' ? (
-              <span style={{ alignSelf: 'flex-start', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour, background: `${deltaToneColour}1e`, border: `1px solid ${deltaToneColour}44`, borderRadius: `${t.radiusFull}px`, padding: '1px 8px' }}>
+              <span {...part('delta')} style={{ alignSelf: 'flex-start', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour, background: `${deltaToneColour}1e`, border: `1px solid ${deltaToneColour}44`, borderRadius: `${t.radiusFull}px`, padding: '1px 8px' }}>
                 {tone !== 'flat' ? <span aria-hidden="true">{arrow} </span> : null}{delta}
               </span>
             ) : (
-              <span style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
+              <span {...part('delta')} style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
                 {deltaStyle === 'arrow' ? <span aria-hidden="true">{arrow} </span> : null}{delta}
               </span>
             )
@@ -3782,11 +4063,11 @@ function renderPreviewBody(
       return (
         <div key={key} style={style}>
           {p.showLabel !== false ? (
-            <span style={{ fontSize: `${t.textXs}px`, textTransform: 'uppercase', letterSpacing: '0.6px', color: t.textMuted, fontWeight: t.weightSemibold }}>
+            <span {...part('label')} style={{ fontSize: `${t.textXs}px`, textTransform: 'uppercase', letterSpacing: '0.6px', color: t.textMuted, fontWeight: t.weightSemibold }}>
               {str(p.label)}
             </span>
           ) : null}
-          <span style={{ fontSize: `${valueSize}px`, fontWeight: t.weightBold, color: t.textPrimary, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
+          <span {...part('value')} style={{ fontSize: `${valueSize}px`, fontWeight: t.weightBold, color: t.textPrimary, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
             {shown}
           </span>
           {/* The comparison: a direction, the number, and what it is measured
@@ -3794,12 +4075,13 @@ function renderPreviewBody(
           {p.showDelta !== false && str(p.delta) ? (
             <span
               data-loom-kpi-delta=""
+              {...part('delta')}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: `${t.textSm}px`, fontWeight: t.weightSemibold, color: tone }}
             >
               <span aria-hidden="true">{arrow}</span>
               <span>{str(p.delta)}</span>
               {str(p.deltaLabel) ? (
-                <span style={{ fontWeight: t.weightNormal, color: t.textMuted, fontSize: `${t.textXs}px` }}>{str(p.deltaLabel)}</span>
+                <span {...part('caption')} style={{ fontWeight: t.weightNormal, color: t.textMuted, fontSize: `${t.textXs}px` }}>{str(p.deltaLabel)}</span>
               ) : null}
             </span>
           ) : null}
@@ -4144,42 +4426,44 @@ function renderPreviewBody(
         </div>
       )
     }
-    case 'Timeline':
+    case 'Timeline': {
+      const size = str(p.size) || 'md'
+      const small = size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm
+      const marker = num(p.markerSize, 10)
+      const minor = `${Math.max(t.textXs, small - 2)}px`
       return (
-        <div key={key} style={style}>
+        <div key={key} style={style} role="list">
           {p.rail === true ? (
             <span
               aria-hidden="true"
               style={{ position: 'absolute', left: Math.max(1, num(p.indent, 16) / 2 - 1), top: 0, bottom: 0, width: '2px', background: t.border, borderRadius: '1px', pointerEvents: 'none' }}
             />
           ) : null}
-          {children}
-        </div>
-      )
-    case 'TimelineItem': {
-      const size = str(p.size) || 'md'
-      const small = size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm
-      const marker = num(p.markerSize, 10)
-      const tone = toneColor(t, str(p.tone))
-      const shape = str(p.markerStyle) || 'dot'
-      return (
-        <div key={key} style={style}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span
-              aria-hidden="true"
-              style={{
-                width: `${marker}px`,
-                height: `${marker}px`,
-                flexShrink: 0,
-                borderRadius: shape === 'square' ? '2px' : shape === 'ring' ? '999px' : '999px',
-                background: shape === 'ring' ? 'transparent' : tone,
-                border: shape === 'ring' ? `2px solid ${tone}` : undefined,
-              }}
-            />
-            <span style={{ fontWeight: t.weightSemibold, color: t.textPrimary, fontSize: `${small}px` }}>{str(p.title)}</span>
-          </div>
-          {str(p.time) ? <span style={{ fontSize: `${Math.max(t.textXs, small - 2)}px`, color: t.textMuted, paddingLeft: `${marker + 8}px` }}>{str(p.time)}</span> : null}
-          {str(p.description) ? <span style={{ fontSize: `${Math.max(t.textXs, small - 2)}px`, color: t.textSecondary, paddingLeft: `${marker + 8}px` }}>{str(p.description)}</span> : null}
+          {itemsOf(node, 'events').map((ev, i) => {
+            const tone = toneColor(t, str(ev.tone))
+            const shape = str(ev.markerStyle) || 'dot'
+            return (
+              <div key={i} role="listitem" {...part('event')} style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: `${small}px`, paddingBottom: `${t.space2}px` }}>
+                <div {...part('head')} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span
+                    aria-hidden="true"
+                    {...part('marker')}
+                    style={{
+                      width: `${marker}px`,
+                      height: `${marker}px`,
+                      flexShrink: 0,
+                      borderRadius: shape === 'square' ? '2px' : '999px',
+                      background: shape === 'ring' ? 'transparent' : tone,
+                      border: shape === 'ring' ? `2px solid ${tone}` : undefined,
+                    }}
+                  />
+                  <span {...part('title')} style={{ fontWeight: t.weightSemibold, color: t.textPrimary, fontSize: `${small}px` }}>{str(ev.title)}</span>
+                </div>
+                {str(ev.time) ? <span {...part('time')} style={{ fontSize: minor, color: t.textMuted, paddingLeft: `${marker + 8}px` }}>{str(ev.time)}</span> : null}
+                {str(ev.description) ? <span {...part('description')} style={{ fontSize: minor, color: t.textSecondary, paddingLeft: `${marker + 8}px` }}>{str(ev.description)}</span> : null}
+              </div>
+            )
+          })}
         </div>
       )
     }
@@ -4453,37 +4737,18 @@ function renderPreviewBody(
     case 'NavBar':
       return (
         <nav key={key} style={style} aria-label={str(p.ariaLabel) || 'Main'}>
-          {p.showTitle !== false ? <span style={{ fontWeight: t.weightBold, color: t.textPrimary }}>{str(p.title)}</span> : null}
+          {p.showTitle !== false ? <span {...part('title')} style={{ fontWeight: t.weightBold, color: t.textPrimary }}>{str(p.title)}</span> : null}
+          {navLinks(node, t, part)}
           {children}
         </nav>
       )
-    case 'NavLink': {
-      const off = p.disabled === true
-      const label = str(p.label)
-      const icon = str(p.icon) ? <IconGlyph value={str(p.icon)} size={14} /> : null
-      return (
-        <a
-          key={key}
-          style={style}
-          href={off ? undefined : str(p.href) || '#'}
-          aria-current={p.active === true ? 'page' : undefined}
-          aria-disabled={off ? 'true' : undefined}
-          aria-label={str(p.ariaLabel) || undefined}
-          {...(off ? {} : behaviourAttrs({ role: 'press' }))}
-        >
-          {icon ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              {str(p.iconPosition) === 'end' ? label : icon}
-              {str(p.iconPosition) === 'end' ? icon : label}
-            </span>
-          ) : (
-            label
-          )}
-        </a>
-      )
-    }
     case 'SideNav':
-      return <nav key={key} style={style} aria-label={str(p.ariaLabel) || undefined} data-loom-collapsed={p.collapsed === true ? '1' : '0'}>{children}</nav>
+      return (
+        <nav key={key} style={style} aria-label={str(p.ariaLabel) || undefined} data-loom-collapsed={p.collapsed === true ? '1' : '0'}>
+          {navLinks(node, t, part)}
+          {children}
+        </nav>
+      )
     case 'Breadcrumbs': {
       const all = list(p.trail, p.trailSep)
       // Past a certain depth, keep the first crumb and the last few and elide
@@ -4656,25 +4921,42 @@ function renderPreviewBody(
         </ol>
       )
     }
-    case 'Menu':
-      return <div key={key} style={style} role="menu" aria-label={str(p.ariaLabel) || undefined}>{children}</div>
-    case 'MenuItem': {
-      const off = p.disabled === true
+    case 'Menu': {
+      const size = str(p.size) || 'md'
+      const pad = size === 'sm' ? `4px ${t.space2 + 2}px` : size === 'lg' ? `${t.space2 + 2}px ${t.space4}px` : `${t.space2}px ${t.space3}px`
+      const fs = size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm
       return (
-        <div
-          key={key}
-          style={style}
-          role="menuitem"
-          aria-disabled={off ? 'true' : undefined}
-          tabIndex={off ? -1 : 0}
-          aria-label={str(p.ariaLabel) || undefined}
-          {...(off ? {} : behaviourAttrs({ role: 'press' }))}
-        >
-          <IconGlyph value={str(p.icon)} size={16} />
-          <span style={{ flex: 1, minWidth: 0 }}>{str(p.label)}</span>
-          {/* The chord on the right: it tells you the shortcut before you press
-              it, which is the only reason to look at a menu row. */}
-          {str(p.shortcut) ? <span style={{ marginLeft: 'auto', fontSize: `${t.textXs}px`, color: t.textMuted, fontFamily: t.fontMono }}>{str(p.shortcut)}</span> : null}
+        <div key={key} style={style} role="menu" aria-label={str(p.ariaLabel) || undefined}>
+          {itemsOf(node, 'items').map((it, i) => {
+            const off = it.disabled === true
+            const active = it.active === true
+            const danger = it.danger === true
+            return (
+              <div
+                key={i}
+                role="menuitem"
+                aria-disabled={off ? 'true' : undefined}
+                tabIndex={off ? -1 : 0}
+                {...part(['item', ...(active ? ['active'] : []), ...(danger ? ['danger'] : [])])}
+                {...(off ? {} : behaviourAttrs({ role: 'press' }))}
+                style={{
+                  display: 'flex', flexDirection: 'row', alignItems: 'center', gap: `${t.space2}px`,
+                  fontSize: `${fs}px`, padding: pad, borderRadius: `${t.radiusSm}px`,
+                  background: active ? `${t.accent}14` : 'transparent',
+                  color: danger ? t.danger : active ? t.accent : t.textPrimary,
+                  cursor: off ? 'not-allowed' : 'pointer',
+                  ...(off ? { opacity: 0.5 } : {}),
+                }}
+              >
+                {str(it.icon) ? <span {...part('icon')} style={{ display: 'inline-flex' }}><IconGlyph value={str(it.icon)} size={16} /></span> : null}
+                <span style={{ flex: 1, minWidth: 0 }}>{str(it.label)}</span>
+                {/* The chord on the right: it tells you the shortcut before you
+                    press it, which is the only reason to look at a menu row. */}
+                {str(it.shortcut) ? <span {...part('shortcut')} style={{ marginLeft: 'auto', fontSize: `${t.textXs}px`, color: t.textMuted, fontFamily: t.fontMono }}>{str(it.shortcut)}</span> : null}
+              </div>
+            )
+          })}
+          {children}
         </div>
       )
     }
@@ -5039,272 +5321,6 @@ function pgBtn(t: Theme, on: boolean): React.CSSProperties {
   }
 }
 
-/** Inner content for a SELECTED leaf in authoring mode (outer div + handles wrap it). */
-function authorInner(node: Node, t: Theme): React.ReactNode {
-  const p = node.props
-  switch (node.type) {
-    case 'Button': {
-      const icon = str(p.icon) ? <IconGlyph value={str(p.icon)} size={str(p.size) === 'sm' ? 12 : 14} /> : null
-      const rawType = str(p.type)
-      return (
-        <button
-          type={rawType === 'submit' ? 'submit' : rawType === 'reset' ? 'reset' : 'button'}
-          tabIndex={-1}
-          disabled={p.disabled === true || p.loading === true}
-          aria-busy={p.loading === true ? 'true' : undefined}
-        >
-          {icon ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              {str(p.iconPosition) === 'end' ? str(p.label) : icon}
-              {str(p.iconPosition) === 'end' ? icon : str(p.label)}
-            </span>
-          ) : (
-            str(p.label)
-          )}
-        </button>
-      )
-    }
-    case 'Label':
-      return <div>{str(node.props.text)}</div>
-    case 'Input': {
-      const rawType = str(p.type)
-      const type = ['text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(rawType) ? rawType : 'text'
-      const maxLength = num(p.maxLength, -1)
-      return (
-        <input
-          type={type}
-          tabIndex={-1}
-          readOnly={p.readOnly === true}
-          disabled={p.disabled === true}
-          required={p.required === true}
-          name={str(p.name) || undefined}
-          maxLength={maxLength > 0 ? maxLength : undefined}
-          aria-label={str(p.ariaLabel) || undefined}
-          placeholder={str(node.props.placeholder)}
-          defaultValue={str(node.props.value)}
-        />
-      )
-    }
-    case 'Gauge':
-      return <GaugeFace node={node} t={t} />
-    case 'Sparkline':
-      return <Spark node={node} t={t} />
-    case 'Heading': {
-      // The level IS the type, so the canvas shows it: a selected heading that
-      // changes size only in the preview is a heading the designer cannot edit
-      // by looking at it.
-      const level = str(p.level) || '1'
-      const size = level === '1' ? t.textXxl : level === '2' ? t.textXl : t.textLg
-      const fs = num(p.fontSize, -1)
-      return (
-        <div style={{ fontSize: fs > 0 ? `${fs}px` : `${size}px`, fontWeight: level === '1' ? t.weightBold : t.weightSemibold }}>
-          {str(p.text)}
-        </div>
-      )
-    }
-    case 'IconButton':
-      return <button type="button" tabIndex={-1} disabled={p.disabled === true}><IconGlyph value={str(p.icon)} size={str(p.size) === 'sm' ? 14 : str(p.size) === 'lg' ? 20 : 16} /></button>
-    case 'Checkbox':
-      return <label><input type="checkbox" tabIndex={-1} checked={p.checked === true} disabled={p.disabled === true} readOnly /> {str(p.label)}</label>
-    case 'Radio':
-      return <label><input type="radio" tabIndex={-1} checked={p.checked === true} disabled={p.disabled === true} readOnly /> {str(p.label)}</label>
-    case 'Switch':
-      return <span>{str(p.label)} {p.on === true ? '●' : '○'}</span>
-    case 'Slider':
-      return <input type="range" tabIndex={-1} defaultValue={num(p.value, 50)} min={num(p.min, 0)} max={num(p.max, 100)} step={num(p.step, 1) || 1} disabled={p.disabled === true} readOnly />
-    case 'Select':
-      return <select tabIndex={-1}><option>{str(p.value)}</option></select>
-    case 'ComboBox':
-      return <input tabIndex={-1} readOnly defaultValue={str(p.value)} placeholder={str(p.placeholder)} />
-    case 'TextArea':
-      return <textarea tabIndex={-1} readOnly rows={num(p.rows, 4) || 4} defaultValue={str(p.value)} placeholder={str(p.placeholder)} />
-    case 'SearchBox':
-      return <input type="search" tabIndex={-1} readOnly defaultValue={str(p.value)} placeholder={str(p.placeholder)} />
-    case 'NumberInput':
-      return <input type="number" tabIndex={-1} readOnly defaultValue={num(p.value, 0)} />
-    case 'PasswordInput':
-      return <input type="password" tabIndex={-1} readOnly defaultValue={str(p.value)} placeholder={str(p.placeholder)} />
-    case 'DatePicker':
-      return <input type="date" tabIndex={-1} defaultValue={str(p.value)} />
-    case 'TimePicker':
-      return <input type="time" tabIndex={-1} defaultValue={str(p.value)} />
-    case 'ColorInput':
-      return <input type="color" tabIndex={-1} value={/^#[0-9a-fA-F]{6}$/.test(str(p.value)) ? str(p.value) : t.accent} readOnly />
-    case 'DropdownButton':
-      return <span>{str(p.label)} ▾</span>
-    case 'Rating': {
-      const v = num(p.value, 3)
-      const max = num(p.max, 5) || 5
-      return <span>{Array.from({ length: max }, (_, i) => (i < v ? '★' : '☆')).join('')}</span>
-    }
-    case 'ToggleButton':
-      return <button type="button" tabIndex={-1}>{str(p.label)}</button>
-    case 'Segmented':
-      return <span>{str(p.value) || list(p.options, p.optionsSep)[0] || ''}</span>
-    case 'SpinBox':
-      return <span>{num(p.value, 1)}</span>
-    case 'TagInput':
-      return <span>{str(p.value)}</span>
-    case 'OtpInput':
-      return <span>{'•'.repeat(num(p.length, 6) || 6)}</span>
-    case 'FileUpload':
-      return <span>{str(p.label)}</span>
-    case 'Field': {
-      // The field's own type scale, so `size` is something the designer can see
-      // while authoring rather than only in the preview.
-      const scales: Record<string, number> = { sm: t.textXs, md: t.textSm, lg: t.textMd }
-      return <span style={{ fontSize: `${scales[str(p.size)] ?? t.textSm}px` }}>{str(p.label)}</span>
-    }
-    case 'AppShell':
-      return <span>shell</span>
-    case 'Icon':
-      // The canvas draws the icon at the size it will ship at: a 32px icon
-      // shown as 16px is a property panel lying to the person reading it.
-      return <IconGlyph value={str(p.name)} size={num(p.size, 20) || 20} color={str(p.color) || iconTone(p.tone, t)} />
-    case 'CommandPalette':
-      return <span>⌘K</span>
-    case 'SettingsSection':
-      return <span>{str(p.title)}</span>
-    case 'SettingsRow':
-      return <span>{str(p.label)}</span>
-    case 'Paragraph':
-      return <span>{str(p.text)}</span>
-    case 'Caption':
-      return <span>{str(p.text)}</span>
-    case 'Quote':
-      return <span>{str(p.text)}</span>
-    case 'CodeBlock':
-      return <code>{str(p.code)}</code>
-    case 'InlineCode':
-      return <code>{str(p.code)}</code>
-    case 'Link':
-      return <a tabIndex={-1}>{str(p.text)}</a>
-    case 'BulletList':
-      return <span>{list(p.items, p.itemsSep).join(' • ')}</span>
-    case 'NumberedList':
-      return <span>{list(p.items, p.itemsSep).join(', ')}</span>
-    case 'Divider':
-      return <hr />
-    case 'Badge':
-      return <span>{str(p.text)}</span>
-    case 'Tag':
-      return <span>{str(p.text)}</span>
-    case 'Kbd':
-      return <kbd>{str(p.keys)}</kbd>
-    case 'DataGrid':
-      return <span>{list(p.columns, p.columnsSep).join(' · ')}</span>
-    case 'Stat':
-      return <span>{str(p.value)} {str(p.label)}</span>
-    case 'KpiCard':
-      return <span>{str(p.value)}</span>
-    case 'ProgressBar':
-      return <span>{num(p.value, 0)}%</span>
-    case 'ProgressRing':
-      return <span>{num(p.value, 0)}%</span>
-    case 'Avatar':
-      return <span>{str(p.initials)}</span>
-    case 'AvatarGroup':
-      return <span>{str(p.names)}</span>
-    case 'Image':
-      return <span>{str(p.alt) || 'Image'}</span>
-    case 'BarChart':
-      return <span>bars</span>
-    case 'PieChart':
-      return <span>pie</span>
-    case 'LineChart':
-      return <span>trend</span>
-    case 'TimelineItem':
-      return <span>{str(p.title)}</span>
-    case 'TreeList':
-      return <span>{list(p.items, p.itemsSep).join(', ')}</span>
-    case 'DataList':
-      return <span>{list(p.items, p.itemsSep).join(', ')}</span>
-    case 'KeyValue':
-      return <span>{str(p.label)}: {str(p.value)}</span>
-    case 'Calendar':
-      return <span>{str(p.month)}</span>
-    case 'EmptyState':
-      return <span>{str(p.title)}</span>
-    case 'Skeleton':
-      return <span>loading…</span>
-    case 'NavLink':
-      return <a tabIndex={-1}>{str(p.label)}</a>
-    case 'Breadcrumbs':
-      return <span>{list(p.trail, p.trailSep).join(' / ')}</span>
-    case 'Pagination':
-      return <span>{num(p.page, 1)} / {num(p.total, 12)}</span>
-    case 'Stepper':
-      return <span>{list(p.steps, p.stepsSep).join(' → ')}</span>
-    case 'MenuItem':
-      return <span>{str(p.label)}</span>
-    case 'TabBar':
-      return <span>{list(p.tabs, p.tabsSep).join(' · ')}</span>
-    case 'AnchorList':
-      return <span>{list(p.links, p.linksSep).join(', ')}</span>
-    case 'BackButton':
-      return <button type="button" tabIndex={-1}>← {str(p.label)}</button>
-    case 'Alert':
-      return <span>{str(p.title)}: {str(p.body)}</span>
-    case 'Toast':
-      return <span>{str(p.message)}</span>
-    case 'Spinner':
-      return <span>{str(p.label) || 'Loading…'}</span>
-    case 'LoadingBar':
-      return <span>{num(p.progress, 0)}%</span>
-    case 'ProgressDots':
-      return <span>{num(p.current, 0)}/{num(p.steps, 0)}</span>
-    case 'InlineMessage':
-      return <span>{str(p.text)}</span>
-    case 'ErrorSummary':
-      return <span>{str(p.title)}</span>
-    case 'SuccessCheck':
-      return <span>✓ {str(p.label)}</span>
-    case 'WarningCallout':
-      return <span>{str(p.title)}</span>
-    case 'InfoCallout':
-      return <span>{str(p.title)}</span>
-    /* Containers render children; never reach here as leaves. */
-    case 'Panel':
-    case 'Stack':
-    case 'Grid':
-    case 'Card':
-    case 'Tabs':
-    case 'TabPanel':
-    case 'Accordion':
-    case 'AccordionItem':
-    case 'Modal':
-    case 'Drawer':
-    case 'Section':
-    case 'GroupBox':
-    case 'ScrollView':
-    case 'SplitH':
-    case 'SplitV':
-    case 'Toolbar':
-    case 'StatusBar':
-    case 'Hero':
-    case 'HeaderBar':
-    case 'FooterBar':
-    case 'SidebarPanel':
-    case 'FormGrid':
-    case 'BannerBox':
-    case 'RadioGroup':
-    case 'ButtonGroup':
-    case 'Checklist':
-    case 'Timeline':
-    case 'KanbanColumn':
-    case 'DataCard':
-    case 'NavBar':
-    case 'SideNav':
-    case 'Menu':
-    case 'CommandBar':
-    case 'ConfirmDialog':
-    case 'NotificationList':
-      return null
-    default:
-      throw new Error(`unknown component: ${node.type}`)
-  }
-}
-
 export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): React.ReactElement {
   const node = ctx.doc.nodes[id]
   if (!node) throw new Error(`missing node: ${id}`)
@@ -5353,6 +5369,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     'data-loom-container': isContainer ? 'true' : 'false',
     'data-loom-hidden': node.visible === false ? 'true' : 'false',
     'data-loom-locked': node.locked === true ? 'true' : 'false',
+    ...(ctx.forceState?.id === id ? { [FORCE_ATTR]: ctx.forceState.state } : {}),
     style: authored,
     onPointerDown: (e: React.PointerEvent) => ctx.onPointerDownNode?.(id, e),
     onContextMenu: (e: React.MouseEvent) => {
@@ -5361,316 +5378,61 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     },
   }
 
-  if (ctx.selected.has(id)) {
-    // Handles are editor chrome, not output: they are injected only while
-    // authoring and never appear in an exported document. The root gets them
-    // too: the user placed it, so it is sized and moved like any other node.
-    const handles = CORNERS.map((corner) => (
-      <span key={corner} className="loom-handle" data-corner={corner} data-loom-handle={corner} />
-    ))
-    const inner = isContainer ? children : authorInner(node, t)
-    return (
-      <div key={key} {...common}>
-        {eff.layers}
-        {inner}
-        {handles}
-      </div>
+  // Every component is drawn FOR REAL on the canvas: the output's own body,
+  // wearing the editor's attributes. A stub ("48200" in an empty box, a
+  // GroupBox without its legend) cannot show what is being designed, and an
+  // editor that cannot show what it is editing is guesswork. Selected or not,
+  // it looks the same.
+  {
+    const body = renderPreviewBody(node, { ...authored, ...themeVars(t) }, children, t, key, parentOf(ctx.doc, id), ctx)
+    if (body.type === React.Fragment) throw new Error(`${node.type} has no root element to draw on the canvas`)
+    const own = body.props as { style?: React.CSSProperties; children?: React.ReactNode }
+    // A leaf's insides are output controls (a grid's filter field, its row
+    // checkboxes). On the canvas they are a picture of those controls:
+    // `inert` sends every pointer to the node itself, so a click selects and a
+    // drag moves, and keeps them out of the tab order. A container's insides
+    // hold the author's own child nodes, which must stay live.
+    const inner = isContainer
+      ? own.children
+      : React.Children.map(own.children, (c) =>
+          React.isValidElement(c) && typeof c.type === 'string' ? React.cloneElement(c as React.ReactElement<{ inert?: boolean }>, { inert: true }) : c,
+        )
+    const handles = ctx.selected.has(id)
+      ? CORNERS.map((corner) => <span key={corner} className="loom-handle" data-corner={corner} data-loom-handle={corner} />)
+      : null
+    if (body.type === LabelledDivider) {
+      // A labelled divider is drawn by a small component; it takes the editor
+      // attributes and chrome through its own props.
+      const { style: _s, ...attrs } = common
+      return React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { attrs, extra: [eff.layers, handles] })
+    }
+    if (typeof body.type !== 'string') throw new Error(`${node.type}: the canvas can only draw an element or LabelledDivider as a body`)
+    if (CHILDLESS.has(body.type)) {
+      // An <input>, <img> or <select> cannot hold the handles (or effect
+      // layers). A box takes the node's place in the layout and wears the
+      // editor attributes; the element fills it, inert, as a picture.
+      const outer: React.CSSProperties = {}
+      const rest: React.CSSProperties = {}
+      for (const [k, v] of Object.entries(own.style ?? {})) (PLACEMENT.has(k) ? outer : rest)[k as never] = v as never
+      if (outer.position === undefined) outer.position = 'relative'
+      if (own.style?.display === 'none') outer.display = 'none'
+      else if (flowChild) outer.display = own.style?.display === 'block' || own.style?.width !== undefined ? 'block' : 'inline-block'
+      const fill: React.CSSProperties = { ...rest, width: outer.width !== undefined ? '100%' : rest.width, height: outer.height !== undefined ? '100%' : rest.height, boxSizing: 'border-box', display: 'block' }
+      return (
+        <div key={key} {...common} style={outer}>
+          {eff.layers}
+          {React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { style: fill, inert: true, tabIndex: -1 })}
+          {handles}
+        </div>
+      )
+    }
+    return React.cloneElement(
+      body,
+      { ...common, style: own.style, key } as Record<string, unknown>,
+      ...([eff.layers, inner, handles] as never[]),
     )
   }
 
-  switch (node.type) {
-    case 'Button': {
-      const p = node.props
-      const icon = str(p.icon) ? <IconGlyph value={str(p.icon)} size={str(p.size) === 'sm' ? 12 : str(p.size) === 'lg' ? 16 : 14} /> : null
-      const label = <span style={{ opacity: p.loading === true ? 0.55 : 1 }}>{str(p.label)}</span>
-      const rawType = str(p.type)
-      return (
-        <button
-          key={key}
-          type={rawType === 'submit' ? 'submit' : rawType === 'reset' ? 'reset' : 'button'}
-          {...common}
-          disabled={p.disabled === true || p.loading === true}
-          aria-busy={p.loading === true ? 'true' : undefined}
-        >
-          {icon ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              {str(p.iconPosition) === 'end' ? label : icon}
-              {str(p.iconPosition) === 'end' ? icon : label}
-            </span>
-          ) : (
-            label
-          )}
-        </button>
-      )
-    }
-    case 'Label':
-      return (
-        <div key={key} {...common}>
-          {str(node.props.text)}
-        </div>
-      )
-    case 'Input': {
-      const p = node.props
-      const rawType = str(p.type)
-      const type = ['text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(rawType) ? rawType : 'text'
-      return (
-        <input
-          key={key}
-          {...common}
-          type={type}
-          placeholder={str(node.props.placeholder)}
-          defaultValue={str(node.props.value)}
-          disabled={p.disabled === true}
-          readOnly={p.readOnly === true}
-          required={p.required === true}
-          name={str(p.name) || undefined}
-          maxLength={num(p.maxLength, -1) > 0 ? num(p.maxLength) : undefined}
-          aria-label={str(p.ariaLabel) || undefined}
-          onChange={() => {
-            /* designer mode: value binding is not live yet */
-          }}
-        />
-      )
-    }
-    case 'Heading': {
-      const p = node.props
-      const level = str(p.level) || '1'
-      const size = level === '1' ? t.textXxl : level === '2' ? t.textXl : t.textLg
-      // Same rule as the preview: the level sets the type, and a declared
-      // override wins where it is set — otherwise the canvas and the output
-      // would disagree about the very same node.
-      const fs = num(p.fontSize, -1)
-      return (
-        <div key={key} {...common} style={{ ...(common.style as React.CSSProperties), fontSize: fs > 0 ? `${fs}px` : `${size}px`, fontWeight: level === '1' ? t.weightBold : t.weightSemibold, color: str(p.color) || t.textPrimary, textAlign: (str(p.align) || 'left') as React.CSSProperties['textAlign'] }}>
-          {str(p.text)}
-        </div>
-      )
-    }
-    case 'Field': {
-      const scales: Record<string, number> = { sm: t.textXs, md: t.textSm, lg: t.textMd }
-      return (
-        <div key={key} {...common}>
-          <span style={{ fontSize: `${scales[str(node.props.size)] ?? t.textSm}px` }}>{str(node.props.label)}</span>
-        </div>
-      )
-    }
-    case 'AppShell':
-      return <div key={key} {...common}><span>shell</span></div>
-    case 'Icon':
-      return <div key={key} {...common}><IconGlyph value={str(node.props.name)} size={num(node.props.size, 20) || 20} color={str(node.props.color) || iconTone(node.props.tone, t)} /></div>
-    case 'CommandPalette':
-      return <div key={key} {...common}><span>⌘K</span></div>
-    case 'SettingsSection':
-      return <div key={key} {...common}><span>{str(node.props.title)}</span></div>
-    case 'SettingsRow':
-      return <div key={key} {...common}><span>{str(node.props.label)}</span></div>
-    case 'Gauge':
-      return (
-        <div key={key} {...common}>
-          <GaugeFace node={node} t={t} />
-        </div>
-      )
-    case 'Sparkline':
-      return (
-        <div key={key} {...common}>
-          <Spark node={node} t={t} />
-        </div>
-      )
-    case 'Panel':
-    case 'Stack':
-    case 'Grid':
-    case 'Card':
-    case 'Tabs':
-    case 'TabPanel':
-    case 'Accordion':
-    case 'AccordionItem':
-    case 'Modal':
-    case 'Drawer':
-    case 'Section':
-    case 'GroupBox':
-    case 'ScrollView':
-    case 'SplitH':
-    case 'SplitV':
-    case 'Toolbar':
-    case 'StatusBar':
-    case 'Hero':
-    case 'HeaderBar':
-    case 'FooterBar':
-    case 'SidebarPanel':
-    case 'FormGrid':
-    case 'BannerBox':
-    case 'RadioGroup':
-    case 'ButtonGroup':
-    case 'Checklist':
-    case 'Timeline':
-    case 'KanbanColumn':
-    case 'DataCard':
-    case 'NavBar':
-    case 'SideNav':
-    case 'Menu':
-    case 'CommandBar':
-    case 'ConfirmDialog':
-    case 'NotificationList':
-      return (
-        <div key={key} {...common}>
-          {children}
-        </div>
-      )
-    case 'IconButton':
-      return (
-        <button key={key} type="button" {...common} disabled={node.props.disabled === true} aria-label={str(node.props.ariaLabel) || str(node.props.icon) || 'icon'}>
-          <IconGlyph value={str(node.props.icon)} size={str(node.props.size) === 'sm' ? 14 : str(node.props.size) === 'lg' ? 20 : 16} />
-        </button>
-      )
-    case 'Checkbox':
-      return <label key={key} {...common}><input type="checkbox" tabIndex={-1} checked={node.props.checked === true} disabled={node.props.disabled === true} readOnly /> {str(node.props.label)}</label>
-    case 'Radio':
-      return <label key={key} {...common}><input type="radio" tabIndex={-1} checked={node.props.checked === true} disabled={node.props.disabled === true} readOnly /> {str(node.props.label)}</label>
-    case 'Switch':
-      return <div key={key} {...common}><span>{str(node.props.label)}</span></div>
-    case 'Slider':
-      return <input key={key} {...common} type="range" min={num(node.props.min, 0)} max={num(node.props.max, 100)} step={num(node.props.step, 1) || 1} defaultValue={num(node.props.value, 50)} disabled={node.props.disabled === true} />
-    case 'Select':
-      return <select key={key} {...common} defaultValue={str(node.props.value)} disabled={node.props.disabled === true}>{list(node.props.options, node.props.optionsSep).map((o) => <option key={o} value={o}>{o}</option>)}</select>
-    case 'ComboBox':
-      return <input key={key} {...common} defaultValue={str(node.props.value)} placeholder={str(node.props.placeholder)} disabled={node.props.disabled === true} />
-    case 'TextArea':
-      return <textarea key={key} {...common} rows={num(node.props.rows, 4) || 4} defaultValue={str(node.props.value)} placeholder={str(node.props.placeholder)} disabled={node.props.disabled === true} />
-    case 'SearchBox':
-      return <input key={key} {...common} type="search" defaultValue={str(node.props.value)} placeholder={str(node.props.placeholder)} disabled={node.props.disabled === true} />
-    case 'NumberInput':
-      return <input key={key} {...common} type="number" defaultValue={num(node.props.value, 0)} disabled={node.props.disabled === true} />
-    case 'PasswordInput':
-      return <input key={key} {...common} type={node.props.reveal === true ? 'text' : 'password'} defaultValue={str(node.props.value)} placeholder={str(node.props.placeholder)} disabled={node.props.disabled === true} />
-    case 'DatePicker':
-      return <input key={key} {...common} type="date" defaultValue={str(node.props.value)} disabled={node.props.disabled === true} />
-    case 'TimePicker':
-      return <input key={key} {...common} type="time" defaultValue={str(node.props.value)} disabled={node.props.disabled === true} />
-    case 'ColorInput':
-      return <input key={key} {...common} type="color" value={/^#[0-9a-fA-F]{6}$/.test(str(node.props.value)) ? str(node.props.value) : t.accent} />
-    case 'FileUpload':
-      return <div key={key} {...common}>{str(node.props.label)}</div>
-    case 'DropdownButton':
-      return <button key={key} type="button" {...common}>{str(node.props.label)} ▾</button>
-    case 'Rating': {
-      const v = num(node.props.value, 3)
-      const max = num(node.props.max, 5) || 5
-      return <div key={key} {...common}>{Array.from({ length: max }, (_, i) => (i < v ? '★' : '☆')).join('')}</div>
-    }
-    case 'ToggleButton':
-      return <button key={key} type="button" {...common}>{str(node.props.label)}</button>
-    case 'Segmented':
-      return <div key={key} {...common}>{str(node.props.value)}</div>
-    case 'SpinBox':
-      return <div key={key} {...common}>{num(node.props.value, 1)}</div>
-    case 'TagInput':
-      return <div key={key} {...common}>{str(node.props.value)}</div>
-    case 'OtpInput':
-      return <div key={key} {...common}>{'•'.repeat(num(node.props.length, 6) || 6)}</div>
-    case 'Paragraph':
-      return <p key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}>{str(node.props.text)}</p>
-    case 'Caption':
-      return <div key={key} {...common}>{str(node.props.text)}</div>
-    case 'Quote':
-      return <blockquote key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}>{str(node.props.text)}</blockquote>
-    case 'CodeBlock':
-      return <pre key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}><code>{str(node.props.code)}</code></pre>
-    case 'InlineCode':
-      return <code key={key} {...common}>{str(node.props.code)}</code>
-    case 'Link':
-      return <a key={key} {...common} href={str(node.props.href) || '#'}>{str(node.props.text)}</a>
-    case 'BulletList':
-      return <ul key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}>{list(node.props.items, node.props.itemsSep).map((it) => <li key={it}>{it}</li>)}</ul>
-    case 'NumberedList':
-      return <ol key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}>{list(node.props.items, node.props.itemsSep).map((it) => <li key={it}>{it}</li>)}</ol>
-    case 'Divider': {
-      // The canvas draws the labelled divider too: an editor that renders a
-      // bare rule while the output renders a heading is an editor that cannot
-      // be used to check the output.
-      if (node.children.length === 0) return <hr key={key} {...common} />
-      return <LabelledDivider key={key} p={node.props} t={t} style={common.style as React.CSSProperties} middle={children} />
-    }
-    case 'Badge':
-      return <span key={key} {...common}>{str(node.props.text)}</span>
-    case 'Tag':
-      return <span key={key} {...common}>{str(node.props.text)}</span>
-    case 'Kbd':
-      return <kbd key={key} {...common}>{str(node.props.keys)}</kbd>
-    case 'DataGrid':
-      return <div key={key} {...common}>{list(node.props.columns, node.props.columnsSep).join(' · ')}</div>
-    case 'Stat':
-      return <div key={key} {...common}>{str(node.props.value)} {str(node.props.label)}</div>
-    case 'KpiCard':
-      return <div key={key} {...common}>{str(node.props.value)}</div>
-    case 'ProgressBar':
-      return <div key={key} {...common}>{num(node.props.value, 0)}%</div>
-    case 'ProgressRing':
-      return <div key={key} {...common}>{num(node.props.value, 0)}%</div>
-    case 'Avatar':
-      return <div key={key} {...common}>{str(node.props.initials)}</div>
-    case 'AvatarGroup':
-      return <div key={key} {...common}>{str(node.props.names)}</div>
-    case 'Image':
-      return <div key={key} {...common}>{str(node.props.alt)}</div>
-    case 'BarChart':
-      return <div key={key} {...common}>bars</div>
-    case 'PieChart':
-      return <div key={key} {...common}>pie</div>
-    case 'LineChart':
-      return <div key={key} {...common}>trend</div>
-    case 'TimelineItem':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
-    case 'TreeList':
-      return <div key={key} {...common}>{list(node.props.items, node.props.itemsSep).join(', ')}</div>
-    case 'DataList':
-      return <div key={key} {...common}>{list(node.props.items, node.props.itemsSep).join(', ')}</div>
-    case 'KeyValue':
-      return <div key={key} {...common}>{str(node.props.label)}: {str(node.props.value)}</div>
-    case 'Calendar':
-      return <div key={key} {...common}>{str(node.props.month)}</div>
-    case 'EmptyState':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
-    case 'Skeleton':
-      return <div key={key} {...common}>loading…</div>
-    case 'NavLink':
-      return <a key={key} {...common} href={str(node.props.href) || '#'}>{str(node.props.label)}</a>
-    case 'Breadcrumbs':
-      return <div key={key} {...common}>{list(node.props.trail, node.props.trailSep).join(' / ')}</div>
-    case 'Pagination':
-      return <div key={key} {...common}>{num(node.props.page, 1)} / {num(node.props.total, 12)}</div>
-    case 'Stepper':
-      return <div key={key} {...common}>{list(node.props.steps, node.props.stepsSep).join(' → ')}</div>
-    case 'MenuItem':
-      return <div key={key} {...common}>{str(node.props.label)}</div>
-    case 'TabBar':
-      return <div key={key} {...common}>{list(node.props.tabs, node.props.tabsSep).join(' · ')}</div>
-    case 'AnchorList':
-      return <div key={key} {...common}>{list(node.props.links, node.props.linksSep).join(', ')}</div>
-    case 'BackButton':
-      return <button key={key} type="button" {...common}>← {str(node.props.label)}</button>
-    case 'Alert':
-      return <div key={key} {...common}>{str(node.props.title)}: {str(node.props.body)}</div>
-    case 'Toast':
-      return <div key={key} {...common}>{str(node.props.message)}</div>
-    case 'Spinner':
-      return <div key={key} {...common}>{str(node.props.label)}</div>
-    case 'LoadingBar':
-      return <div key={key} {...common}>{num(node.props.progress, 0)}%</div>
-    case 'ProgressDots':
-      return <div key={key} {...common}>{num(node.props.current, 0)}/{num(node.props.steps, 0)}</div>
-    case 'InlineMessage':
-      return <div key={key} {...common}>{str(node.props.text)}</div>
-    case 'ErrorSummary':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
-    case 'SuccessCheck':
-      return <div key={key} {...common}>✓ {str(node.props.label)}</div>
-    case 'WarningCallout':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
-    case 'InfoCallout':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
-    default:
-      throw new Error(`unknown component: ${node.type}`)
-  }
 }
 
 /**

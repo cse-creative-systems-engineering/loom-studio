@@ -65,11 +65,19 @@ const color = (defaultValue = '', group = 'Style', extra: Partial<PropSpec> = {}
 })
 
 /** Inner spacing. `padding` is the shorthand the renderer expands to all sides. */
+/**
+ * Styling and placement are one click away rather than up front: the panel
+ * opens on what makes a component THIS component (its content, variant, size,
+ * state), and "More properties" reveals the box, spacing, type and docking
+ * every component shares. A changed value is always shown regardless.
+ */
+const ADV = { advanced: true } as const
+
 export const spaceProps = (): Props => ({
-  padding: num(0, 'Layout', 0, 96),
-  paddingX: num(-1, 'Layout', -1, 96),
-  paddingY: num(-1, 'Layout', -1, 96),
-  gap: num(0, 'Layout', 0, 64),
+  padding: num(0, 'Layout', 0, 96, ADV),
+  paddingX: num(-1, 'Layout', -1, 96, ADV),
+  paddingY: num(-1, 'Layout', -1, 96, ADV),
+  gap: num(0, 'Layout', 0, 64, ADV),
 })
 
 /** How children are arranged inside a container. */
@@ -82,24 +90,24 @@ export const flowProps = (): Props => ({
 
 /** The box itself: size, surface, edge. */
 export const boxProps = (): Props => ({
-  width: num(-1, 'Layout', -1, 4000),
-  height: num(-1, 'Layout', -1, 4000),
-  radius: num(-1, 'Style', -1, 64),
-  background: color('', 'Style'),
-  border: color('', 'Style'),
-  borderWidth: num(-1, 'Style', -1, 8),
-  shadow: choice(['none', 'sm', 'md', 'lg', 'glow'], 'none', 'Style'),
+  width: num(-1, 'Layout', -1, 4000, ADV),
+  height: num(-1, 'Layout', -1, 4000, ADV),
+  radius: num(-1, 'Style', -1, 64, ADV),
+  background: color('', 'Style', ADV),
+  border: color('', 'Style', ADV),
+  borderWidth: num(-1, 'Style', -1, 8, ADV),
+  shadow: choice(['none', 'sm', 'md', 'lg', 'glow'], 'none', 'Style', ADV),
 })
 
 /** Text inside a component. */
 export const textProps = (): Props => ({
-  fontSize: num(-1, 'Type', -1, 96),
-  fontWeight: num(-1, 'Type', -1, 900),
-  color: color('', 'Type'),
-  align: choice(['left', 'center', 'right', 'justify'], 'left', 'Type'),
-  lineHeight: num(-1, 'Type', 0, 4),
-  letterSpacing: num(-1, 'Type', -4, 12),
-  maxWidth: num(-1, 'Type', -1, 2000),
+  fontSize: num(-1, 'Type', -1, 96, ADV),
+  fontWeight: num(-1, 'Type', -1, 900, ADV),
+  color: color('', 'Type', ADV),
+  align: choice(['left', 'center', 'right', 'justify'], 'left', 'Type', ADV),
+  lineHeight: num(-1, 'Type', 0, 4, ADV),
+  letterSpacing: num(-1, 'Type', -4, 12, ADV),
+  maxWidth: num(-1, 'Type', -1, 2000, ADV),
 })
 
 /** Every interactive control: size, treatment, and the conditions it can be in. */
@@ -175,7 +183,66 @@ export const positionProps = (): Props => ({
   // 'none' is an explicit unset rather than an empty string: an enum property's
   // value must be one of its options, or the loader "repairs" a perfectly good
   // document on every save.
-  anchor: { type: 'enum', options: ['none', ...ANCHORS], default: 'none', group: 'Position' },
-  rotate: num(0, 'Position', -180, 180),
-  sticky: bool(false, 'Position'),
+  anchor: { type: 'enum', options: ['none', ...ANCHORS], default: 'none', group: 'Position', advanced: true },
+  rotate: num(0, 'Position', -180, 180, ADV),
+  sticky: bool(false, 'Position', ADV),
 })
+
+/**
+ * The styling every component carries, injected by the registry.
+ *
+ * The shared fragments above are opt-in, and that made the panel uneven: a
+ * Paragraph could not take a background, an Alert could not change its font
+ * size, because nobody had composed those fragments into them. A box is a box,
+ * so spacing, surface and type belong to EVERY component, not to whichever ones
+ * remembered to ask.
+ *
+ * Three rules make injecting them safe:
+ *  - Every default is UNSET (-1, '' or 'none'), so injection changes no existing
+ *    output: `applyCommonStyle` only acts on a value the designer chose. The
+ *    opt-in fragments default `padding`/`gap` to 0, which WOULD override a
+ *    component's own padding — that is why these are separate definitions.
+ *  - A component's own declaration wins over the injected one (spread order in
+ *    the registry), so a bespoke `border` or `color` keeps its meaning.
+ *  - They are `advanced`: the panel keeps them behind "More properties" so a
+ *    newcomer sees the component's own options first.
+ *
+ * Deliberately NOT here: `width`/`height` (the node's W/H geometry already owns
+ * size — two controls for one thing is the duplicate-function rule), and
+ * `align`/`justify`/`gap`/`direction` (they mean different things on a text
+ * leaf and a flex container, so they stay with the components that declare
+ * them).
+ */
+export function universalStyleProps(rendersText: boolean): Props {
+  const box: Props = {
+    padding: num(-1, 'Layout', -1, 96, ADV),
+    paddingX: num(-1, 'Layout', -1, 96, ADV),
+    paddingY: num(-1, 'Layout', -1, 96, ADV),
+    radius: num(-1, 'Style', -1, 64, ADV),
+    background: color('', 'Style', ADV),
+    border: color('', 'Style', ADV),
+    borderWidth: num(-1, 'Style', -1, 8, ADV),
+    shadow: choice(['none', 'sm', 'md', 'lg', 'glow'], 'none', 'Style', ADV),
+  }
+  if (!rendersText) return box
+  return {
+    ...box,
+    fontSize: num(-1, 'Type', -1, 96, ADV),
+    fontWeight: num(-1, 'Type', -1, 900, { ...ADV, step: 100 }),
+    color: color('', 'Type', ADV),
+    lineHeight: num(-1, 'Type', -1, 4, { ...ADV, step: 0.1 }),
+    letterSpacing: num(-1, 'Type', -4, 12, ADV),
+  }
+}
+
+/**
+ * Keys that mean "styling or placement" wherever they are declared.
+ *
+ * Many components declare these directly rather than through the fragments
+ * above, and the registry marks them advanced either way so the panel's
+ * essentials are the same idea on every component. `align` is excluded: on a
+ * container it is layout alignment, which is part of what the container is.
+ */
+export const STYLING_KEYS: ReadonlySet<string> = new Set(
+  Object.keys({ ...spaceProps(), ...boxProps(), ...textProps(), ...positionProps() }).filter((k) => k !== 'align'),
+)

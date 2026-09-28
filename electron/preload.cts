@@ -6,9 +6,12 @@
  * and must never gain reach through this bridge.
  *
  * The preview channel is deliberately narrow: the editor can ASK to open,
- * close, or pin the preview window, and can PUSH a document. The preview
- * window can do nothing except receive a document. It cannot touch the
- * filesystem, the model gateway, or the editor.
+ * close, or pin the preview window, and can PUSH a document.
+ *
+ * Both windows load THIS preload, so the preview window sees the same
+ * `loomHost` object. The boundary is enforced in the main process, not here:
+ * file, autosave and preview-open/update IPC is honoured only from the editor
+ * window, and no window may navigate away from its own page.
  */
 
 const { contextBridge, ipcRenderer } = require('electron')
@@ -60,5 +63,29 @@ contextBridge.exposeInMainWorld('loomPreview', {
     const h = () => cb()
     ipcRenderer.on('preview:closed', h)
     return () => ipcRenderer.removeListener('preview:closed', h)
+  },
+})
+
+const isDesktopWindow = process.argv.some((a) => a.includes('desktop.html'))
+
+/**
+ * Run on desktop. The editor asks to run (or re-place) the design as a real
+ * window, or to stop; the running window receives the document and may ask
+ * for its empty parts to let clicks through. Placement is decided in main.
+ */
+contextBridge.exposeInMainWorld('loomDesktop', {
+  isDesktopWindow,
+  run: (doc: unknown, target: unknown) => ipcRenderer.invoke('desktop:run', { doc, target }),
+  stop: () => ipcRenderer.invoke('desktop:stop'),
+  ignoreMouse: (ignore: boolean) => ipcRenderer.invoke('desktop:ignore-mouse', ignore),
+  onDocument: (cb: (doc: unknown) => void) => {
+    const h = (_e: unknown, doc: unknown) => cb(doc)
+    ipcRenderer.on('desktop:document', h)
+    return () => ipcRenderer.removeListener('desktop:document', h)
+  },
+  onClosed: (cb: () => void) => {
+    const h = () => cb()
+    ipcRenderer.on('desktop:closed', h)
+    return () => ipcRenderer.removeListener('desktop:closed', h)
   },
 })

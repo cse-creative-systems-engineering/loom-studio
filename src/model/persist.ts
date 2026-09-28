@@ -11,10 +11,15 @@
  *     every call site.
  */
 
-import { BREAKPOINTS, type Breakpoint, type Document, type Node, type NodeId } from './types'
+import { BREAKPOINTS, INTERACTION_STATES, type Breakpoint, type DocMeta, type Document, type InteractionState, type InteractionStyles, type Node, type NodeId } from './types'
+import { cleanPage } from './page'
 import { getComponent, validateProps } from './registry'
 import { clampZ } from './ops'
 import { normalizeEffects } from '../render/effects'
+import { cleanStateStyle } from '../render/states'
+import { cleanPartStyle, partsOf } from '../render/parts'
+import { cleanList } from './lists'
+import { migrateNodes } from './migrate'
 import './toolbox'
 
 /**
@@ -103,12 +108,7 @@ export function validate(input: unknown): Validated {
     return {
       doc: {
         version: FORMAT_VERSION,
-        meta: {
-          name: typeof raw.meta?.name === 'string' ? raw.meta.name : 'Untitled',
-          targets: Array.isArray(raw.meta?.targets) ? (raw.meta.targets as never) : ['web'],
-          theme: typeof raw.meta?.theme === 'string' ? raw.meta.theme : 'midnight',
-          created: typeof raw.meta?.created === 'number' ? raw.meta.created : Date.now(),
-        },
+        meta: validateMeta(raw.meta, issues),
         root: null,
         nodes: {},
       },
@@ -118,6 +118,10 @@ export function validate(input: unknown): Validated {
   if (typeof raw.root !== 'string' || !raw.nodes[raw.root]) {
     return { doc: null, issues: [{ path: '$.root', message: 'root does not exist' }] }
   }
+
+  // Tools that became rows of their parent fold in before anything is checked,
+  // so an old file's timeline keeps its events (see migrate.ts).
+  issues.push(...migrateNodes(raw.nodes as Record<string, unknown>))
 
   // Copy nodes, dropping anything structurally invalid.
   const nodes: Record<NodeId, Node> = {}
@@ -226,6 +230,84 @@ export function validate(input: unknown): Validated {
       issues.push({ path: `$.nodes.${id}.responsive`, message: 'not an object (dropped)' })
       responsive = undefined
     }
+    // Interaction states are written into a generated stylesheet as TEXT, so
+    // this is a real trust boundary: an unknown state, an unknown key, an
+    // out-of-range number or a "colour" that is not a colour is dropped and
+    // reported — the same sanitiser the op uses, so no path differs.
+    let states: Node['states']
+    if (node.states === undefined) {
+      states = undefined
+    } else if (node.states && typeof node.states === 'object' && !Array.isArray(node.states)) {
+      const bag: InteractionStyles = {}
+      for (const [stateRaw, styleRaw] of Object.entries(node.states as Record<string, unknown>)) {
+        if (!INTERACTION_STATES.includes(stateRaw as InteractionState)) {
+          issues.push({ path: `$.nodes.${id}.states.${stateRaw}`, message: 'unknown state (dropped)' })
+          continue
+        }
+        if (!styleRaw || typeof styleRaw !== 'object' || Array.isArray(styleRaw)) {
+          issues.push({ path: `$.nodes.${id}.states.${stateRaw}`, message: 'not an object (dropped)' })
+          continue
+        }
+        const { style, dropped } = cleanStateStyle(styleRaw as Record<string, unknown>)
+        for (const d of dropped) issues.push({ path: `$.nodes.${id}.states.${stateRaw}`, message: `${d} (dropped)` })
+        if (Object.keys(style).length > 0) bag[stateRaw as InteractionState] = style
+      }
+      states = Object.keys(bag).length > 0 ? bag : undefined
+    } else {
+      issues.push({ path: `$.nodes.${id}.states`, message: 'not an object (dropped)' })
+      states = undefined
+    }
+    // Part styling is stylesheet text too, and it is also checked against the
+    // component: a part the component does not declare, or a field that part
+    // does not accept, is dropped and reported. Same sanitiser as the op.
+    let parts: Node['parts']
+    if (node.parts === undefined) {
+      parts = undefined
+    } else if (node.parts && typeof node.parts === 'object' && !Array.isArray(node.parts)) {
+      const declared = partsOf(node.type) ?? {}
+      const bag: NonNullable<Node['parts']> = {}
+      for (const [partRaw, styleRaw] of Object.entries(node.parts as Record<string, unknown>)) {
+        if (!Object.prototype.hasOwnProperty.call(declared, partRaw)) {
+          issues.push({ path: `$.nodes.${id}.parts.${partRaw}`, message: `${node.type} has no part "${partRaw}" (dropped)` })
+          continue
+        }
+        if (!styleRaw || typeof styleRaw !== 'object' || Array.isArray(styleRaw)) {
+          issues.push({ path: `$.nodes.${id}.parts.${partRaw}`, message: 'not an object (dropped)' })
+          continue
+        }
+        const { style, dropped } = cleanPartStyle(node.type, partRaw, styleRaw as Record<string, unknown>)
+        for (const d of dropped) issues.push({ path: `$.nodes.${id}.parts.${partRaw}`, message: `${d} (dropped)` })
+        if (Object.keys(style).length > 0) bag[partRaw] = style
+      }
+      parts = Object.keys(bag).length > 0 ? bag : undefined
+    } else {
+      issues.push({ path: `$.nodes.${id}.parts`, message: 'not an object (dropped)' })
+      parts = undefined
+    }
+    // Item lists: each row checked field by field, like props. A list the
+    // component does not declare is dropped; a missing list takes its default.
+    let lists: Node['lists']
+    const listSpecs = getComponent(node.type)?.lists
+    if (node.lists !== undefined && (!node.lists || typeof node.lists !== 'object' || Array.isArray(node.lists))) {
+      issues.push({ path: `$.nodes.${id}.lists`, message: 'not an object (dropped)' })
+    }
+    if (listSpecs) {
+      const bag: NonNullable<Node['lists']> = {}
+      const rawLists = node.lists && typeof node.lists === 'object' && !Array.isArray(node.lists) ? (node.lists as Record<string, unknown>) : {}
+      for (const key of Object.keys(listSpecs)) {
+        if (!Object.prototype.hasOwnProperty.call(rawLists, key)) {
+          bag[key] = listSpecs[key].default.map((it) => ({ ...it }))
+          continue
+        }
+        const { items, dropped } = cleanList(node.type, key, rawLists[key])
+        for (const d of dropped) issues.push({ path: `$.nodes.${id}.lists`, message: d })
+        bag[key] = items
+      }
+      lists = bag
+    }
+    for (const key of Object.keys(node.lists && typeof node.lists === 'object' && !Array.isArray(node.lists) ? node.lists : {})) {
+      if (!listSpecs?.[key]) issues.push({ path: `$.nodes.${id}.lists.${key}`, message: `${node.type} has no list "${key}" (dropped)` })
+    }
     // Opacity repairs toward 1, clamped into range like the op does.
     let opacity = 1
     if (node.opacity !== undefined) {
@@ -247,6 +329,9 @@ export function validate(input: unknown): Validated {
       effects,
       z,
       responsive,
+      states,
+      parts,
+      lists,
     }
   }
 
@@ -348,20 +433,74 @@ export function validate(input: unknown): Validated {
     return { doc: null, issues: [...issues, { path: '$.root', message: 'root was removed' }] }
   }
 
+  // References between nodes (a Composer's "Sends to"), checked last, against
+  // the tree that actually survived: a reference to a node that was dropped,
+  // or to a type the property does not accept, is cleared and reported.
+  for (const node of Object.values(nodes)) {
+    const spec = getComponent(node.type)
+    if (!spec) continue
+    for (const [key, ps] of Object.entries(spec.props)) {
+      if (ps.type !== 'node') continue
+      const ref = node.props[key]
+      if (typeof ref !== 'string' || ref === '') continue
+      const target = nodes[ref]
+      if (!target || (ps.accepts && !ps.accepts.includes(target.type))) {
+        issues.push({
+          path: `$.nodes.${node.id}.props.${key}`,
+          message: target ? `points at a ${target.type}, expected ${(ps.accepts ?? []).join(' or ')} (cleared)` : `points at a missing node (cleared)`,
+        })
+        node.props[key] = ''
+      }
+    }
+  }
+
   return {
     doc: {
       version: FORMAT_VERSION,
-      meta: {
-        name: typeof raw.meta?.name === 'string' ? raw.meta.name : 'Untitled',
-        targets: Array.isArray(raw.meta?.targets) ? (raw.meta.targets as never) : ['web'],
-        theme: typeof raw.meta?.theme === 'string' ? raw.meta.theme : 'midnight',
-        created: typeof raw.meta?.created === 'number' ? raw.meta.created : Date.now(),
-      },
+      meta: validateMeta(raw.meta, issues),
       root: raw.root,
       nodes,
     },
     issues,
   }
+}
+
+/**
+ * Rebuild `meta` from an untrusted file.
+ *
+ * Built field by field on purpose (nothing undeclared rides through), which
+ * means every optional field MUST be listed here — an earlier version rebuilt
+ * only four fields and silently dropped the artboard and snap grid on every
+ * open. Present-but-invalid optional values are dropped and reported.
+ */
+function validateMeta(input: unknown, issues: ValidationIssue[]): DocMeta {
+  const m = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const meta: DocMeta = {
+    name: typeof m.name === 'string' ? m.name : 'Untitled',
+    targets: Array.isArray(m.targets) ? (m.targets as never) : ['web'],
+    theme: typeof m.theme === 'string' ? m.theme : 'midnight',
+    created: typeof m.created === 'number' ? m.created : Date.now(),
+  }
+  if (m.artboard !== undefined) {
+    const a = m.artboard as { w?: unknown; h?: unknown } | null
+    const ok =
+      a !== null &&
+      typeof a === 'object' &&
+      typeof a.w === 'number' && Number.isFinite(a.w) && a.w > 0 &&
+      typeof a.h === 'number' && Number.isFinite(a.h) && a.h > 0
+    if (ok) meta.artboard = { w: Math.round(a.w as number), h: Math.round(a.h as number) }
+    else issues.push({ path: '$.meta.artboard', message: 'expected { w, h } positive finite numbers (dropped)' })
+  }
+  if (m.page !== undefined) {
+    const page = cleanPage(m.page)
+    if (page) meta.page = page
+    else issues.push({ path: '$.meta.page', message: 'expected { background: none|theme|color, color?, blur? } with a safe colour (dropped)' })
+  }
+  if (m.snapGrid !== undefined) {
+    if (typeof m.snapGrid === 'number' && Number.isFinite(m.snapGrid) && m.snapGrid >= 0) meta.snapGrid = m.snapGrid
+    else issues.push({ path: '$.meta.snapGrid', message: `expected a non-negative finite number, got ${String(m.snapGrid)} (dropped)` })
+  }
+  return meta
 }
 
 /** Serialise for disk. Key order is stable so diffs stay readable. */

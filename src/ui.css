@@ -3,15 +3,21 @@
    subject. Type is tight, contrast is deliberate, motion is short. */
 
 :root {
-  --bg: #0b0d13;
-  --bg-2: #10131c;
-  --panel: #141824;
-  --panel-2: #1a1f2e;
-  --line: rgba(255, 255, 255, 0.07);
-  --line-2: rgba(255, 255, 255, 0.12);
-  --ink: #e6e9ef;
-  --ink-2: #9aa4b8;
-  --ink-3: #6b7488;
+  /* A neutral ramp with the faintest cool cast. The old one was navy, which
+     tinted every surface blue and fought the accent. */
+  --bg: #08090c;
+  --bg-2: #0c0d11;
+  --panel: #121318;
+  --panel-2: #1a1b21;
+  --line: rgba(255, 255, 255, 0.065);
+  --line-2: rgba(255, 255, 255, 0.11);
+  /* Where a value is typed: a recessed fill, no outline at rest. An edge on
+     every field was most of the panel's visual noise. */
+  --well: rgba(255, 255, 255, 0.045);
+  --well-hover: rgba(255, 255, 255, 0.07);
+  --ink: #ededf0;
+  --ink-2: #a3a6b0;
+  --ink-3: #6e717c;
   /* Chrome accent: selection + focus in the TOOL only. */
   --accent: #5b8cff;
   --accent-2: #a06bff;
@@ -21,7 +27,9 @@
   --danger: #e2564d;
   --radius: 10px;
   --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.85);
-  --font: ui-sans-serif, -apple-system, 'Inter', 'Segoe UI', system-ui, sans-serif;
+  /* Bundled, so every machine draws the same Studio. The canvas does NOT use
+     it: a design is drawn in its theme's type, which is what exports ship. */
+  --font: 'Inter Variable', 'Inter', system-ui, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
   /* Type scale — six ad-hoc sizes within 3px was drift, not a scale. */
   --text-xs: 10.5px;
@@ -59,154 +67,20 @@ input, select { font-family: inherit; font-size: 12px; }
 
 .loom {
   display: grid;
-  grid-template-rows: 44px 1fr 26px;
+  grid-template-rows: 38px 1fr;
   height: 100%;
-}
-
-/* ---------------- title bar ---------------- */
-
-.titlebar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 14px;
-  background: linear-gradient(180deg, #131725, #0e1119);
-  border-bottom: 1px solid var(--line);
-  -webkit-app-region: drag;
-}
-
-.titlebar button, .titlebar input { -webkit-app-region: no-drag; }
-
-.brand { display: flex; align-items: center; gap: 8px; }
-
-.mark {
-  width: 16px; height: 16px;
-  border-radius: 5px;
-  background: conic-gradient(from 210deg, var(--accent), var(--accent-2), #4ad6c0, var(--accent));
-  box-shadow: 0 0 14px -2px rgba(91, 140, 255, 0.85);
-}
-
-.wordmark {
-  font-weight: 650;
-  font-size: 13px;
-  letter-spacing: 0.2px;
-}
-
-.doc-name {
-  color: var(--ink-2);
-  font-size: 12px;
-  padding-left: 12px;
-  border-left: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.dirty-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--select);
-  box-shadow: 0 0 7px -1px var(--select);
-}
-
-.file-actions {
-  display: flex;
-  gap: 4px;
-  margin-left: 10px;
-}
-
-.file-btn {
-  border: 1px solid var(--line-2);
-  background: transparent;
-  color: var(--ink-2);
-  border-radius: 6px;
-  padding: 3px 10px;
-  font-size: 11px;
-  font-weight: 550;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
-}
-
-.file-btn:hover { color: var(--ink); background: var(--panel-2); border-color: rgba(91,140,255,0.45); }
-
-.file-btn.primary {
-  background: rgba(91, 140, 255, 0.16);
-  border-color: rgba(91, 140, 255, 0.45);
-  color: #a9c1ff;
-}
-
-.file-btn.primary:hover { background: rgba(91, 140, 255, 0.26); color: #fff; }
-
-.theme-picker {
-  display: flex;
-  gap: 2px;
-  margin-right: 8px;
-}
-
-.theme-chip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--ink-3);
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 550;
-  text-transform: capitalize;
-  transition: background 120ms ease, color 120ms ease;
-}
-
-.theme-chip:hover { color: var(--ink-2); background: rgba(255, 255, 255, 0.04); }
-
-.theme-chip.on {
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.07);
-  border-color: var(--line-2);
-}
-
-.theme-swatch {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex: none;
-}
-
-.targets {
-  margin-left: auto;
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-
-.target {
-  border: 0;
-  background: transparent;
-  color: var(--ink-3);
-  padding: 4px 12px;
-  border-radius: 6px;
-  font-size: 11.5px;
-  font-weight: 550;
-  transition: background 120ms ease, color 120ms ease;
-}
-
-.target.on {
-  background: linear-gradient(180deg, rgba(91,140,255,0.9), rgba(63,106,224,0.9));
-  color: #fff;
-  box-shadow: 0 2px 10px -2px rgba(91,140,255,0.7);
 }
 
 /* ---------------- layout ---------------- */
 
 .body {
   display: grid;
-  grid-template-columns: 216px 1fr 268px;
+  grid-template-columns: 208px 1fr 256px;
   min-height: 0;
 }
+
+/* Previewing: the panels step aside and the artifact gets the whole width. */
+.loom.previewing .body { grid-template-columns: 1fr; }
 
 /* ---------------- toolbox ---------------- */
 
@@ -219,11 +93,12 @@ input, select { font-family: inherit; font-size: 12px; }
 }
 
 .search {
-  margin: 10px;
-  padding: 7px 10px;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  margin: 8px 8px 6px;
+  padding: 5px 9px;
+  font-size: 11.5px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--ink);
   outline: none;
 }
@@ -235,7 +110,7 @@ input, select { font-family: inherit; font-size: 12px; }
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 0 10px 8px;
+  padding: 0 10px 6px;
   font-size: 10px;
   color: var(--ink-3);
   letter-spacing: 0.2px;
@@ -243,27 +118,27 @@ input, select { font-family: inherit; font-size: 12px; }
 
 .legend .tool-gate { width: 5px; height: 5px; }
 
-.scroll { overflow-y: auto; padding: 4px 8px 16px; flex: 1; min-height: 0; }
+.scroll { overflow-y: auto; padding: 2px 6px 14px; flex: 1; min-height: 0; }
 
 .scroll h3 {
-  margin: 14px 4px 6px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.9px;
-  text-transform: uppercase;
+  margin: 14px 6px 4px;
+  font-size: 11px;
+  font-weight: 560;
+  letter-spacing: 0;
   color: var(--ink-3);
 }
 
 .tool {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
-  padding: 7px 8px;
-  margin-bottom: 2px;
+  padding: 3px 6px;
+  min-height: 26px;
+  margin-bottom: 1px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--ink);
   text-align: left;
   transition: background 110ms ease, border-color 110ms ease, transform 110ms ease;
@@ -277,15 +152,16 @@ input, select { font-family: inherit; font-size: 12px; }
 .tool:active { transform: scale(0.985); }
 
 .tool-icon {
-  width: 22px; height: 22px;
+  width: 18px; height: 18px;
   display: grid; place-items: center;
-  background: rgba(91, 140, 255, 0.12);
-  border-radius: 6px;
-  color: var(--accent);
-  font-size: 12px;
+  border-radius: 4px;
+  color: var(--ink-3);
+  font-size: 11px;
 }
 
-.tool-name { flex: 1; font-size: 12.5px; }
+.tool:hover .tool-icon { color: var(--accent); }
+
+.tool-name { flex: 1; font-size: 12px; }
 
 .tool-gate {
   width: 6px; height: 6px;
@@ -297,21 +173,15 @@ input, select { font-family: inherit; font-size: 12px; }
 /* ---------------- canvas ---------------- */
 
 .canvas-wrap {
+  position: relative;
   display: grid;
-  grid-template-rows: 34px 1fr;
+  grid-template-rows: 1fr;
   min-height: 0;
+  /* A fine dot field with one soft light from above: depth without lines. */
   background:
-    radial-gradient(900px 500px at 30% -10%, rgba(91, 140, 255, 0.09), transparent 60%),
-    radial-gradient(700px 400px at 90% 110%, rgba(160, 107, 255, 0.07), transparent 60%),
+    radial-gradient(1100px 520px at 50% -18%, rgba(120, 140, 255, 0.07), transparent 65%),
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.055) 1px, transparent 1.2px) 0 0 / 18px 18px,
     var(--bg-2);
-}
-
-.canvas-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--line);
 }
 
 .chip {
@@ -325,21 +195,30 @@ input, select { font-family: inherit; font-size: 12px; }
 
 .chip:hover { color: var(--ink); border-color: rgba(91,140,255,0.5); }
 
-.hint { color: var(--ink-3); font-size: 11px; }
-
 .canvas {
   overflow: auto;
-  padding: 34px;
+  /* Room at the bottom for the floating dock, so it never covers the work. */
+  padding: 28px 28px 72px;
   min-height: 0;
+  /* The viewport sits centred, as it does in Preview; `safe` keeps a zoomed-in
+     artboard scrollable to its left edge instead of clipping it. */
+  display: grid;
+  justify-content: safe center;
+  align-content: start;
 }
+
+.canvas[hidden] { display: none; }
 
 /* The artboard must not read as another editor panel. A lighter, warmer
    surface plus a SOLID inset border says "this is the document"; the dashed
    border said "empty dropzone placeholder". */
 .surface {
   position: relative;
-  min-width: 720px;
-  min-height: 460px;
+  /* The width IS the viewport's (set inline); the border sits outside it, so
+     the content box is exactly 1280 / 834 / 390 like the preview's. No
+     min-width: a floor of 720px made the 390px phone a 720px phone. */
+  box-sizing: content-box;
+  flex: none;
   border-radius: 12px;
   background-color: #12151d;
   background-image:
@@ -403,13 +282,6 @@ input, select { font-family: inherit; font-size: 12px; }
     0 24px 60px -24px rgba(0, 0, 0, 0.9);
 }
 
-/* The root fills the surface while authoring. It renders chromeless (see
-   renderNode's root branch) — this rule only guarantees size/positioning. */
-.surface > [data-loom-type='Panel'] {
-  min-height: 460px;
-  position: relative;
-  border-radius: 12px;
-}
 
 /* Empty workspace: no root exists yet, so the canvas says so instead of
    looking like a broken/immovable panel. This is the "drop your first
@@ -451,8 +323,10 @@ input, select { font-family: inherit; font-size: 12px; }
   cursor: grabbing;
 }
 
-/* Hover: a faint selection-hue outline, distinct from selection itself. */
-.surface [data-loom-id]:hover {
+/* Hover: a faint selection-hue outline on the INNERMOST element under the
+   pointer only. Plain :hover also matches every ancestor, which drew the
+   element, its card and its panel at once. */
+.surface [data-loom-id]:hover:not(:has([data-loom-id]:hover)) {
   outline: 1px solid rgba(255, 178, 36, 0.45);
   outline-offset: 1px;
 }
@@ -493,7 +367,7 @@ input, select { font-family: inherit; font-size: 12px; }
   display: flex;
   gap: 10px;
   align-items: center;
-  padding: 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -510,36 +384,160 @@ input, select { font-family: inherit; font-size: 12px; }
 
 .insp-scroll { overflow-y: auto; padding: 4px 12px 20px; }
 
-.insp-scroll section { margin-top: 14px; }
+.insp-scroll section { margin-top: 12px; }
 
+/* Sentence-case group titles in the ink, rules between groups: a shouted
+   uppercase label over every group was the panel's loudest texture. */
 .insp-scroll h3 {
-  margin: 0 0 8px;
-  font-size: 10px;
+  margin: 0 0 6px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.9px;
-  text-transform: uppercase;
-  color: var(--ink-3);
+  letter-spacing: 0;
+  color: var(--ink);
 }
 
-.field { margin-bottom: 10px; }
+.insp-scroll section + section { border-top: 1px solid var(--line); padding-top: 10px; }
 
-.field > label {
+/* One row per property: label left, control right, 26px tall. Stacked
+   labels spent a line on every property, which is most of the panel. The
+   label truncates; its full name is in its title. */
+.field {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-height: 26px;
+  margin-bottom: 3px;
+}
+
+.field > :nth-child(n + 3) { grid-column: 2; }
+.field > label,
+.field-head > label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.field > label .dim:not(.eff-num), .field-head > label .dim { display: none; }
+.field .toggle { justify-self: start; }
+
+/* Label row: the label plus, when the value is changed, a reset button that
+   must live outside the <label> (see Field in app.tsx). */
+.field-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.field-head > label {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
   color: var(--ink-2);
-  margin-bottom: 4px;
+}
+
+/* A changed value is visible at a glance: accent dot + brighter label. */
+.field.modified .field-head > label { color: var(--ink); }
+
+.mod-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.prop-reset {
+  flex: none;
+  padding: 0 3px;
+  line-height: 16px;
+  font-size: 11px;
+  color: var(--ink-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.prop-reset:hover { color: var(--ink); border-color: var(--line-2); }
+
+/* The reset floats over the end of the label, on hover or focus only: in a
+   78px label a permanent button would cut every changed name in half. */
+.field-head { position: relative; }
+.field-head .prop-reset {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--panel);
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+.field:hover .field-head .prop-reset,
+.field-head .prop-reset:focus-visible { opacity: 1; }
+.prop-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Search + the essentials/everything toggle, pinned above the property groups. */
+.props-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px -12px 0;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.props-search {
+  flex: 1 1 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink);
+  outline: none;
+}
+
+.props-search:focus { border-color: rgba(91, 140, 255, 0.65); }
+
+.props-more {
+  flex: 1 1 100%;
+  text-align: left;
+  padding: 2px 0;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.props-more:hover { color: var(--ink); }
+.props-more.on { color: var(--accent); }
+.props-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.props-empty { color: var(--ink-3); font-size: var(--text-sm); margin: 14px 0; }
+
+.field > label {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-2);
 }
 
 .field input[type='text'],
 .field select,
 .num input {
   width: 100%;
-  padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  height: 24px;
+  padding: 0 7px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--ink);
   outline: none;
 }
@@ -556,10 +554,11 @@ input, select { font-family: inherit; font-size: 12px; }
   appearance: none;
   -webkit-appearance: none;
   width: 100%;
-  padding: 6px 26px 6px 8px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  height: 24px;
+  padding: 0 22px 0 7px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--ink);
   outline: none;
   cursor: pointer;
@@ -592,6 +591,12 @@ input, select { font-family: inherit; font-size: 12px; }
   border: 1px solid var(--line-2);
   overflow: hidden;
   cursor: pointer;
+}
+
+/* No colour set: the component's own colour applies, so the swatch shows
+   "none" rather than pretending to be white. */
+.swatch.none {
+  background: linear-gradient(to top right, transparent calc(50% - 1px), var(--danger) calc(50% - 1px), var(--danger) calc(50% + 1px), transparent calc(50% + 1px));
 }
 
 .swatch input[type='color'] {
@@ -647,44 +652,30 @@ input, select { font-family: inherit; font-size: 12px; }
 .num input { flex: 1; }
 
 .toggle {
-  width: 34px; height: 19px;
+  width: 28px; height: 16px;
   padding: 2px;
-  background: rgba(0, 0, 0, 0.42);
-  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.1);
+  border: 0;
   border-radius: 999px;
   display: flex;
   transition: background 140ms ease, border-color 140ms ease;
 }
 
 .toggle .knob {
-  width: 13px; height: 13px;
+  width: 12px; height: 12px;
   border-radius: 50%;
-  background: var(--ink-3);
+  background: #c9cfdb;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
   transition: transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1), background 140ms ease;
 }
 
-.toggle.on { background: rgba(91, 140, 255, 0.35); border-color: rgba(91, 140, 255, 0.7); }
-.toggle.on .knob { transform: translateX(15px); background: var(--accent); }
+.toggle.on { background: var(--accent); }
+.toggle.on .knob { transform: translateX(12px); background: #fff; }
 
 .empty { padding: 28px 18px; color: var(--ink-2); }
 .empty .dim { color: var(--ink-3); font-size: 11.5px; line-height: 1.5; }
 
-/* ---------------- status bar ---------------- */
-
-.statusbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  background: #0c0f16;
-  border-top: 1px solid var(--line);
-  color: var(--ink-2);
-  font-size: 11px;
-}
-
-.statusbar .sep { width: 1px; height: 11px; background: var(--line-2); }
-.statusbar .dim { color: var(--ink-3); }
-.statusbar .spacer { flex: 1; }
+.spacer { flex: 1; }
 
 .pv-toggle {
   background: transparent;
@@ -851,14 +842,6 @@ input, select { font-family: inherit; font-size: 12px; }
 
 /* ---------------- canvas zoom + snap guides ---------------- */
 
-.zoom-group { display: flex; align-items: center; gap: 4px; }
-
-.zoom-readout {
-  min-width: 52px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
 .snap-guide-v {
   position: absolute;
   top: 0; bottom: 0;
@@ -901,18 +884,17 @@ input, select { font-family: inherit; font-size: 12px; }
  * a single glance and the rare case (tune the blur) is one step deeper.
  * ------------------------------------------------------------------ */
 
-.eff { padding: 14px 16px 18px; border-top: 1px solid var(--loom-border); }
+.eff { margin-top: 12px; padding: 10px 0 4px; border-top: 1px solid var(--line); }
+.insp-scroll section + .eff { padding-top: 10px; }
 
 .eff h3 {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 10px;
-  font-size: 10px;
+  margin: 0 0 6px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--loom-text-muted);
+  color: var(--ink);
 }
 
 .eff-count {
@@ -924,21 +906,24 @@ input, select { font-family: inherit; font-size: 12px; }
   letter-spacing: 0.04em;
 }
 
-.eff-toggles { display: flex; flex-direction: column; gap: 2px; }
+/* Two columns of name + switch: eight effects in four rows. What each does
+   is in its tooltip. */
+.eff-toggles { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; row-gap: 0; }
 
 .eff-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 4px 0 0;
   border-radius: var(--loom-radius-sm);
   transition: background var(--loom-motion) var(--loom-ease);
 }
 .eff-row:hover { background: color-mix(in srgb, var(--loom-text-primary) 4%, transparent); }
 
 .eff-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.eff-label > span:first-child { font-size: 12px; font-weight: 500; color: var(--loom-text-primary); }
+.eff-label > span:first-child { font-size: 11px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .eff-label .dim {
   font-size: 10.5px;
   line-height: 1.3;
@@ -947,18 +932,13 @@ input, select { font-family: inherit; font-size: 12px; }
   white-space: nowrap;
 }
 
-.eff-hint {
-  margin: 10px 2px 0;
-  font-size: 11px;
-  line-height: 1.5;
-}
 
 .eff-fields {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
-  padding-top: 12px;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px dashed color-mix(in srgb, var(--loom-border) 80%, transparent);
 }
 
@@ -1034,22 +1014,6 @@ input, select { font-family: inherit; font-size: 12px; }
    queries measure, so narrowing it is how you see the layout respond. */
 .surface.loom-container { container-type: inline-size; container-name: loom; }
 
-.viewport-group {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-}
-
-.viewport-group .chip.on {
-  background: var(--select);
-  color: #fff;
-  border-color: transparent;
-}
-
-/* Theme review switch in the docked preview. */
 .theme-switch {
   position: absolute;
   top: 8px;
@@ -1064,3 +1028,132 @@ input, select { font-family: inherit; font-size: 12px; }
 }
 
 .theme-switch .chip.on { background: var(--select); color: #fff; border-color: transparent; }
+
+/* Interaction states: Normal / Hover / Focus / Pressed, presets, fields. */
+.state-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 6px;
+  background: var(--well);
+  border-radius: 7px;
+}
+
+.state-tab {
+  position: relative;
+  height: 22px;
+  padding: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.state-tab:hover { color: var(--ink); }
+.state-tab.on { color: var(--ink); background: rgba(255, 255, 255, 0.09); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); }
+.state-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.state-dot {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.state-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.state-note { margin: 0 0 10px; font-size: var(--text-sm); }
+
+.num-unit { color: var(--ink-3); font-size: var(--text-xs); min-width: 14px; }
+
+/* Shared small controls in the inspector. The Responsive section used these
+   class names before any rule existed for them, so its Reset rendered as a raw
+   browser button. */
+.row.between { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.insp-scroll .dim { color: var(--ink-3); font-size: var(--text-sm); line-height: 1.45; }
+
+/* Small actions are wells like the fields: a filled shape, no outline. */
+.mini {
+  height: 24px;
+  padding: 0 8px;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+  background: var(--well);
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mini:hover:not(:disabled) { color: var(--ink); background: var(--well-hover); }
+.mini:disabled { opacity: 0.4; cursor: default; }
+.mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Parts: same tab strip as Interaction, but the number of parts varies per
+   component, so the columns follow the count instead of a fixed four. */
+.parts-panel .state-tabs { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.parts-panel .state-tab { padding: 5px 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.parts-panel h3 { margin-bottom: 0; }
+
+/* Item lists and "Add …": what a component is made of, edited in place. */
+.list-panel h3 .count { color: var(--ink-3); font-weight: 400; margin-left: 4px; }
+.list-rows { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.list-row { border: 1px solid transparent; border-radius: 8px; }
+.list-row.open { border-color: var(--line-2); background: rgba(0, 0, 0, 0.18); }
+.list-row-head { display: flex; align-items: center; gap: 4px; min-height: 30px; }
+.list-row-title {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 5px 6px;
+  background: transparent; border: 0; border-radius: 6px; color: var(--ink); font-size: var(--text-sm);
+  text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.list-row-title:hover { background: rgba(255, 255, 255, 0.04); }
+.list-row-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.list-row-title .caret { color: var(--ink-3); font-size: 9px; width: 10px; flex-shrink: 0; }
+.list-row-tools { display: flex; gap: 2px; opacity: 0; transition: opacity 120ms ease; }
+.list-row:hover .list-row-tools, .list-row.open .list-row-tools, .list-row-tools:focus-within { opacity: 1; }
+.icon-mini {
+  width: 22px; height: 22px; display: inline-grid; place-items: center; padding: 0;
+  background: transparent; border: 0; border-radius: 5px; color: var(--ink-2); font-size: 11px; cursor: pointer;
+}
+.icon-mini:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); color: var(--ink); }
+.icon-mini.danger:hover:not(:disabled) { color: var(--danger); }
+.icon-mini:disabled { opacity: 0.3; cursor: default; }
+.icon-mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.list-row-fields { padding: 4px 8px 8px; }
+.adds-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.range-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.range-row input[type='range'] { flex: 1; min-width: 0; }
+.range-value { min-width: 32px; text-align: right; font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* In a 78px label a word badge crushes the name; a dot says "gated", its
+   title says which target. */
+.field-head .gate-badge {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  padding: 0;
+  font-size: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #d9a13a;
+}
+
+/* Wells brighten under the pointer and take the accent edge on focus. */
+.field input[type='text']:hover:not(:focus),
+.select-wrap select:hover:not(:focus),
+.num input:hover:not(:focus),
+.search:hover:not(:focus),
+.props-search:hover:not(:focus) { background: var(--well-hover); border-color: transparent; }

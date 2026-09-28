@@ -1,0 +1,495 @@
+/* Loom — the chrome around the work: title bar, mode switch, dock, preview.
+   Compact on purpose. Every pixel the tool keeps is a pixel the design loses,
+   so the chrome is one 38px bar and a dock that floats over the canvas. Quiet
+   by default (ink-2 on panel), one accent for "on", nothing that shouts. */
+
+/* ---------------- title bar ---------------- */
+
+.titlebar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 0 8px 0 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  -webkit-app-region: drag;
+}
+
+.titlebar button, .titlebar input, .titlebar [role='menu'] { -webkit-app-region: no-drag; }
+
+.tb-left, .tb-right { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tb-right { justify-content: flex-end; }
+
+.mark {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: conic-gradient(from 210deg, var(--accent), var(--accent-2), #4ad6c0, var(--accent));
+  box-shadow: 0 0 12px -3px rgba(91, 140, 255, 0.8);
+}
+
+.doc-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 6px 0 4px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink);
+}
+
+.doc-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+
+.dirty-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--select);
+  box-shadow: 0 0 6px -1px var(--select);
+}
+
+.tb-group { display: flex; align-items: center; gap: 1px; padding-left: 6px; border-left: 1px solid var(--line); }
+
+.tb-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink-2);
+  transition: background 110ms ease, color 110ms ease;
+}
+
+.tb-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--ink); }
+.tb-btn:disabled { opacity: 0.35; cursor: default; }
+
+.ico { display: block; flex-shrink: 0; }
+
+/* The question the bar answers: designing, or using what you built? */
+.mode-switch {
+  display: flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.mode-switch button {
+  min-width: 68px;
+  padding: 3px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 550;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.mode-switch button:hover { color: var(--ink); }
+.mode-switch button.on { background: var(--panel-2); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2), 0 1px 2px rgba(0, 0, 0, 0.4); }
+
+/* Small segmented groups: theme swatches, target. */
+.seg { display: flex; padding: 2px; gap: 1px; border: 1px solid var(--line); border-radius: 7px; }
+
+.seg button {
+  height: 22px;
+  min-width: 22px;
+  padding: 0 7px;
+  display: inline-grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.seg button:hover { color: var(--ink); }
+.seg button.on { background: var(--panel-2); color: var(--ink); }
+
+.theme-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.seg button.on .theme-swatch { box-shadow: 0 0 0 1.5px var(--ink); }
+
+.gate-note { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; cursor: help; }
+
+.export { position: relative; }
+
+/* The one filled button in the bar: output is what the work is for. */
+.tb-primary {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px 0 12px;
+  background: var(--accent);
+  border: 0;
+  border-radius: 7px;
+  color: #0b1020;
+  font-size: 11.5px;
+  font-weight: 650;
+  transition: filter 120ms ease;
+}
+
+.tb-primary:hover { filter: brightness(1.08); }
+
+.export-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 50;
+  min-width: 210px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+}
+
+.export-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 12px;
+  text-align: left;
+}
+
+.export-menu button:hover, .export-menu button:focus-visible { background: var(--panel-2); outline: none; }
+.export-menu kbd { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+.menu-rule { height: 1px; margin: 4px 2px; background: var(--line); }
+
+/* ---------------- dock ---------------- */
+
+.dock {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(20, 24, 36, 0.86);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.8);
+}
+
+.dock-group { display: flex; align-items: center; gap: 1px; }
+.dock-rule { width: 1px; height: 16px; margin: 0 3px; background: var(--line-2); }
+
+.dock button {
+  height: 26px;
+  min-width: 26px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 6px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--ink-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dock button:hover { background: rgba(255, 255, 255, 0.06); color: var(--ink); }
+.dock button.on { background: rgba(91, 140, 255, 0.18); color: #c8d7ff; }
+.dock .dock-zoom { min-width: 44px; }
+.dock .dock-text { padding: 0 10px; font-weight: 600; color: var(--ink); }
+
+/* ---------------- preview, in place ---------------- */
+
+.canvas.previewing { display: grid; justify-content: safe center; align-content: start; }
+
+/* The artifact on its own, no editor chrome at all: what ships. */
+.canvas.previewing .stage { position: relative; }
+/* The page fills the screen, as <body> does in an export: something docked
+   top-to-bottom is as tall as the screen, not as tall as its content. */
+.canvas.previewing .preview-stage { position: relative; height: var(--screen-h, 800px); }
+
+/* The screen the artifact runs on: a page with an edge, filling the height,
+   so the artifact's own position on it reads as a layout, not as drift. */
+.canvas.previewing { padding: 20px 20px 64px; }
+.canvas.previewing .stage {
+  box-sizing: content-box;
+  flex: none;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--line-2), 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+}
+
+/* ---------------- floating shell ---------------- */
+
+/* The panels float as cards on the backdrop, with the work between them.
+   Borders between regions became space and elevation: the shell reads as
+   three objects, not a spreadsheet of rules. */
+.loom .body { gap: 6px; padding: 0 6px 6px; background: var(--bg); }
+.titlebar { border-bottom-color: transparent; }
+
+.loom .toolbox,
+.loom .inspector,
+.loom .canvas-wrap {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.loom .toolbox,
+.loom .inspector {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 120px), var(--panel);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 32px -18px rgba(0, 0, 0, 0.9);
+}
+
+/* Previewing is the running app: edge to edge, nothing floating around it. */
+.loom.previewing .body { padding: 0; gap: 0; }
+.loom.previewing .canvas-wrap { border: 0; border-radius: 0; }
+
+/* The frame's name, above it, as in any design tool: which screen this is. */
+.frame-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 6px 2px;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.frame-label strong { color: var(--ink-2); font-weight: 550; }
+
+/* The one primary action carries a little light: a lit top edge and depth. */
+.tb-primary {
+  background: linear-gradient(180deg, #7b9dff, var(--accent));
+  color: #fff;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.28) inset, 0 0 0 1px rgba(91, 140, 255, 0.6), 0 6px 16px -6px rgba(91, 140, 255, 0.7);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+}
+
+/* The frame: its name above, the artboard below, one unit centred on the
+   canvas. The label never scales with the zoom; it is chrome, not design. */
+.frame { display: grid; justify-items: start; align-content: start; }
+.frame-label span { color: var(--ink-3); }
+
+/* ---------------- position: dock picker + sliders ---------------- */
+
+.dock-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; margin-bottom: 8px; }
+.dock-note { margin: 2px 0 0; font-size: 11px; line-height: 1.45; color: var(--ink-3); }
+.dock-note strong { color: var(--ink); font-weight: 550; }
+
+.dock-picker { display: grid; gap: 4px; }
+
+/* The parent, drawn: a 3x3 of targets over a frame. */
+.dock-frame {
+  position: relative;
+  width: 72px;
+  height: 54px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  background: var(--well);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.dock-cell {
+  position: relative;
+  z-index: 1;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.dock-cell::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  opacity: 0.6;
+}
+.dock-cell:hover::after { background: var(--ink); opacity: 1; }
+.dock-cell.on::after { opacity: 0; }
+.dock-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Where the node goes, in the accent: a bar along an edge, a block in a
+   corner or the middle, the whole frame for fill. */
+.dock-mark { position: absolute; border-radius: 2px; background: var(--accent); opacity: 0; transition: all 140ms ease; pointer-events: none; }
+.dock-frame:not([data-dock='none']) .dock-mark { opacity: 0.9; }
+.dock-frame[data-dock='top'] .dock-mark { left: 3px; right: 3px; top: 3px; height: 8px; }
+.dock-frame[data-dock='bottom'] .dock-mark { left: 3px; right: 3px; bottom: 3px; height: 8px; }
+.dock-frame[data-dock='left'] .dock-mark { top: 3px; bottom: 3px; left: 3px; width: 12px; }
+.dock-frame[data-dock='right'] .dock-mark { top: 3px; bottom: 3px; right: 3px; width: 12px; }
+.dock-frame[data-dock='top-left'] .dock-mark { left: 3px; top: 3px; width: 16px; height: 11px; }
+.dock-frame[data-dock='top-right'] .dock-mark { right: 3px; top: 3px; width: 16px; height: 11px; }
+.dock-frame[data-dock='bottom-left'] .dock-mark { left: 3px; bottom: 3px; width: 16px; height: 11px; }
+.dock-frame[data-dock='bottom-right'] .dock-mark { right: 3px; bottom: 3px; width: 16px; height: 11px; }
+.dock-frame[data-dock='center'] .dock-mark { left: 50%; top: 50%; width: 18px; height: 12px; margin: -6px 0 0 -9px; }
+.dock-frame[data-dock='fill'] .dock-mark { inset: 3px; opacity: 0.55; }
+
+.dock-extra { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.dock-extra .mini { height: 20px; padding: 0 4px; font-size: 10.5px; }
+.mini.on { color: #fff; background: var(--accent); }
+
+/* X / Y / W / H: label, exact number, slider. One 26px row each. */
+.slide-field {
+  display: grid;
+  grid-template-columns: 12px 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+.slide-label { font-size: 11px; color: var(--ink-3); }
+.slide-field input[type='number'] {
+  width: 100%;
+  height: 24px;
+  padding: 0 7px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.slide-field input[type='number']::-webkit-inner-spin-button,
+.slide-field input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.slide-field input[type='number']:focus { border-color: rgba(91, 140, 255, 0.65); }
+.slide-field.off { opacity: 0.4; }
+
+/* A thin track with a small bright knob, not the browser's default slider. */
+.insp-scroll input[type='range'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.insp-scroll input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.insp-scroll input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.35), 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.insp-scroll input[type='range']:disabled { cursor: default; }
+
+/* The container a dragged node will join on release (Shift: it won't). */
+.surface [data-loom-id][data-drop-host] {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 9999px rgba(91, 140, 255, 0.06);
+}
+
+/* ---------------- toolbox hover card ---------------- */
+
+.tool-card {
+  position: fixed;
+  z-index: 60;
+  width: 256px;
+  padding: 10px 12px 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 60px), var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow: 0 18px 44px -14px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: card-in 120ms ease-out;
+}
+@keyframes card-in { from { opacity: 0; transform: translateX(-4px); } }
+
+.tool-card-name { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--ink); }
+
+/* The tool on its page: the theme's own background, a hairline edge. */
+.thumb {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transform: translateZ(0); /* fixed-position tools (a toast) stay inside */
+}
+.thumb-inner { position: absolute; }
+
+.tool-card-text {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: pre-line;
+  display: -webkit-box;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---------------- specimen board (tooling only) ---------------- */
+#loom-specimen { position: fixed; inset: 0; z-index: 1000; overflow: auto; }
+.specimen { min-height: 100%; padding: 24px; }
+.specimen-head { font: 500 13px var(--font); color: #8a8f99; margin: 0 0 16px; }
+.specimen-head strong { color: #e9eaee; }
+.specimen-grid { display: grid; grid-template-columns: repeat(4, 320px); gap: 28px 24px; }
+.specimen-cell { margin: 0; }
+.specimen-cell .thumb { box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.18); }
+.specimen-cell figcaption { margin-top: 8px; font: 500 12px var(--font); color: #9a9fa9; }
+.specimen-cell figcaption span { margin-left: 6px; font-weight: 400; opacity: 0.6; }
+
+/* Preview shows the page and nothing else: no dot grid, no glow. */
+.loom.previewing .canvas-wrap { background: var(--bg-2); }
+/* No background chosen: no screen, no edge, no shadow. The UI stands alone. */
+.canvas.previewing .stage.bare { box-shadow: none; border-radius: 0; overflow: visible; }
+
+/* Design / Preview, and Run on desktop beside them. */
+.tb-center { display: flex; align-items: center; gap: 6px; }
+.tb-run {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 550;
+}
+.tb-run:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); }
+.tb-run:disabled { opacity: 0.4; cursor: default; }
+.tb-run.on { color: #fff; background: #d6433b; border-color: transparent; }

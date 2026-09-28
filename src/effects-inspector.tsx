@@ -85,10 +85,9 @@ export function EffectsPanel({
 
       <div className="eff-toggles">
         {TOGGLES.map((t) => (
-          <div className="eff-row" key={t.key}>
+          <div className="eff-row" key={t.key} title={t.blurb}>
             <div className="eff-label">
               <span>{t.label}</span>
-              <span className="dim">{t.blurb}</span>
             </div>
             <Toggle
               checked={effects[t.key] === true}
@@ -101,13 +100,6 @@ export function EffectsPanel({
           </div>
         ))}
       </div>
-
-      {active === 0 && (
-        <p className="dim eff-hint">
-          Nothing on yet. Effects are the atmosphere layer — they are what stops a card
-          reading as a flat rectangle.
-        </p>
-      )}
 
       {active > 0 && (
         <div className="eff-fields">

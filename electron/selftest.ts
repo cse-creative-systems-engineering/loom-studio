@@ -7,7 +7,13 @@
  * exactness, subtree delete/undo, and the document's purity.
  */
 
-import { EditorStore, emptyDocument } from '../src/state/store'
+import { EditorStore, emptyDocument, type LoomHost } from '../src/state/store'
+import { autosaveFileName, isExternalUrlAllowed } from './guards'
+import { humanize, inspectorView, isModified } from '../src/model/inspector-view'
+import { universalStyleProps } from '../src/model/prop-vocab'
+import { isSafeColor, stateCss, STATE_PRESETS } from '../src/render/states'
+import { documentCss } from '../src/render/document-css'
+import { fieldsFor } from '../src/render/parts'
 import type { Document, Node as LoomNode } from '../src/model/types'
 import { descendants, parentOf } from '../src/model/ops'
 import { allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
@@ -21,6 +27,17 @@ import { responsiveCss, breakpointForWidth, CONTAINER_NAME } from '../src/render
 import { ICONS, ICON_NAMES, resolveIcon } from '../src/render/icons'
 import { buildTooltip, tooltipFor } from '../src/model/tooltip'
 import { auditReport, KNOWN_INERT } from './prop-audit'
+import { auditAreas } from './area-audit'
+import { KNOWN_UNREACHABLE } from './area-backlog'
+import { installBehaviourRuntime } from '../src/render/behaviour-mount'
+import { STARTERS } from '../src/model/starters'
+import { hasOwnGlyph } from '../src/tool-icons'
+import { GROUP_ORDER } from '../src/model/prop-groups'
+import { ToolThumb } from '../src/tool-card'
+import { cleanPage } from '../src/model/page'
+import { desktopBounds } from '../src/model/desktop-run'
+import { addedTypes } from '../src/model/registry'
+import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
 import { THEME_NAMES } from '../src/render/theme'
 import { PreviewStage } from '../src/preview'
@@ -711,7 +728,9 @@ export async function runSelfTest(): Promise<string> {
     check('export emits a doctype', html.startsWith('<!DOCTYPE html>'))
     check('export has no editor hooks', !html.includes('data-loom-id') && !html.includes('loom-handle'))
     check('export renders real controls', html.includes('<button') && html.includes('<input'))
-    check('export embeds the active theme', html.includes('#f6f7f9'), 'daylight bg missing')
+    // The theme's text colour (the page colour is only painted when a page
+    // background is chosen, §69).
+    check('export embeds the active theme', html.includes(getTheme('daylight').textPrimary), 'daylight text colour missing')
     check('export is deterministic', emitHtml(se.doc) === html)
 
     // Hostile text must be escaped, never emitted raw.
@@ -930,8 +949,15 @@ export async function runSelfTest(): Promise<string> {
   // absolute unless a container explicitly opts into flow. Pin all three so
   // a future default flip breaks loudly instead of silently re-webbing.
   {
-    const nonFree = allComponents().filter((c) => instantiate(c.name).flow !== false)
+    // The one exception, recorded rather than silent: a message list IS a
+    // column that new messages are appended to, which free positioning cannot
+    // express. Adding a name here needs the same kind of reason.
+    // Tabs, accordions and settings sections stack their own sections, which
+    // their panels add: free-positioned sections would pile up at 0,0.
+    const FLOW_BY_NATURE = new Set(['MessageList', 'Tabs', 'Accordion', 'SettingsSection'])
+    const nonFree = allComponents().filter((c) => instantiate(c.name).flow !== false && !FLOW_BY_NATURE.has(c.name))
     check('every component instantiates free (absolute)', nonFree.length === 0, nonFree.map((c) => c.name).join(','))
+    check('the flow exceptions are real and few', [...FLOW_BY_NATURE].every((n) => instantiate(n).flow === true) && FLOW_BY_NATURE.size <= 4)
     const panel = getComponent('Panel')
     check('Panel defaults to a portable solid surface', panel?.props.surface?.default === 'solid')
     check('Panel glass defaults off (web-only effect)', panel?.props.glass?.default === false)
@@ -1316,10 +1342,10 @@ export async function runSelfTest(): Promise<string> {
   {
     // The contract table is explicit and total for the control families.
     const expected: Record<string, string> = {
-      Button: 'press', IconButton: 'press', BackButton: 'press', MenuItem: 'press',
-      NavLink: 'press', Link: 'press', FileUpload: 'press',
+      Button: 'press', IconButton: 'press', BackButton: 'press',
+      Link: 'press', FileUpload: 'press',
       Switch: 'toggle', ToggleButton: 'toggle', DropdownButton: 'toggle',
-      Checkbox: 'check', Checklist: 'check', Radio: 'radio',
+      Checkbox: 'check', Checklist: 'check',
       TabPanel: 'panel', AccordionItem: 'disclosure',
     }
     const wrong = Object.entries(expected).filter(([type, role]) => ROLE_OF[type] !== role)
@@ -1825,7 +1851,7 @@ export async function runSelfTest(): Promise<string> {
       check('the HTML export ships the layout rules', html.includes('(max-width: 639px)'))
       check('the HTML export makes the page measurable', html.includes('loom-container'))
       const jsx = emitReact(s40.doc)
-      check('the React export ships the layout rules', jsx.includes('RESPONSIVE_CSS'))
+      check('the React export ships the layout rules', jsx.includes('DOCUMENT_CSS'))
       check('the React export root is measurable', jsx.includes('loom-container'))
     }
   }
@@ -1844,8 +1870,8 @@ export async function runSelfTest(): Promise<string> {
     // Every list-valued property ships its separator, so no list can be
     // half-declared. This walks the registry rather than a hand-kept list.
     const listProps: Array<[string, string]> = [
-      ['Tabs', 'tabs'], ['TabBar', 'tabs'], ['Select', 'options'], ['Segmented', 'options'],
-      ['RadioGroup', 'options'], ['ComboBox', 'options'], ['DropdownButton', 'items'],
+      ['TabBar', 'tabs'], ['Select', 'options'], ['Segmented', 'options'],
+      ['ComboBox', 'options'], ['DropdownButton', 'items'],
       ['Checklist', 'items'], ['BulletList', 'items'], ['NumberedList', 'items'],
       ['TreeList', 'items'], ['DataList', 'items'], ['Breadcrumbs', 'trail'],
       ['Stepper', 'steps'], ['AnchorList', 'links'], ['AvatarGroup', 'names'],
@@ -1865,7 +1891,7 @@ export async function runSelfTest(): Promise<string> {
     const r41 = withRoot(s41)
     // "Ada, Countess of Lovelace" contains a comma: with a comma separator that
     // is three broken items, and with a pipe it is exactly one.
-    const tabs = s41.addComponent('Tabs', r41, 0, 0, { tabs: 'Ada, Countess of Lovelace', tabsSep: 'comma' })
+    const tabs = s41.addComponent('TabBar', r41, 0, 0, { tabs: 'Ada, Countess of Lovelace', tabsSep: 'comma' })
     const commaHtml = emitHtml(s41.doc)
     // One comma in the text: with a comma separator that is two items, and the
     // second one is not what the author meant.
@@ -1898,16 +1924,16 @@ export async function runSelfTest(): Promise<string> {
 
     // A separator is a property, so it must survive a save/load round trip.
     const rt = validate(serialize(s41.doc))
-    const rtTabs = Object.values((rt.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'Tabs')
+    const rtTabs = Object.values((rt.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'TabBar')
     check('the separator survives save/load', rtTabs?.props.tabsSep === 'comma' || rtTabs?.props.tabsSep === 'pipe')
 
     // And a hand-written file cannot smuggle in a separator we do not know.
     const hostile = JSON.parse(serialize(s41.doc))
-    const anyTab = Object.values(hostile.nodes as Record<string, LoomNode>).find((n) => n.type === 'Tabs')
+    const anyTab = Object.values(hostile.nodes as Record<string, LoomNode>).find((n) => n.type === 'TabBar')
     if (anyTab) {
       anyTab.props.tabsSep = 'backslash'
       const repaired = validate(hostile)
-      const fixedTab = Object.values((repaired.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'Tabs')
+      const fixedTab = Object.values((repaired.doc?.nodes ?? {}) as Record<string, LoomNode>).find((n) => n.type === 'TabBar')
       check('an unknown separator is repaired toward comma', fixedTab?.props.tabsSep === 'comma')
       check('the repair is reported', repaired.issues.some((i) => i.path.includes('tabsSep')))
     }
@@ -2331,6 +2357,1595 @@ export async function runSelfTest(): Promise<string> {
     const paths = both.match(/<path d="M [^"]+"/g) ?? []
     check('the card and the sparkline share one implementation', paths.length === 4 &&
       paths[0] === paths[2] && paths[1] === paths[3], `${paths.length} paths`)
+  }
+
+  // --- 49. every edit is recorded, and the host bridge is confined -------
+  // Regression suite for the deep-dive findings. Each block names the bug it
+  // pins so a future "simplification" cannot quietly bring it back.
+  {
+    // (a) Inspector gestures that poke fields OUTSIDE props (opacity, effects,
+    // responsive) must seal into history and mark the document dirty. The old
+    // seal compared a hand-picked field list and swallowed all three.
+    const gestures: Array<[string, (s: EditorStore, id: string) => void]> = [
+      ['opacity', (s, id) => s.poke({ op: 'setOpacity', id, opacity: 0.3 })],
+      ['effects', (s, id) => s.poke({ op: 'setEffects', id, patch: { grain: true } })],
+      ['responsive', (s, id) => s.poke({ op: 'setResponsive', id, breakpoint: 'sm', patch: { x: 5 } })],
+    ]
+    for (const [name, gesture] of gestures) {
+      const s = new EditorStore()
+      const r = withRoot(s)
+      const before = s.doc
+      gesture(s, r)
+      s.seal(name)
+      check(`the ${name} gesture becomes one undo step`, s.history.length === 1, `${s.history.length} entries`)
+      check(`the ${name} gesture marks the document unsaved`, s.dirty === true)
+      s.undo()
+      check(`undoing the ${name} gesture restores the document exactly`, s.doc === before)
+    }
+    {
+      // ...while a gesture that changed nothing still records nothing.
+      const s = new EditorStore()
+      const r = withRoot(s)
+      s.poke({ op: 'setOpacity', id: r, opacity: 1 })
+      s.seal('Opacity')
+      check('a no-op gesture still adds no history', s.history.length === 0 && s.dirty === false)
+    }
+
+    // (b) A theme change is an edit: undoable, and unsaved until saved.
+    {
+      const s = new EditorStore()
+      withRoot(s)
+      const before = s.doc.meta.theme
+      s.setTheme('daylight')
+      check('a theme change is one undo step', s.history.length === 1 && s.doc.meta.theme === 'daylight')
+      check('a theme change marks the document unsaved', s.dirty === true)
+      s.undo()
+      check('undoing a theme change restores the previous theme', s.doc.meta.theme === before, String(s.doc.meta.theme))
+      s.redo()
+      s.setTheme('daylight')
+      check('re-applying the same theme adds no history', s.history.length === 1, `${s.history.length} entries`)
+    }
+
+    // (c) Dirty tracks the SAVED document: undo after a save is unsaved work,
+    // and redo back to the saved state is clean again.
+    {
+      const s = new EditorStore()
+      const r = withRoot(s)
+      const writes: string[] = []
+      const fake: LoomHost = {
+        save: async (_name, contents) => {
+          writes.push(contents)
+          return { ok: true, path: '/tmp/fake.loom.json' }
+        },
+        open: async () => ({ ok: false, canceled: true }),
+        autosave: async () => ({ ok: true }),
+        readAutosave: async () => ({ ok: false }),
+      }
+      s.host = fake
+      s.setProp(r, 'title', 'Saved title')
+      await s.save()
+      check('saving clears the dirty flag', s.dirty === false && writes.length === 1)
+      s.undo()
+      check('undo after a save is unsaved work', s.dirty === true)
+      s.redo()
+      check('redo back to the saved state is clean', s.dirty === false)
+
+      // An edit made while the save dialog is open is not on disk.
+      let release: () => void = () => undefined
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      s.host = { ...fake, save: async () => { await gate; return { ok: true, path: '/tmp/fake.loom.json' } } }
+      s.setProp(r, 'title', 'Before dialog')
+      const pending = s.save()
+      s.setProp(r, 'title', 'During dialog')
+      release()
+      await pending
+      check('an edit made during the save dialog stays unsaved', s.dirty === true)
+    }
+
+    // (d) Save/load keeps every meta field, and a hostile meta is reported.
+    {
+      const doc = rootDoc()
+      doc.meta = { ...doc.meta, artboard: { w: 800, h: 600 }, snapGrid: 8 }
+      const back = validate(serialize(doc))
+      check('round trip keeps the artboard', back.doc?.meta.artboard?.w === 800 && back.doc?.meta.artboard?.h === 600,
+        JSON.stringify(back.doc?.meta.artboard))
+      check('round trip keeps the snap grid', back.doc?.meta.snapGrid === 8, String(back.doc?.meta.snapGrid))
+      const hostile = JSON.parse(serialize(doc)) as { meta: Record<string, unknown> }
+      hostile.meta.artboard = { w: 'wide', h: -1 }
+      hostile.meta.snapGrid = -4
+      const repaired = validate(JSON.stringify(hostile))
+      check('a malformed artboard is dropped and reported',
+        repaired.doc?.meta.artboard === undefined && repaired.issues.some((i) => i.path === '$.meta.artboard'))
+      check('a negative snap grid is dropped and reported',
+        repaired.doc?.meta.snapGrid === undefined && repaired.issues.some((i) => i.path === '$.meta.snapGrid'))
+    }
+
+    // (e) The main process confines what a document can reach.
+    check('autosave accepts exactly the names filenameFor produces',
+      ['Untitled', 'My App / v2.0!', 'x'.repeat(200), '   '].every((n) => autosaveFileName(filenameFor(n)) === filenameFor(n)))
+    const hostileNames = ['../../.bashrc', '..', 'a/b.loom.json', 'a\\b.loom.json', '/etc/passwd', 'x.loom.json/..', '.loom.json', 'evil.json', '', 42, null]
+    check('autosave refuses anything that could escape its directory',
+      hostileNames.every((n) => autosaveFileName(n) === null),
+      hostileNames.filter((n) => autosaveFileName(n) !== null).map(String).join(', '))
+    check('web and mail links may open externally',
+      ['https://example.com', 'http://example.com/a?b', 'mailto:a@example.com'].every(isExternalUrlAllowed))
+    const hostileUrls = ['file:///etc/passwd', 'javascript:alert(1)', 'smb://host/share', 'vscode://x', 'data:text/html,x', 'not a url', '']
+    check('every other scheme is refused',
+      hostileUrls.every((u) => !isExternalUrlAllowed(u)),
+      hostileUrls.filter(isExternalUrlAllowed).join(', '))
+  }
+
+  // --- 50. universal styling + a panel for newcomers and developers ------
+  {
+    const BOX = ['padding', 'paddingX', 'paddingY', 'radius', 'background', 'border', 'borderWidth', 'shadow']
+    const TYPE = ['fontSize', 'fontWeight', 'color', 'lineHeight', 'letterSpacing']
+    const specs = allComponents()
+
+    // Every component carries the universal box styling; every component with
+    // text carries the type styling. Walked from the registry, not a list.
+    const noBox = specs.filter((c) => BOX.some((k) => !(k in c.props))).map((c) => c.name)
+    check('every component carries universal box styling', noBox.length === 0, noBox.join(', '))
+    const noType = specs.filter((c) => c.rendersText !== false && TYPE.some((k) => !(k in c.props))).map((c) => c.name)
+    check('every component with text carries universal type styling', noType.length === 0, noType.join(', '))
+    const skeleton = getComponent('Skeleton')
+    // `color` is excluded: Skeleton declares its own, meaning the placeholder fill.
+    check('a component with no text is not offered type controls',
+      Boolean(skeleton) && TYPE.filter((k) => k !== 'color').every((k) => !(k in (skeleton?.props ?? {}))))
+
+    // Injection must change NO existing output: every injected property
+    // defaults to unset, which the shared style pass ignores.
+    const setDefaults = Object.entries(universalStyleProps(true))
+      .filter(([, ps]) => !(ps.default === -1 || ps.default === '' || ps.default === 'none'))
+      .map(([k]) => k)
+    check('every universal property defaults to unset', setDefaults.length === 0, setDefaults.join(', '))
+
+    // A component's own declaration wins over the injected one, and keeps its
+    // meaning: a component that declared padding 0 still defaults to 0, not
+    // to the injected unset.
+    const ownPadding = specs.filter((c) => c.props.padding?.default === 0)
+    check('a component\'s own property is not replaced by the universal one', ownPadding.length > 0,
+      `${ownPadding.length} components keep their own padding default`)
+
+    // The component's own options come first in the panel.
+    const button = getComponent('Button')
+    const firstKey = button ? Object.keys(button.props)[0] : ''
+    check('a component\'s own properties are listed before injected ones',
+      Boolean(button) && !['anchor', 'rotate', 'sticky', ...BOX, ...TYPE].includes(firstKey), firstKey)
+
+    // Newly reachable styling reaches the output. Before this, a Paragraph had
+    // no background and an Alert no font size at all.
+    {
+      const s50 = new EditorStore()
+      const r50 = withRoot(s50)
+      const para = s50.addComponent('Paragraph', r50, 0, 0, { background: '#123456', padding: 18 })
+      const alert = s50.addComponent('Alert', r50, 0, 0, { fontSize: 23, letterSpacing: 2 })
+      const html = emitHtml(s50.doc)
+      check('a paragraph can take a background and padding', Boolean(para) && html.includes('#123456') && html.includes('padding:18px'))
+      check('an alert can take a font size and letter spacing', Boolean(alert) && html.includes('font-size:23px') && html.includes('letter-spacing:2px'))
+
+      // Saved and reopened, the new styling survives.
+      const back = validate(serialize(s50.doc))
+      check('universal styling survives save and load',
+        back.issues.length === 0 && para !== undefined && back.doc?.nodes[para]?.props.background === '#123456',
+        back.issues.map((i) => i.message).join('; '))
+    }
+
+    // An OLD file (written before these properties existed) opens with no
+    // repairs and renders exactly as it did: missing keys take unset defaults.
+    {
+      const s = new EditorStore()
+      const r = withRoot(s)
+      s.addComponent('Button', r, 20, 20, { text: 'Old file' })
+      s.addComponent('Paragraph', r, 20, 80)
+      const old = JSON.parse(serialize(s.doc)) as { nodes: Record<string, { type: string; props: Record<string, unknown> }> }
+      for (const n of Object.values(old.nodes)) {
+        const spec = getComponent(n.type)
+        for (const [k, ps] of Object.entries(spec?.props ?? {})) if (ps.advanced) delete n.props[k]
+      }
+      const loaded = validate(JSON.stringify(old))
+      check('a file written before universal styling opens with no repairs', loaded.issues.length === 0,
+        loaded.issues.map((i) => i.message).join('; '))
+      check('and renders exactly as before', loaded.doc !== null && emitHtml(loaded.doc) === emitHtml(s.doc))
+    }
+
+    // The panel: essentials first, everything one click away, nothing hidden
+    // that was changed, and search that ignores the toggle.
+    {
+      const spec = getComponent('Button')
+      if (spec) {
+        const defaults = instantiate('Button').props
+        const essentials = inspectorView(spec, defaults, { query: '', showAdvanced: false })
+        const shown = essentials.groups.flatMap((g) => g.rows.map((r) => r.key))
+        check('the panel starts with essentials only', !shown.includes('background') && essentials.hiddenAdvanced > 0,
+          `${essentials.hiddenAdvanced} hidden`)
+        check('the component\'s own options are always shown',
+          ['label', 'variant', 'size', 'disabled'].every((k) => shown.includes(k)), shown.join(','))
+        check('the essentials are a short list', shown.length <= 16, `${shown.length} shown: ${shown.join(',')}`)
+        const all = inspectorView(spec, defaults, { query: '', showAdvanced: true })
+        // Everything but `anchor`, which the Position section's dock picker shows.
+        check('"More properties" reveals everything', all.hiddenAdvanced === 0 &&
+          all.groups.reduce((n, g) => n + g.rows.length, 0) === Object.keys(spec.props).length - 1)
+        const changed = inspectorView(spec, { ...defaults, shadow: 'lg' }, { query: '', showAdvanced: false })
+        const shadowRow = changed.groups.flatMap((g) => g.rows).find((r) => r.key === 'shadow')
+        check('a changed advanced property is never hidden', shadowRow?.modified === true)
+        const found = inspectorView(spec, defaults, { query: 'letter', showAdvanced: false })
+        check('search finds advanced properties with the toggle off',
+          found.groups.flatMap((g) => g.rows).some((r) => r.key === 'letterSpacing') && found.hiddenAdvanced === 0)
+        const byLabel = inspectorView(spec, defaults, { query: 'font size', showAdvanced: false })
+        check('search matches the readable label, word by word',
+          byLabel.groups.flatMap((g) => g.rows).some((r) => r.key === 'fontSize'))
+        const none = inspectorView(spec, defaults, { query: 'zzzz-nothing', showAdvanced: true })
+        check('a search with no match returns no groups', none.groups.length === 0)
+      }
+      check('labels read as words',
+        humanize('paddingX') === 'Padding X' && humanize('fontSize') === 'Font size' && humanize('aria-label') === 'Aria label',
+        `${humanize('paddingX')} | ${humanize('fontSize')} | ${humanize('aria-label')}`)
+      const pad = getComponent('Paragraph')?.props.padding
+      check('an unset value is not reported as changed', Boolean(pad) && pad !== undefined && !isModified(pad, -1) && isModified(pad, 0))
+    }
+  }
+
+  // --- 51. per-breakpoint overrides apply to REAL layout ------------------
+  // §40 checked the generated CSS text; nothing measured a box, and the
+  // overrides applied nowhere (no hook in output, and inline base styles beat
+  // every rule). These mount real markup in real containers and measure.
+  {
+    const s51 = new EditorStore()
+    s51.addComponent('Panel', null, 0, 0)
+    const r51 = s51.doc.root as string
+    const moved = s51.addComponent('Card', r51, 300, 200) as string
+    s51.commit({ op: 'resize', id: moved, w: 500, h: 300 }, 'size')
+    s51.commit({ op: 'setResponsive', id: moved, breakpoint: 'sm', patch: { x: 10, y: 20, w: 200, h: 120, opacity: 0.5 } }, 'phone')
+    const hidden = s51.addComponent('Button', r51, 40, 600) as string
+    s51.commit({ op: 'setResponsive', id: hidden, breakpoint: 'sm', patch: { visible: false } }, 'hide')
+    const stack = s51.addComponent('Stack', r51, 700, 40) as string
+    s51.addComponent('Button', stack, 10, 10, { label: 'A' })
+    s51.addComponent('Button', stack, 200, 10, { label: 'B' })
+    s51.commit({ op: 'setResponsive', id: stack, breakpoint: 'sm', patch: { flow: true } }, 'stack')
+
+    const measure = (mode: 'preview' | 'authoring', width: number) => {
+      const style = document.createElement('style')
+      style.textContent = responsiveCss(s51.doc)
+      document.head.appendChild(style)
+      const host = document.createElement('div')
+      host.className = 'loom-container'
+      host.style.cssText = `position:absolute;left:-10000px;top:0;width:${width}px;height:900px`
+      host.innerHTML = renderToStaticMarkup(renderNode({ doc: s51.doc, selected: new Set(), mode }, r51))
+      document.body.appendChild(host)
+      const attr = mode === 'preview' ? 'data-loom-node' : 'data-loom-id'
+      const el = (id: string) => host.querySelector(`[${attr}="${id}"]`) as HTMLElement | null
+      // Children are found by label in preview (they carry no hook of their own).
+      const btn = (label: string) =>
+        [...host.querySelectorAll('button')].find((x) => x.textContent?.trim() === label) as HTMLElement | undefined
+      // Position relative to the containing block (offsetLeft/Top), which is
+      // exactly what `left`/`top` mean — a parent's border is not an offset.
+      const box = (e: Element | null | undefined) => {
+        if (!e) return null
+        const h = e as HTMLElement
+        return { x: h.offsetLeft, y: h.offsetTop, w: h.offsetWidth, h: h.offsetHeight }
+      }
+      const out = {
+        moved: box(el(moved)),
+        movedOpacity: el(moved) ? getComputedStyle(el(moved) as HTMLElement).opacity : 'missing',
+        hiddenDisplay: el(hidden) ? getComputedStyle(el(hidden) as HTMLElement).display : 'missing',
+        a: box(btn('A')),
+        b: box(btn('B')),
+      }
+      host.remove()
+      style.remove()
+      return out
+    }
+    for (const mode of ['preview', 'authoring'] as const) {
+      const phone = measure(mode, 390)
+      const desk = measure(mode, 1280)
+      const m = phone.moved
+      check(`${mode}: a phone override moves and resizes the node`,
+        m !== null && m.x === 10 && m.y === 20 && m.w === 200 && m.h === 120, JSON.stringify(m))
+      check(`${mode}: desktop keeps the base layout`,
+        desk.moved !== null && desk.moved.x === 300 && desk.moved.y === 200 && desk.moved.w === 500, JSON.stringify(desk.moved))
+      check(`${mode}: a phone opacity override applies`, phone.movedOpacity === '0.5' && desk.movedOpacity === '1',
+        `${phone.movedOpacity} / ${desk.movedOpacity}`)
+      check(`${mode}: hidden at phone only`, phone.hiddenDisplay === 'none' && desk.hiddenDisplay !== 'none',
+        `${phone.hiddenDisplay} / ${desk.hiddenDisplay}`)
+      check(`${mode}: a free container flows its children at phone`,
+        phone.a !== null && phone.b !== null && phone.b.y > phone.a.y && phone.b.x === phone.a.x,
+        JSON.stringify({ a: phone.a, b: phone.b }))
+      check(`${mode}: and keeps them free on desktop`,
+        desk.a !== null && desk.b !== null && desk.b.x - desk.a.x === 190 && desk.b.y === desk.a.y,
+        JSON.stringify({ a: desk.a, b: desk.b }))
+    }
+  }
+
+  // --- 52. interaction states: hover, focus, pressed ---------------------
+  {
+    const s52 = new EditorStore()
+    s52.addComponent('Panel', null, 0, 0)
+    const r52 = s52.doc.root as string
+    const btn = s52.addComponent('Button', r52, 40, 40, { label: 'Hover me' }) as string
+    const plain = s52.addComponent('Button', r52, 40, 120, { label: 'Plain' }) as string
+
+    // Op + exact undo, including the absence of the bag.
+    s52.commit({ op: 'setStateStyle', id: btn, state: 'hover', patch: { background: '#123456', lift: 3, brightness: 1.1 } }, 'hover')
+    check('a state style is stored per state', s52.doc.nodes[btn].states?.hover?.background === '#123456' &&
+      s52.doc.nodes[btn].states?.pressed === undefined)
+    s52.undo()
+    check('undoing the first state style leaves no empty bag', s52.doc.nodes[btn].states === undefined)
+    s52.redo()
+    s52.commit({ op: 'setStateStyle', id: btn, state: 'pressed', patch: { scale: 0.97, opacity: 0.8 } }, 'pressed')
+    s52.commit({ op: 'setStateStyle', id: btn, state: 'focus', patch: { shadow: 'glow' } }, 'focus')
+
+    // Values are clamped, unknown keys and hostile colours never land.
+    s52.commit({ op: 'setStateStyle', id: plain, state: 'hover', patch: { scale: 9, lift: -99 } }, 'clamp')
+    check('state numbers are clamped into range',
+      s52.doc.nodes[plain].states?.hover?.scale === 1.5 && s52.doc.nodes[plain].states?.hover?.lift === -24,
+      JSON.stringify(s52.doc.nodes[plain].states))
+    s52.commit({ op: 'setStateStyle', id: plain, state: 'focus', patch: { background: 'red}</style><script>alert(1)</script>', bogus: 1 } }, 'hostile')
+    check('a hostile colour or unknown key never reaches the document', s52.doc.nodes[plain].states?.focus === undefined)
+    s52.commit({ op: 'setStateStyle', id: plain, state: 'hover', patch: { scale: null, lift: null } }, 'clear')
+
+    const good = ['#fff', '#12345678', 'red', 'transparent', 'rgb(1, 2, 3)', 'rgba(1,2,3,0.5)', 'hsl(210 50% 40% / .5)', 'var(--loom-accent)']
+    const bad = ['red;}', 'red}</style>', 'url(x)', 'rgb(1,2,3));x', 'expression(alert(1))', 'var(--a) ;b', '"red"', '', '#12']
+    check('the colour grammar admits real colours', good.every(isSafeColor), good.filter((c) => !isSafeColor(c)).join(', '))
+    check('the colour grammar refuses everything else', bad.every((c) => !isSafeColor(c)), bad.filter(isSafeColor).join(', '))
+
+    // Generated CSS: the right selectors, in the right order.
+    const css = stateCss(s52.doc)
+    check('a document with no states ships no state rules', stateCss(rootDoc()) === '')
+    check('hover rules only apply where hovering exists', /@media \(hover:hover\)\{[^]*:hover/.test(css))
+    check('focus means keyboard focus, on the node or inside it', css.includes(':focus-visible') && css.includes(':has(:focus-visible)'))
+    check('pressed is :active', css.includes(':active'))
+    check('pressed rules come after hover rules', css.indexOf(':active') > css.indexOf(':hover'))
+    check('lift and scale compose with the node\'s own transform', css.includes('translate:0 -3px !important') && css.includes('scale:0.97 !important'))
+    check('state changes animate, except under reduced motion', css.includes('transition:') && css.includes('prefers-reduced-motion'))
+    check('every surface gets the state rules', documentCss(s52.doc).includes(css))
+
+    // Defence in depth: a document built in code, bypassing op and loader.
+    const forged = JSON.parse(JSON.stringify(s52.doc)) as Document
+    forged.nodes[plain].states = { hover: { background: 'red}</style><script>alert(1)</script>' } }
+    const forgedHtml = emitHtml(forged)
+    check('a forged colour cannot break out of the exported stylesheet', !forgedHtml.includes('<script>alert(1)'))
+
+    // The file trust boundary.
+    const hostileFile = JSON.parse(serialize(s52.doc)) as { nodes: Record<string, Record<string, unknown>> }
+    hostileFile.nodes[plain].states = { hover: { background: 'url(evil)', opacity: 7, glow: true }, sideways: { opacity: 1 }, focus: 'x' }
+    const loaded = validate(JSON.stringify(hostileFile))
+    const paths = loaded.issues.map((i) => `${i.path} ${i.message}`)
+    check('a hostile states bag is repaired and reported',
+      loaded.doc?.nodes[plain].states?.hover?.opacity === 1 && loaded.doc?.nodes[plain].states?.hover?.background === undefined &&
+      paths.some((p) => p.includes('sideways')) && paths.some((p) => p.includes('not a colour')) && paths.some((p) => p.includes('glow')) &&
+      paths.some((p) => p.includes('states.focus')), paths.join(' | '))
+    const clean = validate(serialize(s52.doc))
+    check('states survive save and load', clean.issues.length === 0 &&
+      JSON.stringify(clean.doc?.nodes[btn].states) === JSON.stringify(s52.doc.nodes[btn].states))
+
+    // Only styled nodes carry an output hook.
+    const html = emitHtml(s52.doc)
+    check('a styled node carries its output hook in the export', html.includes(`data-loom-node="${btn}"`))
+    check('an unstyled node carries none', !html.includes(`data-loom-node="${plain}"`))
+
+    // LIVE: computed styles in a real document. The editor forces the state
+    // being edited; the export attaches the same rules to its hook.
+    const live = (mode: 'preview' | 'authoring', force: 'hover' | 'pressed' | null) => {
+      const style = document.createElement('style')
+      style.textContent = documentCss(s52.doc)
+      document.head.appendChild(style)
+      const host = document.createElement('div')
+      host.className = 'loom-container'
+      host.style.cssText = 'position:absolute;left:-10000px;top:0;width:800px;height:400px'
+      host.innerHTML = renderToStaticMarkup(renderNode({
+        doc: s52.doc, selected: new Set(), mode, forceState: force ? { id: btn, state: force } : undefined,
+      }, r52))
+      document.body.appendChild(host)
+      const el = host.querySelector(mode === 'preview' ? `[data-loom-node="${btn}"]` : `[data-loom-id="${btn}"]`) as HTMLElement | null
+      // The generated transition is read FIRST (it proves the base rule
+      // reached this element), then disabled so values read the end state.
+      const transition = el ? getComputedStyle(el).transitionProperty : 'missing'
+      if (el) el.style.transition = 'none'
+      const c = el ? getComputedStyle(el) : null
+      const out = c
+        ? { bg: c.backgroundColor, translate: c.translate, filter: c.filter, scale: c.scale, opacity: c.opacity, transition }
+        : null
+      host.remove()
+      style.remove()
+      return out
+    }
+    const hovered = live('authoring', 'hover')
+    check('the editor shows the hover being edited', hovered !== null && hovered.bg === 'rgb(18, 52, 86)' &&
+      hovered.translate === '0px -3px' && hovered.filter === 'brightness(1.1)', JSON.stringify(hovered))
+    const pressed = live('authoring', 'pressed')
+    check('the editor shows the pressed state being edited', pressed !== null && pressed.scale === '0.97' && pressed.opacity === '0.8',
+      JSON.stringify(pressed))
+    const resting = live('authoring', null)
+    check('without a forced state the node rests', resting !== null && resting.bg !== 'rgb(18, 52, 86)' && resting.scale === 'none',
+      JSON.stringify(resting))
+    const exported = live('preview', null)
+    check('the export attaches the state rules to the node',
+      exported !== null && exported.transition.includes('scale') && exported.transition.includes('background-color'),
+      JSON.stringify(exported))
+
+    // Presets are complete and valid on their own.
+    const presetProblems = STATE_PRESETS.flatMap((p) =>
+      Object.entries(p.states).flatMap(([st, style]) => {
+        const f = JSON.parse(JSON.stringify(s52.doc)) as Document
+        f.nodes[plain].states = { [st]: style }
+        return stateCss(f) === '' ? [`${p.id}.${st}`] : []
+      }),
+    )
+    check('every preset produces real rules', STATE_PRESETS.length >= 4 && presetProblems.length === 0, presetProblems.join(', '))
+  }
+
+  // --- 53. a node id is data, never stylesheet text ------------------------
+  // Generated rules address nodes by id, and the file loader accepts any
+  // string as an id. The colour grammar closed values; this closes selectors.
+  {
+    const evil = 'x"],*{color:red}</style><script>alert(1)</script><style>[a="'
+    const file = {
+      version: 1,
+      meta: { name: 'ids', targets: ['web'], created: 0 },
+      root: 'r',
+      nodes: {
+        r: { id: 'r', type: 'Panel', props: {}, children: [evil], flow: false, visible: true, locked: false, opacity: 1 },
+        [evil]: {
+          id: evil, type: 'Button', props: { label: 'Hostile' }, children: [], flow: false, visible: true, locked: false, opacity: 1,
+          states: { hover: { background: '#123456' } }, responsive: { sm: { opacity: 0.5 } },
+        },
+      },
+    }
+    const loaded = validate(JSON.stringify(file))
+    const doc53 = loaded.doc
+    const css53 = doc53 ? documentCss(doc53) : ''
+    check('a hostile node id cannot close a generated rule or the style element',
+      doc53 !== null && !css53.includes('</style') && !css53.includes('*{color:red}') && !emitHtml(doc53).includes('<script>alert(1)'),
+      css53.slice(0, 160))
+    // The escaped selector must still MATCH the node, or the fix just
+    // switched the feature off for unusual ids.
+    let matched = 'no doc'
+    if (doc53) {
+      const style = document.createElement('style')
+      style.textContent = documentCss(doc53)
+      document.head.appendChild(style)
+      const host = document.createElement('div')
+      host.className = 'loom-container'
+      host.style.cssText = 'position:absolute;left:-10000px;top:0;width:390px;height:400px'
+      host.innerHTML = renderToStaticMarkup(renderNode({ doc: doc53, selected: new Set(), mode: 'preview' }, 'r'))
+      document.body.appendChild(host)
+      const btn = host.querySelector('button')
+      matched = btn ? getComputedStyle(btn).opacity : 'missing'
+      host.remove()
+      style.remove()
+    }
+    check('an unusual node id is still addressed by its rules', matched === '0.5', matched)
+  }
+
+  // --- 54. part styling reaches INSIDE composites ------------------------
+  // Universal type/box props style a composite's root, and its inner parts
+  // style themselves inline, so a KPI's number could never change size. Every
+  // claim below is measured on real elements in a real document.
+  {
+    // Props that make every declared part actually render. A component that
+    // declares a part it does not draw fails the audit below by design.
+    const SEED: Record<string, Record<string, string | boolean>> = {
+      Field: { description: 'Help text', message: 'Something is wrong' },
+      MessageBubble: { status: 'read' },
+      MessageList: { showTyping: true },
+      RadioGroup: { label: 'Plan' },
+      KpiCard: {},
+      Stat: {},
+      DataGrid: {},
+    }
+    const withParts = allComponents().filter((c) => c.parts)
+    check('composites declare styleable parts',
+      ['DataGrid', 'KpiCard', 'Stat', 'Field'].every((n) => getComponent(n)?.parts !== undefined) &&
+      withParts.every((c) => Object.values(c.parts ?? {}).every((p) => p.fields.length > 0 && p.label !== '' && p.hint !== '')),
+      withParts.map((c) => c.name).join(', '))
+
+    // Mount real markup, run `fn` against it, clean up.
+    const mounted = <T,>(doc: Document, mode: 'preview' | 'authoring', fn: (host: HTMLElement) => T, selected: string[] = []): T => {
+      const style = document.createElement('style')
+      style.textContent = documentCss(doc)
+      document.head.appendChild(style)
+      const host = document.createElement('div')
+      host.className = 'loom-container'
+      host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:700px;z-index:99999;background:#000'
+      host.innerHTML = renderToStaticMarkup(renderNode({ doc, selected: new Set(selected), mode }, doc.root as string))
+      document.body.appendChild(host)
+      try {
+        return fn(host)
+      } finally {
+        host.remove()
+        style.remove()
+      }
+    }
+    const partEls = (host: HTMLElement, id: string, part: string) =>
+      [...host.querySelectorAll(`[data-loom-part]`)].filter((e) => (e.getAttribute('data-loom-part') ?? '').split(/\s+/).includes(`${id}/${part}`)) as HTMLElement[]
+
+    // What each field is measured by: the CSS property on the part element,
+    // the value set, and the computed value expected (null: must differ).
+    const PROBE: Record<string, { css: string; value: string | number | ((base: string) => string); lines?: string; expect: string | null }> = {
+      fontSize: { css: 'font-size', value: 23, expect: '23px' },
+      fontWeight: { css: 'font-weight', value: 800, expect: '800' },
+      color: { css: 'color', value: '#123456', expect: 'rgb(18, 52, 86)' },
+      lineHeight: { css: 'line-height', value: 2.5, expect: null },
+      letterSpacing: { css: 'letter-spacing', value: 3, expect: '3px' },
+      textTransform: { css: 'text-transform', value: 'capitalize', expect: 'capitalize' },
+      align: { css: 'text-align', value: 'center', expect: 'center' },
+      background: { css: 'background-color', value: '#123456', expect: 'rgb(18, 52, 86)' },
+      paddingX: { css: 'padding-left', value: 31, expect: '31px' },
+      paddingY: { css: 'padding-top', value: 29, expect: '29px' },
+      radius: { css: 'border-top-left-radius', value: 13, expect: '13px' },
+      // On a part with no lines of its own, a colour draws a hairline; on a
+      // part with rule lines, it recolours them.
+      border: { css: 'border-top-color', lines: 'border-bottom-color', value: '#123456', expect: 'rgb(18, 52, 86)' },
+      borderWidth: { css: 'border-left-width', value: 4, expect: '4px' },
+      gap: { css: 'row-gap', value: 17, expect: '17px' },
+      shadow: { css: 'box-shadow', value: 'glow', expect: null },
+      // Whichever face the part is NOT already in: a mono shortcut set to mono
+      // changes nothing, and that is not the field lying.
+      fontFamily: { css: 'font-family', value: (base) => (base.includes('mono') ? 'sans' : 'mono'), expect: null },
+      decoration: { css: 'text-decoration-line', value: 'line-through', expect: 'line-through' },
+    }
+
+    const missing: string[] = []
+    const liars: string[] = []
+    const leaks: string[] = []
+    let measured = 0
+    for (const comp of withParts) {
+      for (const [partName, partSpec] of Object.entries(comp.parts ?? {})) {
+        const st = new EditorStore()
+        st.addComponent('Panel', null, 0, 0)
+        const r = st.doc.root as string
+        const id = st.addComponent(comp.name, r, 20, 20, SEED[comp.name] ?? {}) as string
+        if (comp.name === 'Field') st.addComponent('Input', id, 0, 0)
+        // Rows that only appear in a state: a current menu command.
+        if (comp.name === 'Menu') st.commit({ op: 'setList', id, key: 'items', items: [{ label: 'Profile', icon: 'user', shortcut: '⌘P', active: true }, { label: 'Sign out', danger: true }] }, 'seed')
+        const baseDoc = st.doc
+        // The part must exist on the canvas before it is styled (the panel
+        // points at it), and in the output once it is.
+        const baseline = mounted(baseDoc, 'authoring', (h) => {
+          const els = partEls(h, id, partName)
+          return els.length > 0 ? getComputedStyle(els[0]) : null
+        })
+        const baseValues: Record<string, string> = {}
+        if (baseline === null) {
+          missing.push(`${comp.name}.${partName} (canvas)`)
+          continue
+        }
+        for (const f of fieldsFor(partSpec.fields)) {
+          const probe = PROBE[f.key]
+          if (!probe) {
+            liars.push(`${comp.name}.${partName}.${f.key} (no probe: add one)`)
+            continue
+          }
+          const prop = partSpec.lines && probe.lines ? probe.lines : probe.css
+          baseValues[f.key] = mounted(baseDoc, 'authoring', (h) => getComputedStyle(partEls(h, id, partName)[0]).getPropertyValue(prop))
+          const rootBefore = mounted(baseDoc, 'authoring', (h) => getComputedStyle(h.querySelector(`[data-loom-id="${id}"]`) as HTMLElement).getPropertyValue(prop))
+          const value = typeof probe.value === 'function' ? probe.value(baseValues[f.key]) : probe.value
+          st.commit({ op: 'setPartStyle', id, part: partName, patch: { [f.key]: value } }, 'probe')
+          for (const mode of ['preview', 'authoring'] as const) {
+            mounted(st.doc, mode, (h) => {
+              const els = partEls(h, id, partName)
+              if (els.length === 0) {
+                missing.push(`${comp.name}.${partName} (${mode})`)
+                return
+              }
+              for (const el of els) {
+                const got = getComputedStyle(el).getPropertyValue(prop)
+                const ok = probe.expect === null ? got !== baseValues[f.key] : got === probe.expect
+                if (!ok) liars.push(`${comp.name}.${partName}.${f.key} ${mode}: ${prop}=${got}`)
+              }
+              measured += 1
+              // The root keeps its own look: a part rule must not leak up.
+              if (mode === 'authoring') {
+                const rootAfter = getComputedStyle(h.querySelector(`[data-loom-id="${id}"]`) as HTMLElement).getPropertyValue(prop)
+                if (rootAfter !== rootBefore) leaks.push(`${comp.name}.${partName}.${f.key}: ${rootBefore} -> ${rootAfter}`)
+              }
+            })
+          }
+          st.undo()
+        }
+      }
+    }
+    check('every declared part exists on the canvas and in the output', missing.length === 0, missing.join(', '))
+    check('every field of every part changes that part, on the canvas and in the output',
+      liars.length === 0 && measured > 100, `${measured} measured; ${liars.slice(0, 8).join(' | ')}`)
+    check('a part rule never restyles the component root', leaks.length === 0, leaks.join(', '))
+
+    // Op discipline: exact undo, and only declared parts and accepted fields land.
+    const s54 = new EditorStore()
+    s54.addComponent('Panel', null, 0, 0)
+    const r54 = s54.doc.root as string
+    s54.commit({ op: 'resize', id: r54, w: 900, h: 700 }, 'size root')
+    const grid = s54.addComponent('DataGrid', r54, 20, 20) as string
+    s54.commit({ op: 'resize', id: grid, w: 640, h: 300 }, 'size grid')
+    const field = s54.addComponent('Field', r54, 20, 400, { description: 'Help' }) as string
+    const inner = s54.addComponent('Stat', field, 0, 0) as string
+    s54.commit({ op: 'setPartStyle', id: grid, part: 'header', patch: { fontSize: 15, color: '#123456' } }, 'header')
+    check('a part style is stored per part', s54.doc.nodes[grid].parts?.header?.fontSize === 15 && s54.doc.nodes[grid].parts?.cell === undefined)
+    s54.undo()
+    check('undoing the first part style leaves no empty bag', s54.doc.nodes[grid].parts === undefined)
+    s54.redo()
+    s54.commit({ op: 'setPartStyle', id: grid, part: 'nonsense', patch: { fontSize: 15 } }, 'bad part')
+    s54.commit({ op: 'setPartStyle', id: grid, part: 'row', patch: { fontSize: 15, paddingX: 4 } }, 'not accepted')
+    check('an undeclared part, or a field the part does not take, never lands',
+      s54.doc.nodes[grid].parts?.nonsense === undefined && s54.doc.nodes[grid].parts?.row === undefined, JSON.stringify(s54.doc.nodes[grid].parts))
+    s54.commit({ op: 'setPartStyle', id: grid, part: 'cell', patch: { fontSize: 999, background: 'red}</style><script>alert(1)</script>' } }, 'hostile')
+    check('part numbers clamp and hostile colours never land',
+      s54.doc.nodes[grid].parts?.cell?.fontSize === 96 && s54.doc.nodes[grid].parts?.cell?.background === undefined, JSON.stringify(s54.doc.nodes[grid].parts?.cell))
+
+    // Isolation: a Field's label rule must not reach a Stat's label nested in it.
+    s54.commit({ op: 'setPartStyle', id: field, part: 'label', patch: { color: '#123456' } }, 'field label')
+    const nested = mounted(s54.doc, 'preview', (h) => {
+      const own = partEls(h, field, 'label')[0]
+      // The Stat's label is unstyled, so it carries no hook in output: find it by text.
+      const statLabel = [...h.querySelectorAll('span')].find((e) => e.textContent === 'Revenue') as HTMLElement | undefined
+      return { own: own ? getComputedStyle(own).color : 'missing', nested: statLabel ? getComputedStyle(statLabel).color : 'missing' }
+    })
+    check('a part rule stays inside its own component', nested.own === 'rgb(18, 52, 86)' && nested.nested !== 'rgb(18, 52, 86)' && nested.nested !== 'missing',
+      JSON.stringify(nested))
+    void inner
+
+    // Output hooks only where needed.
+    const html54 = emitHtml(s54.doc)
+    check('a styled part carries its hook in the export', html54.includes(`data-loom-part="${grid}/header"`) && html54.includes(`data-loom-part="${field}/label"`))
+    check('an unstyled part carries none', !html54.includes(`data-loom-part="${grid}/row"`) && !html54.includes(`data-loom-part="${field}/description"`))
+    check('both exports ship the part rules', html54.includes('Loom: part styling') && emitReact(s54.doc).includes('Loom: part styling'))
+
+    // The file trust boundary.
+    const hostile54 = JSON.parse(serialize(s54.doc)) as { nodes: Record<string, Record<string, unknown>> }
+    hostile54.nodes[grid].parts = { header: { fontSize: 'big', color: 'url(x)', align: 'sideways', fontWeight: 700 }, ghost: { color: 'red' }, row: { fontSize: 12 }, cell: 'x' }
+    const loaded54 = validate(JSON.stringify(hostile54))
+    const p54 = loaded54.issues.map((i) => `${i.path} ${i.message}`)
+    check('a hostile parts bag is repaired and reported',
+      JSON.stringify(loaded54.doc?.nodes[grid].parts) === JSON.stringify({ header: { fontWeight: 700 } }) &&
+      p54.some((p) => p.includes('no part "ghost"')) && p54.some((p) => p.includes('not a colour')) && p54.some((p) => p.includes('not accepted by this part')) &&
+      p54.some((p) => p.includes('parts.cell')) && p54.some((p) => p.includes('not one of')), p54.join(' | '))
+    const clean54 = validate(serialize(s54.doc))
+    check('parts survive save and load', clean54.issues.length === 0 &&
+      JSON.stringify(clean54.doc?.nodes[grid].parts) === JSON.stringify(s54.doc.nodes[grid].parts), clean54.issues.map((i) => i.message).join(' | '))
+    const forged54 = JSON.parse(JSON.stringify(s54.doc)) as Document
+    forged54.nodes[grid].parts = { header: { color: 'red}</style><script>alert(1)</script>' } } as never
+    check('a forged part colour cannot break out of the exported stylesheet', !emitHtml(forged54).includes('<script>alert(1)'))
+
+    // The canvas draws the composite for real.
+    const canvas = mounted(s54.doc, 'authoring', (h) => {
+      const g = h.querySelector(`[data-loom-id="${grid}"]`) as HTMLElement | null
+      const f = h.querySelector(`[data-loom-id="${field}"]`) as HTMLElement | null
+      const cell = g?.querySelector('td[data-loom-cell]') as HTMLElement | null
+      const r = cell?.getBoundingClientRect()
+      const hit = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null
+      return {
+        table: Boolean(g?.querySelector('table')),
+        headerCount: g?.querySelectorAll('th').length ?? 0,
+        fieldChild: Boolean(f?.querySelector(`[data-loom-id="${inner}"]`)),
+        searchInert: Boolean(g?.querySelector('input[type="search"]')?.closest('[inert]')),
+        hitGoesToNode: hit !== null && hit === g,
+        hit: hit ? `${hit.tagName}.${hit.getAttribute('data-loom-id') ?? ''}` : 'nothing',
+      }
+    })
+    check('the canvas draws a real grid, not a stub', canvas.table && canvas.headerCount >= 4, JSON.stringify(canvas))
+    check('an unselected Field shows the control inside it on the canvas', canvas.fieldChild, JSON.stringify(canvas))
+    check('a composite\'s own controls are a picture on the canvas: inert, and a click lands on the node',
+      canvas.searchInert && canvas.hitGoesToNode, JSON.stringify(canvas))
+    const picked = mounted(s54.doc, 'authoring', (h) => {
+      const g = h.querySelector(`[data-loom-id="${grid}"]`) as HTMLElement | null
+      return { table: Boolean(g?.querySelector('table')), handles: g?.querySelectorAll('[data-loom-handle]').length ?? 0, selected: g?.getAttribute('data-selected') }
+    }, [grid])
+    check('selected, it is the same grid with handles', picked.table && picked.handles === 4 && picked.selected === 'true', JSON.stringify(picked))
+  }
+
+  // --- 55. every area of every component can be customized ---------------
+  // The area audit renders every component in every probe state and finds
+  // every inner element that sets its own look without a part to reach it.
+  // KNOWN_UNREACHABLE is the ratchet: it may only shrink.
+  {
+    const areas = auditAreas()
+    const found = new Map(areas.findings.map((f) => [`${f.component}|${f.where}`, f]))
+    const fresh = [...found].filter(([k, f]) => !KNOWN_UNREACHABLE[k] || f.needs.some((n) => !KNOWN_UNREACHABLE[k].includes(n)))
+      .map(([k, f]) => `${k} needs ${f.needs.join('/')} ("${f.sample}")`)
+    const stale = Object.keys(KNOWN_UNREACHABLE).filter((k) => !found.has(k))
+    const narrower = Object.entries(KNOWN_UNREACHABLE).filter(([k, needs]) => found.has(k) && needs.some((n) => !(found.get(k)?.needs ?? []).includes(n))).map(([k]) => k)
+    check('no component draws a new area a designer cannot customize', fresh.length === 0, fresh.slice(0, 12).join(' | '))
+    check('the customization backlog has no stale entries', stale.length === 0 && narrower.length === 0,
+      `fixed, remove from area-backlog.ts: ${[...stale, ...narrower].slice(0, 12).join(' | ')}`)
+    check('the area audit reads every inline property it meets', areas.unclassified.length === 0, areas.unclassified.slice(0, 12).join(', '))
+    check('the area audit actually looks', areas.components === allComponents().length && areas.elements > 10000,
+      `${areas.components} components, ${areas.elements} elements, ${found.size} areas still unreachable`)
+  }
+
+  // --- 56. conversation tools: a chat built from separate tools -----------
+  {
+    const s56 = new EditorStore()
+    s56.addComponent('Panel', null, 0, 0)
+    const r56 = s56.doc.root as string
+    s56.commit({ op: 'resize', id: r56, w: 900, h: 600 }, 'size')
+    const before56 = s56.history.length
+    const side = s56.addStarter('chat-sidebar', r56, 0, 0) as string
+    const byType = (t: string, within = side) => [within, ...descendants(s56.doc, within)].filter((id) => s56.doc.nodes[id]?.type === t)
+    const list = byType('MessageList')[0]
+    const composer = byType('Composer')[0]
+    check('the chat starter drops real tools as one undo step',
+      Boolean(list && composer) && s56.history.length === before56 + 1 && byType('MessageBubble').length === 3 && s56.doc.nodes[list]?.props.showTyping === true &&
+      STARTERS.some((st) => st.id === 'chat-sidebar'), `${s56.history.length - before56} steps`)
+    check('the starter wires its composer to its own list', s56.doc.nodes[composer]?.props.sendsTo === list)
+    check('the chat sidebar docks to the left edge', s56.doc.nodes[side]?.props.anchor === 'left')
+    const side2 = s56.addStarter('chat-sidebar', r56, 400, 0) as string
+    check('a second drop is wired to its OWN list', s56.doc.nodes[byType('Composer', side2)[0]]?.props.sendsTo === byType('MessageList', side2)[0])
+    const dup = s56.duplicate(side) as string
+    check('duplicating a chat panel rewires the copy to the copied list',
+      Boolean(dup) && s56.doc.nodes[byType('Composer', dup)[0]]?.props.sendsTo === byType('MessageList', dup)[0])
+    s56.undo()
+    s56.undo()
+
+    // The file trust boundary: a reference that points nowhere, or at the
+    // wrong kind of node, is cleared and reported.
+    const bad = JSON.parse(serialize(s56.doc)) as { nodes: Record<string, { props: Record<string, unknown> }> }
+    bad.nodes[composer].props.sendsTo = side
+    const other = byType('Composer', side)[0]
+    const loadedBad = validate(JSON.stringify(bad))
+    const badIssues = loadedBad.issues.map((i) => `${i.path} ${i.message}`)
+    check('a reference to the wrong kind of node is cleared and reported',
+      loadedBad.doc?.nodes[composer]?.props.sendsTo === '' && badIssues.some((m) => m.includes('sendsTo') && m.includes('expected MessageList')), badIssues.join(' | '))
+    bad.nodes[composer].props.sendsTo = 'nope'
+    const loadedGone = validate(JSON.stringify(bad))
+    check('a reference to a missing node is cleared and reported',
+      loadedGone.doc?.nodes[composer]?.props.sendsTo === '' && loadedGone.issues.some((i) => i.message.includes('missing node')))
+    check('a good reference survives save and load', validate(serialize(s56.doc)).doc?.nodes[composer]?.props.sendsTo === list)
+    void other
+
+    // A style on the template must carry to a sent message: the copy keeps the
+    // part hooks, so the same generated rule reaches it.
+    const template = byType('MessageBubble').find((id) => s56.doc.nodes[id]?.props.template === true) as string
+    s56.commit({ op: 'setPartStyle', id: template, part: 'body', patch: { background: '#123456' } }, 'style template')
+
+    // LIVE: the real runtime, real events, in a real document.
+    installBehaviourRuntime()
+    const style56 = document.createElement('style')
+    style56.textContent = documentCss(s56.doc)
+    document.head.appendChild(style56)
+    const host56 = document.createElement('div')
+    host56.className = 'loom-container'
+    host56.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:420px;z-index:99999'
+    host56.innerHTML = renderToStaticMarkup(renderNode({ doc: s56.doc, selected: new Set(), mode: 'preview' }, r56))
+    document.body.appendChild(host56)
+    const listEl = host56.querySelector(`[data-loom-list="${list}"]`) as HTMLElement
+    const composerEl = host56.querySelector(`[data-loom-sends-to="${list}"]`) as HTMLElement
+    const input = composerEl?.querySelector('textarea') as HTMLTextAreaElement
+    const texts = () => [...(listEl?.querySelectorAll('[data-loom-bubble-text]') ?? [])].map((e) => e.textContent)
+    const type = (text: string) => {
+      input.value = text
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    const press = (key: string, shiftKey = false) => {
+      const ev = new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true })
+      input.dispatchEvent(ev)
+      return ev.defaultPrevented
+    }
+    let sent = ''
+    composerEl?.addEventListener('loom:send', (e) => { sent = String((e as CustomEvent).detail?.text ?? '') })
+    const startCount = texts().length
+    type('Is the launch still on for Friday?')
+    check('typing arms the send button', composerEl?.getAttribute('data-loom-empty') === '0')
+    press('Enter')
+    const afterEnter = texts()
+    const newest = [...listEl.children].filter((c) => c.querySelector('[data-loom-bubble-text]') || c.matches('[data-loom-bubble]')).pop()
+    const typingIsLast = [...listEl.children].filter((c) => !c.hasAttribute('data-loom-list-jump')).pop()?.querySelector?.('[data-loom-typing]') !== null ||
+      [...listEl.children].filter((c) => !c.hasAttribute('data-loom-list-jump')).pop()?.hasAttribute('data-loom-typing')
+    check('Enter sends: the message lands in the list, the composer clears',
+      afterEnter.length === startCount + 1 && afterEnter.includes('Is the launch still on for Friday?') && input.value === '' &&
+      composerEl.getAttribute('data-loom-empty') === '1' && sent === 'Is the launch still on for Friday?', JSON.stringify(afterEnter))
+    check('a new message lands after the last message and before the typing indicator', Boolean(typingIsLast) && Boolean(newest))
+    const copy = [...listEl.querySelectorAll('[data-loom-bubble="sent"]')].pop() as HTMLElement
+    const copyBody = copy?.querySelector('[data-loom-bubble-text]')?.parentElement as HTMLElement | null
+    check('the sent message looks like the template, styling included',
+      Boolean(copy) && !copy.hasAttribute('data-loom-template') && copyBody !== null && getComputedStyle(copyBody).backgroundColor === 'rgb(18, 52, 86)',
+      copyBody ? getComputedStyle(copyBody).backgroundColor : 'missing')
+    check('only one message stays the template', listEl.querySelectorAll('[data-loom-template]').length === 1)
+    type('line one')
+    const shiftPrevented = press('Enter', true)
+    check('Shift+Enter is a new line, not a send', !shiftPrevented && texts().length === startCount + 1 && input.value === 'line one')
+    type('   ')
+    press('Enter')
+    check('an empty message is never sent', texts().length === startCount + 1)
+    type('<img src=x onerror="window.__loomPwned=1">')
+    ;(composerEl.querySelector('[data-loom-composer-send]') as HTMLButtonElement).click()
+    check('the send button sends, and what was typed stays text',
+      texts().length === startCount + 2 && !listEl.querySelector('img') && !(window as unknown as { __loomPwned?: number }).__loomPwned)
+
+    // Staying on the newest message, and not yanking a reader who scrolled up.
+    for (let i = 0; i < 8; i++) { type(`filler ${i}`); press('Enter') }
+    const bottomGap = () => listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight
+    check('the list follows new messages while you are at the bottom', listEl.scrollHeight > listEl.clientHeight && bottomGap() <= 2, `${bottomGap()}`)
+    listEl.scrollTop = 0
+    listEl.dispatchEvent(new Event('scroll'))
+    type('while you were reading')
+    press('Enter')
+    const jump = listEl.querySelector('[data-loom-list-jump]') as HTMLElement
+    check('scrolled up, a new message shows the jump pill instead of moving you',
+      listEl.scrollTop === 0 && jump.getAttribute('data-loom-open') === '1' && getComputedStyle(jump).display !== 'none', `${listEl.scrollTop} ${jump.getAttribute('data-loom-open')}`)
+    jump.click()
+    check('the jump pill takes you to the newest message and goes away', bottomGap() <= 2 && jump.getAttribute('data-loom-open') === '0')
+
+    // A composer that sends nowhere says so and sends nothing.
+    const errors: string[] = []
+    const origError = console.error
+    console.error = (...a: unknown[]) => { errors.push(a.map(String).join(' ')) }
+    composerEl.setAttribute('data-loom-sends-to', 'nowhere')
+    type('lost')
+    press('Enter')
+    console.error = origError
+    check('a composer with no list reports it and sends nothing', errors.some((e) => e.includes('no message list')) && !texts().includes('lost'))
+    host56.remove()
+    style56.remove()
+
+    // The canvas: the composer's own box is a picture; the list's messages are live nodes.
+    const canvas56 = (() => {
+      const h = document.createElement('div')
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: s56.doc, selected: new Set(), mode: 'authoring' }, r56))
+      const out = {
+        inputInert: Boolean(h.querySelector(`[data-loom-id="${composer}"] textarea`)?.hasAttribute('inert')),
+        bubbleIsNode: Boolean(h.querySelector(`[data-loom-id="${template}"]`)) && !h.querySelector(`[data-loom-id="${template}"]`)?.closest('[inert]'),
+      }
+      return out
+    })()
+    check('on the canvas the composer is a picture and the messages are nodes', canvas56.inputInert && canvas56.bubbleIsNode, JSON.stringify(canvas56))
+    const convo = auditAreas((c) => c.category === 'Conversation')
+    check('every area of every conversation tool can be customized', convo.components === 3 && convo.findings.length === 0,
+      convo.findings.map((f) => `${f.component}|${f.where} ${f.needs.join('/')}`).join(' | '))
+  }
+
+  // --- 57. shared styling pass: fixes found while building the chat -------
+  {
+    const s57 = new EditorStore()
+    s57.addComponent('Panel', null, 0, 0)
+    const r57 = s57.doc.root as string
+    s57.commit({ op: 'resize', id: r57, w: 800, h: 400 }, 'size')
+    const avatar = s57.addComponent('Avatar', r57, 10, 10, { initials: 'AI' }) as string
+    const rowId = s57.addComponent('Stack', r57, 10, 80, { direction: 'row', align: 'end' }, { flow: true }) as string
+    const divider = s57.addComponent('Divider', r57, 10, 200, { label: 'Today' }) as string
+    const header = s57.addComponent('HeaderBar', r57, 10, 260, { title: 'Assistant' }) as string
+    const t57 = resolveTheme(s57.doc.meta.theme)
+    const live57 = (mode: 'preview' | 'authoring') => {
+      const h = document.createElement('div')
+      h.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:400px'
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: s57.doc, selected: new Set(), mode }, r57))
+      document.body.appendChild(h)
+      const probe = document.createElement('span')
+      probe.style.color = t57.textOnAccent
+      document.body.appendChild(probe)
+      const want = getComputedStyle(probe).color
+      probe.remove()
+      const byId = (id: string) => h.querySelector(`[data-loom-id="${id}"]`) as HTMLElement | null
+      const out = {
+        initials: getComputedStyle((mode === 'authoring' ? byId(avatar) : h.querySelector('[role="img"]')) as HTMLElement).color,
+        want,
+        rowTextAlign: mode === 'authoring' ? getComputedStyle(byId(rowId) as HTMLElement).textAlign : '',
+        dividerText: mode === 'authoring' ? (byId(divider)?.textContent ?? '') : '',
+        headerText: mode === 'authoring' ? (byId(header)?.textContent ?? '') : '',
+      }
+      h.remove()
+      return out
+    }
+    const a57 = live57('authoring')
+    const p57 = live57('preview')
+    check('an Avatar keeps its own initials colour instead of a tone painting them danger',
+      a57.initials === a57.want && p57.initials === p57.want, JSON.stringify({ a: a57.initials, p: p57.initials, want: a57.want }))
+    check('a row aligned to the end does not right-align the text inside it', a57.rowTextAlign !== 'end' && a57.rowTextAlign !== 'right', a57.rowTextAlign)
+    check('the canvas draws a divider\'s label property', a57.dividerText.includes('Today'), a57.dividerText)
+    check('the canvas draws a header\'s title', a57.headerText.includes('Assistant'), a57.headerText)
+  }
+
+  // --- 58. a component's pieces live in ITS panel, not the toolbox --------
+  {
+    const gone = ['TimelineItem', 'MenuItem', 'NavLink', 'Radio', 'TypingIndicator']
+    check('child-only tools are gone from the registry', gone.every((n) => !getComponent(n)), gone.filter((n) => getComponent(n)).join(', '))
+    const added = addedTypes()
+    check('tools a parent creates are not toolbox tools', ['TabPanel', 'AccordionItem', 'SettingsRow', 'MessageBubble'].every((n) => added.has(n)), [...added].join(', '))
+    check('every listed type declares a real list', allComponents().every((c) => Object.values(c.lists ?? {}).every((l) =>
+      l.fields[l.titleField] !== undefined && l.max > 0 && l.default.length <= l.max)))
+
+    // The list op: whole-list replace, exact undo, validated items.
+    const s58 = new EditorStore()
+    s58.addComponent('Panel', null, 0, 0)
+    const r58 = s58.doc.root as string
+    s58.commit({ op: 'resize', id: r58, w: 900, h: 600 }, 'size')
+    const tl = s58.addComponent('Timeline', r58, 10, 10) as string
+    const shipped = itemsOf(s58.doc.nodes[tl], 'events').length
+    check('a new timeline starts with its sample events', shipped === 3 && Array.isArray(s58.doc.nodes[tl].lists?.events))
+    s58.commit({ op: 'setList', id: tl, key: 'events', items: [{ title: 'Kickoff', tone: 'success' }, { title: 'Launch', tone: 'nope', bogus: 1 } as never] }, 'events')
+    const ev = itemsOf(s58.doc.nodes[tl], 'events')
+    check('list items are validated field by field', ev.length === 2 && ev[0].title === 'Kickoff' && ev[0].time === '2h ago' && ev[1].tone === 'accent' && !('bogus' in ev[1]),
+      JSON.stringify(ev))
+    s58.undo()
+    check('undoing a list edit restores the list exactly', itemsOf(s58.doc.nodes[tl], 'events').length === 3)
+    s58.redo()
+    s58.commit({ op: 'setList', id: tl, key: 'nonsense', items: [] }, 'bad')
+    check('a list the component does not declare is refused', s58.doc.nodes[tl].lists?.nonsense === undefined)
+    s58.commit({ op: 'setList', id: tl, key: 'events', items: Array.from({ length: 500 }, (_, i) => ({ title: `e${i}` })) }, 'flood')
+    check('a list is capped', itemsOf(s58.doc.nodes[tl], 'events').length === 200)
+    s58.undo()
+
+    // The trust boundary.
+    const hostile58 = JSON.parse(serialize(s58.doc)) as { nodes: Record<string, Record<string, unknown>> }
+    hostile58.nodes[tl].lists = { events: [{ title: 5, time: 'now' }, 'x', { title: 'ok', extra: true }], ghosts: [] }
+    const loaded58 = validate(JSON.stringify(hostile58))
+    const lp = loaded58.issues.map((i) => `${i.path} ${i.message}`)
+    check('a hostile list is repaired and reported', itemsOf(loaded58.doc?.nodes[tl] as LoomNode, 'events').length === 2 &&
+      lp.some((m) => m.includes('events[0].title')) && lp.some((m) => m.includes('not an item')) && lp.some((m) => m.includes('unknown field')) && lp.some((m) => m.includes('no list "ghosts"')),
+      lp.join(' | '))
+    check('lists survive save and load', JSON.stringify(validate(serialize(s58.doc)).doc?.nodes[tl].lists) === JSON.stringify(s58.doc.nodes[tl].lists))
+
+    // Every field of every list changes the output.
+    const inert: string[] = []
+    for (const comp of allComponents()) {
+      for (const [key, ls] of Object.entries(comp.lists ?? {})) {
+        for (const [field, ps] of Object.entries(ls.fields)) {
+          const st = new EditorStore()
+          st.addComponent('Panel', null, 0, 0)
+          const id = st.addComponent(comp.name, st.doc.root as string, 0, 0) as string
+          const base = { ...ls.default[0] }
+          const alt = ps.type === 'boolean' ? !base[field] : ps.type === 'enum' ? (ps.options ?? []).find((o) => o !== base[field]) ?? base[field] : field === 'icon' ? (base[field] ? '' : 'star') : `${String(base[field] ?? '')}Z`
+          st.commit({ op: 'setList', id, key, items: [base] }, 'a')
+          const before = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, st.doc.root as string))
+          st.commit({ op: 'setList', id, key, items: [{ ...base, [field]: alt as string | number | boolean }] }, 'b')
+          const after = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, st.doc.root as string))
+          if (before === after) inert.push(`${comp.name}.${key}.${field}`)
+        }
+      }
+    }
+    check('every field of every list changes the output', inert.length === 0, inert.join(', '))
+
+    // A container that names its children refuses anything else.
+    const tabs = s58.addComponent('Tabs', r58, 10, 200) as string
+    const before58 = s58.doc.nodes[tabs].children.length
+    s58.addComponent('Button', tabs, 0, 0)
+    check('a tab set refuses a stray button', s58.doc.nodes[tabs].children.length === before58)
+    const t1 = s58.addComponent('TabPanel', tabs, 0, 0, { title: 'Overview' }) as string
+    s58.addComponent('TabPanel', tabs, 0, 0, { title: 'Activity' })
+    const hiddenTab = s58.addComponent('TabPanel', tabs, 0, 0, { title: 'Secret' }) as string
+    s58.commit({ op: 'setVisible', id: hiddenTab, visible: false }, 'hide')
+    const btn = s58.addComponent('Button', r58, 400, 10) as string
+    s58.commit({ op: 'reparent', id: btn, parent: tabs }, 'sneak')
+    check('reparenting into a tab set is refused too', !s58.doc.nodes[tabs].children.includes(btn))
+    const strip = (() => {
+      const h = document.createElement('div')
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: s58.doc, selected: new Set(), mode: 'preview' }, r58))
+      return [...h.querySelectorAll(`[data-loom-tabs] [role="tab"]`)].map((b) => b.textContent)
+    })()
+    check('the strip\'s labels are the tabs\' own titles, and a hidden tab has none', JSON.stringify(strip) === '["Overview","Activity"]', JSON.stringify(strip))
+    void t1
+
+    // The active link is its own part: styled apart from the other links.
+    const nav = s58.addComponent('NavBar', r58, 10, 400) as string
+    s58.commit({ op: 'setPartStyle', id: nav, part: 'link', patch: { color: '#123456' } }, 'links')
+    s58.commit({ op: 'setPartStyle', id: nav, part: 'active', patch: { color: '#abcdef' } }, 'current')
+    const style58 = document.createElement('style')
+    style58.textContent = documentCss(s58.doc)
+    document.head.appendChild(style58)
+    const h58 = document.createElement('div')
+    h58.innerHTML = renderToStaticMarkup(renderNode({ doc: s58.doc, selected: new Set(), mode: 'preview' }, r58))
+    document.body.appendChild(h58)
+    const links = [...h58.querySelectorAll('nav a')].map((a) => ({ current: a.getAttribute('aria-current'), color: getComputedStyle(a).color }))
+    h58.remove()
+    style58.remove()
+    const navRow = (() => {
+      const h = document.createElement('div')
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: s58.doc, selected: new Set(), mode: 'preview' }, r58))
+      document.body.appendChild(h)
+      const navEl = h.querySelector('nav') as HTMLElement
+      const out = navEl ? getComputedStyle(navEl).flexDirection : 'missing'
+      h.remove()
+      return out
+    })()
+    check('a nav bar lays its title and links out in a row', navRow === 'row', navRow)
+    check('the current link wears the "current" part; the others wear "links"',
+      links.length === 3 && links.filter((l) => l.current === 'page').every((l) => l.color === 'rgb(171, 205, 239)') &&
+      links.filter((l) => l.current !== 'page').every((l) => l.color === 'rgb(18, 52, 86)'), JSON.stringify(links))
+  }
+
+  // --- 59. old files open with their pieces folded into their owners --------
+  {
+    const n = (id: string, type: string, props: Record<string, unknown>, children: string[] = []) =>
+      ({ id, type, props, children, flow: false, visible: true, locked: false, opacity: 1 })
+    const old = {
+      version: 1,
+      meta: { name: 'old', targets: ['web'], created: 0 },
+      root: 'r',
+      nodes: {
+        r: n('r', 'Panel', {}, ['tl', 'stray', 'menu', 'nav', 'lone', 'rg', 'form', 'tabs', 'emptyTl', 'ml']),
+        tl: n('tl', 'Timeline', {}, ['e1', 'keep', 'e2']),
+        e1: n('e1', 'TimelineItem', { title: 'First', time: 'Mon', size: 'lg', markerSize: 14 }),
+        keep: n('keep', 'Button', { label: 'Kept' }),
+        e2: n('e2', 'TimelineItem', { title: 'Second', tone: 'danger' }),
+        stray: n('stray', 'TimelineItem', { title: 'Alone', x: 5, y: 6 }),
+        menu: n('menu', 'Menu', {}, ['m1', 'm2']),
+        m1: n('m1', 'MenuItem', { label: 'Open', shortcut: '⌘O' }),
+        m2: n('m2', 'MenuItem', { label: 'Delete', danger: true }),
+        nav: n('nav', 'NavBar', {}, ['l1', 'l2']),
+        l1: n('l1', 'NavLink', { label: 'Home', active: true, size: 'sm' }),
+        l2: n('l2', 'NavLink', { label: 'Docs', href: '/docs' }),
+        lone: n('lone', 'NavLink', { label: 'Help', href: '/help' }),
+        rg: n('rg', 'RadioGroup', { options: 'Free|Pro', optionsSep: 'pipe', value: 'Pro' }, ['rr']),
+        rr: n('rr', 'Radio', { label: 'Team' }),
+        form: n('form', 'Stack', {}, ['ra', 'rb']),
+        ra: n('ra', 'Radio', { label: 'Monthly', group: 'billing' }),
+        rb: n('rb', 'Radio', { label: 'Yearly', group: 'billing', checked: true }),
+        tabs: n('tabs', 'Tabs', { tabs: 'One, Two, Three' }, ['p1']),
+        p1: n('p1', 'TabPanel', { title: 'x' }),
+        emptyTl: n('emptyTl', 'Timeline', {}),
+        ml: n('ml', 'MessageList', {}, ['typing']),
+        typing: n('typing', 'TypingIndicator', { label: 'Grace is typing' }),
+      },
+    }
+    const res = validate(JSON.stringify(old))
+    const d = res.doc
+    const rows = (id: string, key: string) => (d ? itemsOf(d.nodes[id], key) : [])
+    const said = res.issues.map((i) => i.message).join(' | ')
+    check('an old timeline keeps its events, in order, with their size', d !== null &&
+      JSON.stringify(rows('tl', 'events').map((e) => e.title)) === '["First","Second"]' && rows('tl', 'events')[1].tone === 'danger' &&
+      d.nodes.tl.props.size === 'lg' && d.nodes.tl.props.markerSize === 14, JSON.stringify(rows('tl', 'events')))
+    check('what else a timeline held moves beside it, not away', d !== null && Boolean(d.nodes.keep) &&
+      d.nodes.r.children.indexOf('keep') === d.nodes.r.children.indexOf('tl') + 1 && d.nodes.tl.children.length === 0, JSON.stringify(d?.nodes.r.children))
+    check('a stray event becomes a timeline of one', d?.nodes.stray?.type === 'Timeline' && rows('stray', 'events')[0]?.title === 'Alone' && d?.nodes.stray.props.x === 5)
+    check('an old empty timeline stays empty, not sample content', rows('emptyTl', 'events').length === 0)
+    check('menu commands fold into their menu', JSON.stringify(rows('menu', 'items').map((i) => [i.label, i.shortcut, i.danger])) === '[["Open","⌘O",false],["Delete","",true]]')
+    check('nav links fold into their bar, the current one kept', JSON.stringify(rows('nav', 'links').map((l) => [l.label, l.active, l.href])) === '[["Home",true,"#"],["Docs",false,"/docs"]]' &&
+      d?.nodes.nav.props.size === 'sm')
+    check('a nav link on its own becomes a link', d?.nodes.lone?.type === 'Link' && d?.nodes.lone.props.text === 'Help' && d?.nodes.lone.props.href === '/help')
+    check('radio options: the old string first, then the radios inside',
+      JSON.stringify(rows('rg', 'options').map((o) => o.label)) === '["Free","Pro","Team"]' && d?.nodes.rg.props.value === 'Pro' && !('options' in (d?.nodes.rg.props ?? {})))
+    const billing = d ? Object.values(d.nodes).filter((x) => x.type === 'RadioGroup' && d.nodes.form.children.includes(x.id)) : []
+    check('radios that were one choice become ONE group, keeping the checked one',
+      billing.length === 1 && JSON.stringify(itemsOf(billing[0], 'options').map((o) => o.label)) === '["Monthly","Yearly"]' && billing[0].props.value === 'Yearly',
+      JSON.stringify(billing.map((b) => b.lists)))
+    const tabTitles = d ? d.nodes.tabs.children.map((c) => d.nodes[c]?.props.title) : []
+    check('old tab labels become the tabs\' titles, with a tab for each', JSON.stringify(tabTitles) === '["One","Two","Three"]' && !('tabs' in (d?.nodes.tabs.props ?? {})), JSON.stringify(tabTitles))
+    check('a typing indicator becomes its list\'s typing option', d?.nodes.ml.props.showTyping === true && d?.nodes.ml.props.typingLabel === 'Grace is typing' && !d?.nodes.typing)
+    check('every migration is reported', ['row of its Timeline', 'became a Timeline', 'row of its Menu', 'row of its NavBar', 'became a Link', 'joined the others', 'tabs\' own titles', 'Show typing'].every((m) => said.includes(m)), said)
+    check('a migrated file saves and reloads clean', d !== null && validate(serialize(d)).issues.length === 0, d ? validate(serialize(d)).issues.map((i) => i.message).join(' | ') : 'no doc')
+  }
+
+  // --- 60. a selected Button looks like the Button, not a browser button ---
+  // Regression: selecting a Button swapped its label for a bare <button>, which
+  // drew the browser's grey box and border inside the designed one.
+  {
+    const s60 = new EditorStore()
+    s60.addComponent('Button', s60.doc.root, 20, 20)
+    const id = s60.selection[0]
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const r60 = createRoot(host)
+    for (const selected of [false, true]) {
+      r60.render(renderNode({ doc: s60.doc, selected: new Set(selected ? [id] : []), onPointerDownNode: () => undefined }, s60.doc.root!))
+      await new Promise((r) => setTimeout(r, 60))
+      const inner = host.querySelector(`[data-loom-id="${id}"] button`) as HTMLElement | null
+      const cs = inner ? getComputedStyle(inner) : null
+      const bare = cs !== null && (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' || cs.borderTopStyle !== 'none' || cs.paddingLeft !== '0px')
+      check(`a ${selected ? 'selected' : 'resting'} Button draws no browser button inside itself`, !bare, cs ? `bg=${cs.backgroundColor} border=${cs.borderTopStyle} pad=${cs.paddingLeft}` : 'no inner button')
+      const outer = host.querySelector(`[data-loom-id="${id}"]`) as HTMLElement | null
+      check(`a ${selected ? 'selected' : 'resting'} Button keeps its label colour`, !!outer && (!inner || getComputedStyle(inner).color === getComputedStyle(outer).color))
+    }
+    r60.unmount()
+    host.remove()
+  }
+
+  // --- 61. preview happens IN the canvas, and comes back -----------------
+  // The live preview used to be a separate window; now Preview swaps the
+  // design canvas for the running artifact in place. Driven through the real
+  // mounted app: the switch, the panels that step aside, and Esc.
+  {
+    const click = (label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === label)?.click()
+    const shown = (q: string) => {
+      const el = document.querySelector<HTMLElement>(q)
+      return el !== null && !el.closest('[hidden]') && el.getBoundingClientRect().width > 0
+    }
+    const wait = () => new Promise((r) => setTimeout(r, 120))
+    // The app's own store, given something to run; put back afterwards.
+    const app = window.__loomStore
+    const before = app.doc
+    const scene = new EditorStore()
+    scene.addComponent('Heading', scene.doc.root!, 20, 20, { text: 'Preview probe' })
+    app.loadDocument(scene.doc)
+    await wait()
+    check('design mode shows the toolbox, the canvas and the inspector', shown('.toolbox') && shown('.surface') && shown('.inspector') && !shown('.preview-stage'))
+    click('Preview')
+    await wait()
+    const stage = document.querySelector<HTMLElement>('.canvas.previewing .preview-stage')
+    check('Preview puts the running artifact where the design was', stage !== null && shown('.canvas.previewing .preview-stage') && !shown('.surface'))
+    check('the preview is the output, with no editor hooks', stage !== null && stage.querySelectorAll('[data-loom-id]').length === 0 && (stage.textContent ?? '').includes('Preview probe'), stage ? `text=${(stage.textContent ?? '').slice(0, 40)} hooks=${stage.querySelectorAll('[data-loom-id]').length}` : 'no stage')
+    check('the toolbox and inspector step aside in Preview', !shown('.toolbox') && !shown('.inspector'))
+    const wrap = document.querySelector<HTMLElement>('.canvas-wrap')?.getBoundingClientRect()
+    check('in Preview the canvas takes the full width', wrap !== undefined && Math.abs(wrap.width - window.innerWidth) <= 1, `canvas=${wrap?.width} window=${window.innerWidth}`)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await wait()
+    check('Esc returns to the design', shown('.surface') && shown('.toolbox') && !shown('.preview-stage'))
+    app.loadDocument(before)
+  }
+
+  // --- 62. the Studio has its own typeface, and the canvas does not ------
+  // The chrome was falling back to whatever the OS had (Noto Sans here). Inter
+  // is bundled for the TOOL. The design must not pick it up: exports do not
+  // ship the font, so a canvas in Inter would not be what gets exported.
+  {
+    await document.fonts.load('12px "Inter Variable"')
+    await document.fonts.ready
+    const face = [...document.fonts].find((f) => f.family.replace(/"/g, '') === 'Inter Variable' && f.status === 'loaded')
+    check('the Studio typeface is bundled and loaded', face !== undefined, [...document.fonts].map((f) => `${f.family}:${f.status}`).slice(0, 4).join(' '))
+    // Live proof it draws: the same string is a different width in Inter than
+    // in the fallback it would otherwise land on.
+    const probe = (family: string) => {
+      const el = document.createElement('span')
+      el.textContent = 'Wide glyphs: Mmwq 0123 Loom Studio'
+      el.style.cssText = `position:absolute;visibility:hidden;font-size:40px;font-family:${family}`
+      document.body.appendChild(el)
+      const w = el.getBoundingClientRect().width
+      el.remove()
+      return w
+    }
+    const inter = probe('"Inter Variable", monospace')
+    const fallback = probe('monospace')
+    check('Inter actually draws the text', Math.abs(inter - fallback) > 20, `inter=${inter.toFixed(0)} fallback=${fallback.toFixed(0)}`)
+    const chrome = getComputedStyle(document.querySelector('.titlebar') ?? document.body).fontFamily
+    check('the chrome is set in Inter', /^"?Inter Variable"?,/.test(chrome), chrome)
+    const s62 = new EditorStore()
+    s62.addComponent('Label', s62.doc.root!, 10, 10, { text: 'Canvas type' })
+    const host = document.createElement('div')
+    host.className = 'surface'
+    document.body.appendChild(host)
+    const r62 = createRoot(host)
+    r62.render(renderNode({ doc: s62.doc, selected: new Set(), onPointerDownNode: () => undefined }, s62.doc.root!))
+    await new Promise((r) => setTimeout(r, 60))
+    const label = [...host.querySelectorAll<HTMLElement>('[data-loom-type="Label"]')][0]
+    const canvasFont = label ? getComputedStyle(label).fontFamily : 'missing'
+    check('the canvas keeps the export\'s type, not the Studio\'s', label !== undefined && !canvasFont.includes('Inter Variable'), canvasFont)
+    r62.unmount()
+    host.remove()
+    // And what a component inherits: the real surface and preview stage carry
+    // the theme's font, as the exported <body> does.
+    const surf = document.querySelector<HTMLElement>('.loom .surface')
+    check('the real canvas inherits the theme font, not the Studio font', surf !== null && !getComputedStyle(surf).fontFamily.includes('Inter Variable'), surf ? getComputedStyle(surf).fontFamily : 'no surface')
+  }
+
+  // --- 63. every tool has its own drawing ---------------------------------
+  // The toolbox used Unicode characters from the OS font: mixed sizes and
+  // baselines, some missing entirely. Every component now has a glyph drawn
+  // on the icon grid, and the real toolbox shows those, not characters.
+  {
+    const missing = allComponents().filter((c) => !hasOwnGlyph(c.name)).map((c) => c.name)
+    check('every component has a drawing of its own', missing.length === 0, missing.join(', '))
+    const tools = [...document.querySelectorAll<HTMLElement>('.toolbox .tool .tool-icon')]
+    const bare = tools.filter((t) => t.querySelector('svg') === null || (t.textContent ?? '').trim() !== '')
+    check('the real toolbox draws every tool icon as a glyph, not a character', tools.length > 50 && bare.length === 0, `tools=${tools.length} bare=${bare.length}`)
+  }
+
+  // --- 64. where you put it in the design is where it is in the preview ---
+  // Shane: "an item placed in the center of the workspace, then Preview: it's
+  // off to the left". The design canvas was squeezed to the room between the
+  // panels (920px) while Preview ran the real 1280px viewport, so x=440 was
+  // the middle of one and left of the middle of the other. Now the canvas is
+  // always the viewport's true width and the zoom fits it. Real mounted app.
+  {
+    const app = window.__loomStore
+    const before = app.doc
+    const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms))
+    const scene = new EditorStore()
+    scene.addComponent('Button', scene.doc.root!, 0, 0, { label: 'Centred' })
+    const btnId = scene.selection[0]!
+    app.loadDocument(scene.doc)
+    await wait()
+    const btn = () => document.querySelector<HTMLElement>(`[data-loom-id="${btnId}"]`) ?? document.querySelector<HTMLElement>('.preview-stage button')
+    // Put it dead centre of the Desktop viewport, measured, in doc px.
+    const w = btn()!.getBoundingClientRect().width / (Number(document.querySelector<HTMLElement>('.surface')!.dataset.zoom) / 100)
+    app.commit({ op: 'move', id: btnId, x: Math.round(640 - w / 2), y: 60 }, 'centre')
+    await wait()
+    const zoomOf = (el: HTMLElement) => Number(getComputedStyle(el).zoom) || 1
+    const surf = document.querySelector<HTMLElement>('.surface')!
+    const dz = zoomOf(surf)
+    const sr = surf.getBoundingClientRect()
+    const designWidth = (sr.width - 2 * surf.clientLeft * dz) / dz
+    check('the design canvas is the viewport\'s true width', Math.abs(designWidth - 1280) <= 2, `${designWidth.toFixed(1)}px at zoom ${dz}`)
+    const br = btn()!.getBoundingClientRect()
+    const designMid = (br.left + br.width / 2 - (sr.left + surf.clientLeft * dz)) / dz
+    ;[...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === 'Preview')?.click()
+    await wait(250)
+    const stage = document.querySelector<HTMLElement>('.canvas.previewing .stage')!
+    const pz = zoomOf(stage)
+    const pr = stage.getBoundingClientRect()
+    const pb = document.querySelector<HTMLElement>('.preview-stage button')!.getBoundingClientRect()
+    const previewMid = (pb.left + pb.width / 2 - pr.left) / pz
+    // What the designer SEES: the middle of the canvas as drawn is the middle
+    // of the viewport (it was x=640 of a 718px-wide canvas: right of centre).
+    check('the middle of the design canvas is the middle of the viewport', Math.abs(designMid / designWidth - 0.5) <= 0.005, `${designMid.toFixed(1)} of ${designWidth.toFixed(1)}`)
+    check('and in the same place in the preview', Math.abs(previewMid - designMid) <= 3, `design ${designMid.toFixed(1)} / preview ${previewMid.toFixed(1)}`)
+    const stageMid = pr.left + pr.width / 2
+    const wrap = document.querySelector<HTMLElement>('.canvas-wrap')!.getBoundingClientRect()
+    check('the preview screen sits in the middle of the canvas', Math.abs(stageMid - (wrap.left + wrap.width / 2)) <= 12, `${stageMid.toFixed(0)} vs ${(wrap.left + wrap.width / 2).toFixed(0)}`)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await wait()
+    // Every viewport is its own width: the phone was 720px wide (a min-width).
+    const pick = (label: string) => document.querySelector<HTMLButtonElement>(`.dock button[aria-label="${label}"]`)?.click()
+    for (const [label, px] of [['Phone', 390], ['Tablet', 834], ['Desktop', 1280]] as const) {
+      pick(label)
+      await wait()
+      const el = document.querySelector<HTMLElement>('.surface')!
+      const z = zoomOf(el)
+      const width = (el.getBoundingClientRect().width - 2 * el.clientLeft * z) / z
+      check(`the ${label} canvas is ${px}px wide`, Math.abs(width - px) <= 2, `${width.toFixed(1)}px at zoom ${z}`)
+    }
+    // Shane: "the height of a component shrinks from design to preview, look
+    // at the chat sidebar". A docked sidebar is as tall as the screen it is
+    // docked to; the design board had a 460px floor and the preview page a
+    // 200px one, so it went 460 -> 200. Both are now the viewport's screen.
+    const mode = (m: string) => [...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === m)?.click()
+    for (const where of ['on its own', 'inside a Panel'] as const) {
+      const sc = new EditorStore()
+      if (where === 'inside a Panel') sc.dropComponent('Panel', null, 0, 0)
+      const side = sc.addStarter('chat-sidebar', sc.doc.root, 40, 40)!
+      const top = sc.doc.root!
+      app.loadDocument(sc.doc)
+      await wait()
+      const dz = zoomOf(document.querySelector<HTMLElement>('.surface')!)
+      const dSide = document.querySelector<HTMLElement>(`[data-loom-id="${side}"]`)!.getBoundingClientRect().height / dz
+      const dTop = document.querySelector<HTMLElement>(`[data-loom-id="${top}"]`)!.getBoundingClientRect().height / dz
+      mode('Preview')
+      await wait(250)
+      const st = document.querySelector<HTMLElement>('.canvas.previewing .stage')!
+      const pz = zoomOf(st)
+      const pTopEl = st.querySelector<HTMLElement>('.preview-stage > *')!
+      const pSideEl = where === 'on its own' ? pTopEl : [...pTopEl.querySelectorAll<HTMLElement>('[aria-label="Assistant"]')].find((e) => e.getBoundingClientRect().width > 200)!
+      const pSide = pSideEl.getBoundingClientRect().height / pz
+      const pTop = pTopEl.getBoundingClientRect().height / pz
+      mode('Design')
+      await wait()
+      check(`a docked sidebar ${where} is as tall in Preview as in Design`, Math.abs(dSide - pSide) <= 2, `design ${dSide.toFixed(0)} / preview ${pSide.toFixed(0)}`)
+      check(`its top-level node ${where} is as tall in Preview as in Design`, Math.abs(dTop - pTop) <= 2, `design ${dTop.toFixed(0)} / preview ${pTop.toFixed(0)}`)
+      if (where === 'on its own') check('docked to the screen, it is the screen\'s height', Math.abs(dSide - 800) <= 2, dSide.toFixed(0))
+    }
+
+    // A root taller than the board's minimum stays inside it.
+    const tall = new EditorStore()
+    tall.addComponent('Panel', null, 0, 0, { w: 900, h: 1100 })
+    app.loadDocument(tall.doc)
+    await wait()
+    const board = document.querySelector<HTMLElement>('.surface')!
+    const rootEl = board.querySelector<HTMLElement>(':scope > [data-loom-id]')!
+    check('the artboard contains a root taller than its minimum', rootEl.getBoundingClientRect().bottom <= board.getBoundingClientRect().bottom + 1, `root ${rootEl.getBoundingClientRect().bottom.toFixed(0)} board ${board.getBoundingClientRect().bottom.toFixed(0)}`)
+    app.loadDocument(before)
+    await wait()
+  }
+
+  // --- 65. the canvas is the output, for every component, at a usable size -
+  // Shane: "Design doesn't render text: a GroupBox is a box, Preview shows
+  // 'Group' in it; same with Section and others", and "dragged from the
+  // toolbox it lands as a tiny speck". Hand-written canvas stubs had drifted
+  // (22 of 112 dropped text the output shows) and empty containers arrived
+  // 35px square or 0x0 (51 of 112 under 48x24). Every tool, dropped the way
+  // the toolbox drops it, measured live on both surfaces.
+  {
+    const host = (mode: 'authoring' | 'preview', doc: Document, root: string) => {
+      const h = document.createElement('div')
+      h.className = mode === 'authoring' ? 'surface' : 'preview-stage'
+      h.style.cssText = 'position:fixed;left:0;top:0;width:1280px;height:900px;overflow:hidden;visibility:hidden'
+      document.body.appendChild(h)
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc, selected: new Set(), mode }, root))
+      return h
+    }
+    const words = (t: string) => t.replace(/\s+/g, ' ').trim().split(' ').filter((w) => w.length > 2)
+    const missingText: string[] = []
+    const drift: string[] = []
+    const tiny: string[] = []
+    const added = addedTypes()
+    for (const c of allComponents()) {
+      if (added.has(c.name)) continue
+      const st = new EditorStore()
+      st.addComponent('Panel', null, 0, 0, { w: 1200, h: 860 })
+      const root = st.doc.root!
+      const id = st.dropComponent(c.name, root, 40, 40)
+      if (!id) { tiny.push(`${c.name}: drop refused`); continue }
+      const a = host('authoring', st.doc, root)
+      const p = host('preview', st.doc, root)
+      const ce = a.querySelector<HTMLElement>(`[data-loom-id="${id}"]`)
+      const pe = p.firstElementChild?.firstElementChild as HTMLElement | null
+      if (!ce || !pe) { drift.push(`${c.name}: not drawn`); a.remove(); p.remove(); continue }
+      const ct = ce.textContent ?? ''
+      const lost = words(pe.textContent ?? '').filter((w) => !ct.includes(w))
+      if (lost.length) missingText.push(`${c.name} (${lost.slice(0, 3).join(' ')})`)
+      const cr = ce.getBoundingClientRect()
+      const pr = pe.getBoundingClientRect()
+      if (Math.abs(cr.width - pr.width) > 4 || Math.abs(cr.height - pr.height) > 4) drift.push(`${c.name} ${Math.round(cr.width)}x${Math.round(cr.height)} vs ${Math.round(pr.width)}x${Math.round(pr.height)}`)
+      // A container is a frame at least 120 wide and a bar's height; a leaf
+      // is at least a word; a rule (Divider, LoadingBar) is a line, so only
+      // its length counts.
+      const line = c.name === 'Divider' || c.name === 'LoadingBar'
+      const need = c.container ? [120, 20] : line ? [120, 0] : [16, 8]
+      if (cr.width < need[0]! || cr.height < need[1]!) tiny.push(`${c.name} ${Math.round(cr.width)}x${Math.round(cr.height)}`)
+      a.remove()
+      p.remove()
+    }
+    check('the canvas shows every word the output shows, for every tool', missingText.length === 0, missingText.join(', '))
+    check('the canvas draws every tool at the size the output does', drift.length === 0, drift.join(', '))
+    check('every tool lands at a size you can see and use', tiny.length === 0, tiny.join(', '))
+  }
+
+  // --- 66. docking does what it says, and the Position panel shows it ----
+  // Shane: "positioning only has text entry, can we add sliders? Is there
+  // anything for docking?" Docking existed (every component's `anchor`) but
+  // sat behind "more properties" as a dropdown, `center` put the top-left
+  // corner at the centre, and a top/bottom dock with a set width did not span.
+  // Typing W on a content-sized node also set its height to 1px.
+  {
+    const box = (mode: 'authoring' | 'preview', anchor: string) => {
+      const st = new EditorStore()
+      st.addComponent('Panel', null, 0, 0, { w: 600, h: 400, padding: 0 })
+      const root = st.doc.root!
+      const id = st.addComponent('Card', root, 50, 60, { w: 120, h: 80, anchor })!
+      const h = document.createElement('div')
+      h.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:600px;visibility:hidden'
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode }, root))
+      document.body.appendChild(h)
+      const parent = h.firstElementChild as HTMLElement
+      const child = (mode === 'authoring' ? h.querySelector(`[data-loom-id="${id}"]`) : parent.firstElementChild) as HTMLElement
+      const pr = parent.getBoundingClientRect()
+      const cr = child.getBoundingClientRect()
+      const inner = { l: pr.left + parent.clientLeft, t: pr.top + parent.clientTop, w: parent.clientWidth, h: parent.clientHeight }
+      h.remove()
+      return { l: cr.left - inner.l, t: cr.top - inner.t, w: cr.width, h: cr.height, pw: inner.w, ph: inner.h }
+    }
+    for (const mode of ['authoring', 'preview'] as const) {
+      const c = box(mode, 'center')
+      check(`${mode}: a centre dock centres it`, Math.abs(c.l + c.w / 2 - c.pw / 2) <= 1 && Math.abs(c.t + c.h / 2 - c.ph / 2) <= 1, JSON.stringify(c))
+      const t = box(mode, 'top')
+      check(`${mode}: a top dock spans the width, whatever its own width`, Math.abs(t.w - t.pw) <= 1 && Math.abs(t.t) <= 1, JSON.stringify(t))
+      const r = box(mode, 'right')
+      check(`${mode}: a right dock spans the height at the right edge`, Math.abs(r.h - r.ph) <= 1 && Math.abs(r.l + r.w - r.pw) <= 1, JSON.stringify(r))
+    }
+
+    // The real panel: docking is on screen without "more properties", a click
+    // docks, and the numbers the dock owns step aside.
+    const app = window.__loomStore
+    const before = app.doc
+    const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms))
+    const sc = new EditorStore()
+    sc.addComponent('Panel', null, 0, 0, { w: 1280, h: 800 })
+    const g = sc.dropComponent('GroupBox', sc.doc.root!, 200, 200)!
+    const btn = sc.dropComponent('Button', sc.doc.root!, 600, 300)!
+    app.loadDocument(sc.doc)
+    app.select([btn])
+    await wait()
+    const field = (l: string) => document.querySelector<HTMLInputElement>(`.inspector .slide-field input[aria-label="${l}"]`)
+    check('Position has a slider for each of X, Y, W and H', ['X', 'Y', 'W', 'H'].every((l) => document.querySelector(`.inspector .slide-field input[aria-label="${l} slider"]`) !== null))
+    const hBefore = Number(field('H')?.value)
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    const wField = field('W')
+    if (wField) {
+      setValue.call(wField, '220')
+      wField.dispatchEvent(new Event('input', { bubbles: true }))
+      wField.dispatchEvent(new Event('blur'))
+    }
+    await wait()
+    const bp = app.doc.nodes[btn]!.props
+    check('typing W keeps the height it had (it used to become 1px)', bp.w === 220 && bp.h === hBefore && hBefore > 10, `w=${bp.w} h=${bp.h} before=${hBefore}`)
+    const slider = document.querySelector<HTMLInputElement>('.inspector .slide-field input[aria-label="X slider"]')
+    if (slider) {
+      setValue.call(slider, '333')
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    await wait()
+    check('the X slider moves it', app.doc.nodes[btn]!.props.x === 333, String(app.doc.nodes[btn]!.props.x))
+    app.select([g])
+    await wait()
+    const cell = document.querySelector<HTMLButtonElement>('.inspector .dock-cell[data-cell="right"]')
+    check('the dock picker is in Position, not behind more properties', cell !== null)
+    cell?.click()
+    await wait()
+    check('clicking the right edge docks it right', app.doc.nodes[g]!.props.anchor === 'right', String(app.doc.nodes[g]!.props.anchor))
+    check('docked, the numbers the dock owns are disabled', field('X')?.disabled === true && field('H')?.disabled === true && field('W')?.disabled === false)
+    document.querySelector<HTMLButtonElement>('.inspector .dock-cell[data-cell="right"]')?.click()
+    await wait()
+    check('clicking it again frees it', app.doc.nodes[g]!.props.anchor === 'none', String(app.doc.nodes[g]!.props.anchor))
+    app.loadDocument(before)
+    await wait()
+  }
+
+  // --- 67. properties are filed by what they mean ------------------------
+  // Shane: "go through the properties and make sure they're grouped
+  // relationally". Before: `value` in three groups, `align` in three, `size`
+  // in three, a "Logic" group, a one-key "Size" group while width/height sat
+  // in Layout, separators far from their lists, two "Layout" and two
+  // "Position" headings in one panel.
+  {
+    const where = new Map<string, Set<string>>()
+    const outOfOrder: string[] = []
+    const apart: string[] = []
+    for (const c of allComponents()) {
+      const keys = Object.keys(c.props)
+      let last = -1
+      for (const k of keys) {
+        const g = c.props[k]!.group ?? ''
+        const i = (GROUP_ORDER as readonly string[]).indexOf(g)
+        if (i < 0) outOfOrder.push(`${c.name}.${k} in unknown group ${g}`)
+        else if (i < last) outOfOrder.push(`${c.name}.${k} (${g}) after a later group`)
+        last = Math.max(last, i)
+        if (!where.has(k)) where.set(k, new Set())
+        where.get(k)!.add(g)
+        // A "show X" switch sits right before X, in X's group.
+        const shows = /^show([A-Z]\w*)$/.exec(k)
+        const subj = shows ? shows[1]!.charAt(0).toLowerCase() + shows[1]!.slice(1) : ''
+        if (subj && keys.includes(subj) && (keys.indexOf(k) !== keys.indexOf(subj) - 1 || c.props[subj]!.group !== g)) apart.push(`${c.name}.${k}`)
+        // A separator sits right after its list, in the same group.
+        if (/Sep$/.test(k) && keys.includes(k.slice(0, -3))) {
+          const list = k.slice(0, -3)
+          if (keys.indexOf(k) !== keys.indexOf(list) + 1 || c.props[list]!.group !== g) apart.push(`${c.name}.${k}`)
+        }
+      }
+    }
+    check('groups come in one order on every component', outOfOrder.length === 0, outOfOrder.slice(0, 6).join(', '))
+    check('a list and its separator, and a thing and its show switch, sit together', apart.length === 0, apart.slice(0, 6).join(', '))
+    // The same key, the same meaning, the same group; the named exceptions
+    // are decided by what the value IS (words vs a number, container vs leaf).
+    const CONTEXTUAL = new Set(['align', 'value', 'max', 'maxItems', 'steps', 'columns', 'maxWidth', 'overflow', 'color', 'tone', 'label'])
+    // A "show X" switch goes where X goes, so it is contextual when X is.
+    const contextual = (k: string) => CONTEXTUAL.has(k) || (/^show[A-Z]/.test(k) && CONTEXTUAL.has(k.charAt(4).toLowerCase() + k.slice(5)))
+    const split = [...where.entries()].filter(([k, gs]) => gs.size > 1 && !contextual(k)).map(([k, gs]) => `${k}: ${[...gs].join('/')}`)
+    check('every other property is in the same group on every component', split.length === 0, split.join(', '))
+    check('no "Logic" or one-off groups remain', ![...where.values()].some((gs) => gs.has('Logic') || gs.has('General')))
+    check('size is with width and height', getComponent('Button')!.props.size!.group === 'Size' && getComponent('Panel')!.props.width!.group === 'Size')
+
+    // The real panel: one Layout heading (with Flow in it), one Position.
+    const app = window.__loomStore
+    const before = app.doc
+    const sc = new EditorStore()
+    sc.addComponent('Panel', null, 0, 0, { w: 1280, h: 800 })
+    const g = sc.dropComponent('GroupBox', sc.doc.root!, 100, 100)!
+    app.loadDocument(sc.doc)
+    app.select([g])
+    await new Promise((r) => setTimeout(r, 150))
+    const heads = [...document.querySelectorAll('.inspector .insp-scroll h3')].map((h) => h.firstChild?.textContent?.trim() ?? '')
+    const count = (n: string) => heads.filter((h) => h === n).length
+    check('the panel has one Layout and one Position heading', count('Layout') === 1 && count('Position') === 1, heads.join(' | '))
+    const layout = [...document.querySelectorAll<HTMLElement>('.inspector .insp-scroll section')].find((sec) => sec.querySelector('h3')?.textContent === 'Layout')
+    check('Flow layout is inside the Layout group', !!layout && (layout.textContent ?? '').includes('Flow layout'))
+    app.loadDocument(before)
+    await new Promise((r) => setTimeout(r, 100))
+  }
+
+  // --- 68. every tool shows what it looks like on hover --------------------
+  // Shane: "a tiny thumbnail of each tool in its tooltip would make the
+  // toolbox much less intimidating". The picture is the real component at
+  // its drop size, scaled into the card: every tool and starter must draw
+  // something visible that fits the box.
+  {
+    const bad: string[] = []
+    const host = document.createElement('div')
+    host.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden'
+    document.body.appendChild(host)
+    const r68 = createRoot(host)
+    const tools = [
+      ...allComponents().filter((c) => !addedTypes().has(c.name)).map((c) => ({ type: c.name, label: c.name })),
+      ...STARTERS.map((st) => ({ starter: st.id, label: st.label })),
+    ]
+    for (const tool of tools) {
+      r68.render(React.createElement(ToolThumb, { tool, theme: 'midnight' }))
+      await new Promise((r) => setTimeout(r, 20))
+      const thumb = host.querySelector<HTMLElement>('.thumb')
+      const drawn = host.querySelector<HTMLElement>('.thumb-inner')?.firstElementChild as HTMLElement | null
+      if (!thumb || !drawn) { bad.push(`${tool.label}: nothing drawn`); continue }
+      const tr = thumb.getBoundingClientRect()
+      const dr = drawn.getBoundingClientRect()
+      if (dr.width < 4 || dr.height < 1) bad.push(`${tool.label}: ${dr.width.toFixed(0)}x${dr.height.toFixed(0)}`)
+      else if (dr.left < tr.left - 1 || dr.top < tr.top - 1 || dr.right > tr.right + 1 || dr.bottom > tr.bottom + 1) bad.push(`${tool.label}: spills out`)
+    }
+    check('every tool and starter draws a thumbnail that fits its card', bad.length === 0, bad.join(', '))
+    // A short label must not wrap one word per line (it was measured in a
+    // zero-width box: "Learn / more", "npm / run / verify").
+    const oneLine: string[] = []
+    // Counted as lines of text, not pixels: fonts differ between machines.
+    for (const type of ['Link', 'InlineCode', 'Badge', 'Button']) {
+      r68.render(React.createElement(ToolThumb, { tool: { type }, theme: 'midnight' }))
+      await new Promise((r) => setTimeout(r, 20))
+      const drawn = host.querySelector<HTMLElement>('.thumb-inner')?.firstElementChild as HTMLElement | null
+      if (!drawn) { oneLine.push(`${type}: nothing drawn`); continue }
+      const range = document.createRange()
+      range.selectNodeContents(drawn)
+      const lines = new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size
+      if (lines > 1) oneLine.push(`${type} on ${lines} lines`)
+    }
+    check('short labels stay on one line in a thumbnail', oneLine.length === 0, oneLine.join(', '))
+    r68.render(React.createElement(ToolThumb, { tool: { type: 'GroupBox' }, theme: 'midnight' }))
+    await new Promise((r) => setTimeout(r, 20))
+    check('the thumbnail is the real component (a GroupBox shows its legend)', (host.textContent ?? '').includes('Group'), host.textContent ?? '')
+    r68.unmount()
+    host.remove()
+
+    // The real toolbox: hover a tool, the card appears with its picture; leave, it goes.
+    const row = [...document.querySelectorAll<HTMLElement>('.toolbox .tool')].find((b) => b.textContent?.trim() === 'GroupBox')
+    row?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 400))
+    const card = document.querySelector<HTMLElement>('.tool-card')
+    check('hovering a tool shows its card with a picture', !!card && !!card.querySelector('.thumb .thumb-inner > *') && (card.textContent ?? '').includes('Group'), card?.textContent?.slice(0, 60) ?? 'no card')
+    check('the tool no longer has a plain browser tooltip on top', row?.getAttribute('title') === null)
+    row?.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: document.body }))
+    await new Promise((r) => setTimeout(r, 50))
+    check('leaving the tool hides its card', document.querySelector('.tool-card') === null)
+    // Seen in the same screenshots: an empty workspace said "Layers · -1".
+    const app = window.__loomStore
+    const before = app.doc
+    app.loadDocument({ version: 1, meta: { name: 'empty', targets: ['web'], created: 0 }, root: null, nodes: {} } as unknown as Document)
+    await new Promise((r) => setTimeout(r, 100))
+    const layersTab = [...document.querySelectorAll('.toolbox button')].find((b) => /Layers/.test(b.textContent ?? ''))?.textContent ?? ''
+    check('an empty workspace has 0 layers, not -1', /Layers\s*·\s*0/.test(layersTab), layersTab)
+    app.loadDocument(before)
+    await new Promise((r) => setTimeout(r, 100))
+  }
+
+  // --- 69. a background only when you choose one --------------------------
+  // Shane: "when doing the preview, the design grid shows up as a big
+  // background for the UI"; asked for UI without windows or decorations, no
+  // background unless chosen, and transparency with blur.
+  {
+    // The model: validated, undoable, unsafe colours refused.
+    check('a page takes none, theme, or a colour with alpha', cleanPage({ background: 'color', color: 'rgba(10, 20, 30, 0.5)', blur: 12 })?.color === 'rgba(10, 20, 30, 0.5)' && cleanPage({ background: 'none' })?.background === 'none')
+    check('an unsafe or missing page colour is refused', cleanPage({ background: 'color', color: 'red;}body{x:y' }) === null && cleanPage({ background: 'color' }) === null && cleanPage({ background: 'image' }) === null)
+    const sp = new EditorStore()
+    sp.addComponent('Panel', null, 0, 0)
+    sp.commit({ op: 'setPage', page: { background: 'color', color: '#112233', blur: 99 } }, 'page')
+    check('blur is clamped to its range', sp.doc.meta.page?.blur === 60, String(sp.doc.meta.page?.blur))
+    sp.undo()
+    check('setting the page undoes in one step', sp.doc.meta.page === undefined)
+    sp.redo()
+    const back = validate(serialize(sp.doc))
+    check('the page survives save and load', back.doc?.meta.page?.color === '#112233' && back.issues.length === 0)
+    const forged = validate(JSON.stringify({ ...JSON.parse(serialize(sp.doc)), meta: { ...sp.doc.meta, page: { background: 'color', color: 'url(javascript:x)' } } }))
+    check('a forged page colour is dropped on load, and said so', forged.doc?.meta.page === undefined && forged.issues.some((i) => i.path === '$.meta.page'))
+    check('an export paints no page unless one is chosen', !/body\{background:/.test(emitHtml(new EditorStore().doc)) && /body\{background:#112233/.test(emitHtml(sp.doc)))
+
+    // The real preview: nothing behind the UI by default; the page when chosen.
+    const app = window.__loomStore
+    const before = app.doc
+    const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms))
+    const mode = (m: string) => [...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === m)?.click()
+    const sc = new EditorStore()
+    sc.addComponent('Panel', null, 0, 0, { w: 400, h: 300 })
+    app.loadDocument(sc.doc)
+    await wait()
+    mode('Preview')
+    await wait(250)
+    const stage = () => document.querySelector<HTMLElement>('.canvas.previewing .stage')!
+    const cs = getComputedStyle(stage())
+    const wrap = getComputedStyle(document.querySelector('.canvas-wrap')!)
+    check('Preview draws no page, frame or shadow by default', cs.backgroundColor === 'rgba(0, 0, 0, 0)' && cs.boxShadow === 'none', `${cs.backgroundColor} / ${cs.boxShadow}`)
+    check('Preview shows no dot grid behind the UI', !/radial-gradient/.test(wrap.backgroundImage), wrap.backgroundImage.slice(0, 60))
+    app.commit({ op: 'setPage', page: { background: 'color', color: 'rgba(200, 10, 10, 0.5)', blur: 8 } }, 'page')
+    await wait()
+    const cs2 = getComputedStyle(stage())
+    check('a chosen see-through page is drawn, with its blur', cs2.backgroundColor === 'rgba(200, 10, 10, 0.5)' && /blur\(8px\)/.test(cs2.backdropFilter), `${cs2.backgroundColor} / ${cs2.backdropFilter}`)
+    mode('Design')
+    await wait()
+    app.select([])
+    await wait()
+    const panel = document.querySelector<HTMLElement>('.inspector .page-panel')
+    check('with nothing selected, the inspector offers the Page', !!panel && /Background/.test(panel.textContent ?? ''))
+    ;[...(panel?.querySelectorAll<HTMLButtonElement>('.page-seg button') ?? [])].find((b) => b.textContent === 'Theme')?.click()
+    await wait()
+    check('choosing Theme sets the page to the theme colour', app.doc.meta.page?.background === 'theme')
+    app.loadDocument(before)
+    await wait()
+  }
+
+  // --- 70. run on desktop: the dock places the window on the real screen ---
+  // Shane: "I was building a sidebar anchored to the side of the screen; in
+  // preview I expected to see it attached to the side of the desktop".
+  {
+    const work = { x: 0, y: 27, width: 1920, height: 1053 } // a top panel, as on this machine
+    const at = (anchor: string, w = 360, h = 400, x = 0, y = 0) => desktopBounds({ anchor, w, h, x, y }, work)
+    const eq = (a: object, b: object) => JSON.stringify(a) === JSON.stringify(b)
+    check('docked left: the left edge, full usable height', eq(at('left'), { x: 0, y: 27, width: 360, height: 1053 }), JSON.stringify(at('left')))
+    check('docked right: the right edge, full usable height', eq(at('right'), { x: 1560, y: 27, width: 360, height: 1053 }), JSON.stringify(at('right')))
+    check('docked top/bottom: full usable width', eq(at('top'), { x: 0, y: 27, width: 1920, height: 400 }) && eq(at('bottom'), { x: 0, y: 680, width: 1920, height: 400 }))
+    check('a corner dock sits in that corner at its own size', eq(at('bottom-right'), { x: 1560, y: 680, width: 360, height: 400 }))
+    check('centre and fill', eq(at('center'), { x: 780, y: 354, width: 360, height: 400 }) && eq(at('fill'), work))
+    check('undocked keeps its own place, on the screen', eq(at('none', 360, 400, 100, 50), { x: 100, y: 77, width: 360, height: 400 }) && at('none', 360, 400, 5000, 5000).x === 1560)
+    check('never bigger than the usable screen', at('left', 9999, 9999).width === 1920 && at('center', 9999, 9999).height === 1053)
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

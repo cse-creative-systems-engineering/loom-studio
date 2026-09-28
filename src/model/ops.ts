@@ -8,12 +8,16 @@
  */
 
 import type { Document, Node, NodeId, Op, PropValue } from './types'
-import { normalizeProps } from './registry'
+import { cleanPage } from './page'
+import { acceptsChild, getComponent, normalizeProps } from './registry'
 // Effects are a pure data module (values in, style out) with no model
 // dependency, so importing it here does NOT invert the model->render
 // layering. Keeping the normaliser in one place is worth more than the
 // nominal purity of not importing it.
 import { normalizeEffects } from '../render/effects'
+import { cleanStateStyle } from '../render/states'
+import { cleanPartStyle } from '../render/parts'
+import { cleanList, itemsOf, normalizeLists } from './lists'
 
 let counter = 0
 
@@ -104,6 +108,9 @@ export function apply(doc: Document, op: Op): Document {
       }
       const parent = next.nodes[op.parent]
       if (!parent) return doc
+      // A container that names its children (a tab set holds tabs) refuses
+      // anything else, whoever sends the op.
+      if (getComponent(parent.type)?.childTypes && !acceptsChild(parent.type, node.type)) return doc
       const index = op.index ?? parent.children.length
       parent.children.splice(Math.max(0, Math.min(index, parent.children.length)), 0, node.id)
       return next
@@ -171,6 +178,51 @@ export function apply(doc: Document, op: Op): Document {
       return next
     }
 
+    case 'setStateStyle': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      const bag = node.states ?? {}
+      const merged: Record<string, unknown> = { ...(bag[op.state] ?? {}) }
+      for (const [k, v] of Object.entries(op.patch)) {
+        if (v === null) delete merged[k]
+        else merged[k] = v
+      }
+      // Sanitised here, so no path (UI, file, AI op) can put anything but a
+      // valid value into the generated stylesheet.
+      const clean = cleanStateStyle(merged).style
+      const nextBag = { ...bag }
+      if (Object.keys(clean).length === 0) delete nextBag[op.state]
+      else nextBag[op.state] = clean
+      node.states = Object.keys(nextBag).length === 0 ? undefined : nextBag
+      return next
+    }
+
+    case 'setList': {
+      const node = next.nodes[op.id]
+      if (!node || !getComponent(node.type)?.lists?.[op.key]) return doc
+      node.lists = { ...(node.lists ?? {}), [op.key]: cleanList(node.type, op.key, op.items).items }
+      return next
+    }
+
+    case 'setPartStyle': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      const bag = node.parts ?? {}
+      const merged: Record<string, unknown> = { ...(bag[op.part] ?? {}) }
+      for (const [k, v] of Object.entries(op.patch)) {
+        if (v === null) delete merged[k]
+        else merged[k] = v
+      }
+      // Sanitised against the component's declaration: an undeclared part or
+      // a field the part does not accept never lands, whoever sent the op.
+      const clean = cleanPartStyle(node.type, op.part, merged).style
+      const nextBag = { ...bag }
+      if (Object.keys(clean).length === 0) delete nextBag[op.part]
+      else nextBag[op.part] = clean
+      node.parts = Object.keys(nextBag).length === 0 ? undefined : nextBag
+      return next
+    }
+
     case 'setEffects': {
       const node = next.nodes[op.id]
       if (!node) return doc
@@ -228,6 +280,7 @@ export function apply(doc: Document, op: Op): Document {
       if (op.id === next.root) return doc
       // Refuse to build a cycle: a node cannot become its own descendant.
       if (op.id === op.parent || descendants(next, op.id).includes(op.parent)) return doc
+      if (getComponent(target.type)?.childTypes && !acceptsChild(target.type, node.type)) return doc
 
       detach(next, op.id)
       // `op.index` is a slot in the destination list AFTER the node is removed
@@ -243,6 +296,26 @@ export function apply(doc: Document, op: Op): Document {
       next.meta.name = op.name
       return next
     }
+
+    case 'setTheme': {
+      const current = doc.meta.theme ?? null
+      if (current === op.theme) return doc
+      const meta = { ...next.meta }
+      if (op.theme === null) delete meta.theme
+      else meta.theme = op.theme
+      return { ...next, meta }
+    }
+
+    case 'setPage': {
+      // Only a valid page lands: an unsafe colour or a nonsense blur is refused
+      // here as well as in the loader, since ops are the other way in.
+      const page = op.page === null ? null : cleanPage(op.page)
+      if (op.page !== null && page === null) return doc
+      const meta = { ...next.meta }
+      if (page === null) delete meta.page
+      else meta.page = page
+      return { ...next, meta }
+    }
   }
 }
 
@@ -254,6 +327,7 @@ function cloneNode(node: Node): Node {
     ...node,
     props: normalizeProps(node.type, node.props),
     children: [...node.children],
+    ...(getComponent(node.type)?.lists ? { lists: normalizeLists(node) } : {}),
     z: clampZ(node.z ?? 0),
   }
 }
@@ -330,6 +404,31 @@ export function invert(doc: Document, op: Op): Op | undefined {
       return { op: 'setResponsive', id: op.id, breakpoint: op.breakpoint, patch: inverse }
     }
 
+    case 'setStateStyle': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      // Restore exactly the keys the patch touched, including their absence.
+      const before = (node.states?.[op.state] ?? {}) as Record<string, string | number | undefined>
+      const inverse: Record<string, string | number | null> = {}
+      for (const k of Object.keys(op.patch)) inverse[k] = before[k] ?? null
+      return { op: 'setStateStyle', id: op.id, state: op.state, patch: inverse }
+    }
+
+    case 'setList': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      return { op: 'setList', id: op.id, key: op.key, items: itemsOf(node, op.key).map((it) => ({ ...it })) }
+    }
+
+    case 'setPartStyle': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      const before = (node.parts?.[op.part] ?? {}) as Record<string, string | number | undefined>
+      const inverse: Record<string, string | number | null> = {}
+      for (const k of Object.keys(op.patch)) inverse[k] = before[k] ?? null
+      return { op: 'setPartStyle', id: op.id, part: op.part, patch: inverse }
+    }
+
     case 'setEffects': {
       const node = doc.nodes[op.id]
       if (!node) return undefined
@@ -381,6 +480,12 @@ export function invert(doc: Document, op: Op): Op | undefined {
     case 'rename': {
       return { op: 'rename', name: doc.meta.name }
     }
+    case 'setPage': {
+      return { op: 'setPage', page: doc.meta.page ? { ...doc.meta.page } : null }
+    }
+    case 'setTheme': {
+      return { op: 'setTheme', theme: doc.meta.theme ?? null }
+    }
   }
 }
 
@@ -431,6 +536,10 @@ export function duplicateSubtree(
       children: n.children.map((c) => remap.get(c) ?? c),
     }
   }
+  // A reference inside the copied subtree follows the copy: a duplicated chat
+  // panel's Composer sends to the DUPLICATED list, not the original. A
+  // reference outside the subtree keeps pointing where it did.
+  for (const n of Object.values(tree)) remapRefs(n, remap)
   const rootId = remap.get(id)
   const node = rootId ? tree[rootId] : undefined
   if (!node) return undefined
@@ -439,4 +548,15 @@ export function duplicateSubtree(
 
 function num(v: PropValue | undefined): number {
   return typeof v === 'number' ? v : 0
+}
+
+/** Rewrite a node's `node`-kind props through `remap`, in place. */
+export function remapRefs(node: Node, remap: Map<NodeId, NodeId>): void {
+  const spec = getComponent(node.type)
+  if (!spec) return
+  for (const [key, ps] of Object.entries(spec.props)) {
+    if (ps.type !== 'node') continue
+    const ref = node.props[key]
+    if (typeof ref === 'string' && remap.has(ref)) node.props[key] = remap.get(ref) as string
+  }
 }

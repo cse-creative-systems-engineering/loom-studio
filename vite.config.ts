@@ -14,6 +14,8 @@ export default defineConfig({
         index: 'index.html',
         // The detached preview window is a second renderer entry.
         preview: 'preview.html',
+        // Run on desktop: the design as a real, frameless window.
+        desktop: 'desktop.html',
       },
     },
   },

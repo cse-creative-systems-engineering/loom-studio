@@ -54,12 +54,29 @@ export function layoutProbe(): Check[] {
     })
   }
 
-  // The toggle must exist so the user can summon the window on demand.
-  const toggle = document.querySelector<HTMLElement>('.pv-toggle')
+  // Design / Preview is the question the title bar answers, so the switch
+  // lives there (the status bar it used to sit in is gone).
+  const toggle = document.querySelector<HTMLElement>('.titlebar .pv-toggle')
   out.push({
-    name: 'preview toggle is present in the status bar',
-    pass: Boolean(toggle),
+    name: 'Design / Preview switch is in the title bar',
+    pass: Boolean(toggle) && /Design/.test(toggle?.textContent ?? '') && /Preview/.test(toggle?.textContent ?? ''),
     detail: toggle ? (toggle.textContent ?? '').trim() : 'missing',
+  })
+
+  // Compact chrome: one bar, no status bar, no toolbar row, so the work gets
+  // the room. The bar stays at most 40px and the canvas starts right under it.
+  const bar = document.querySelector<HTMLElement>('.titlebar')?.getBoundingClientRect()
+  const wrap = document.querySelector<HTMLElement>('.canvas-wrap')?.getBoundingClientRect()
+  out.push({
+    name: 'chrome is one bar of at most 40px',
+    pass: Boolean(bar) && bar!.height <= 40 && document.querySelectorAll('.statusbar, .canvas-toolbar').length === 0,
+    detail: `bar=${bar ? Math.round(bar.height) : 'missing'} statusbar/toolbar=${document.querySelectorAll('.statusbar, .canvas-toolbar').length}`,
+  })
+  // The panels float with a 6px margin (the shell's gutter), no more.
+  out.push({
+    name: 'the canvas runs from the bar to the bottom edge',
+    pass: Boolean(bar && wrap) && Math.abs(wrap!.top - bar!.bottom) <= 1 && window.innerHeight - wrap!.bottom >= 0 && window.innerHeight - wrap!.bottom <= 8,
+    detail: wrap && bar ? `top=${Math.round(wrap.top)} bar=${Math.round(bar.bottom)} bottom=${Math.round(wrap.bottom)} window=${window.innerHeight}` : 'missing',
   })
 
   return out
