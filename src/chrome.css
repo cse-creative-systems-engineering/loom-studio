@@ -240,3 +240,55 @@
   overflow: hidden;
   box-shadow: 0 0 0 1px var(--line-2), 0 24px 60px -30px rgba(0, 0, 0, 0.9);
 }
+
+/* ---------------- floating shell ---------------- */
+
+/* The panels float as cards on the backdrop, with the work between them.
+   Borders between regions became space and elevation: the shell reads as
+   three objects, not a spreadsheet of rules. */
+.loom .body { gap: 6px; padding: 0 6px 6px; background: var(--bg); }
+.titlebar { border-bottom-color: transparent; }
+
+.loom .toolbox,
+.loom .inspector,
+.loom .canvas-wrap {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.loom .toolbox,
+.loom .inspector {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 120px), var(--panel);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 32px -18px rgba(0, 0, 0, 0.9);
+}
+
+/* Previewing is the running app: edge to edge, nothing floating around it. */
+.loom.previewing .body { padding: 0; gap: 0; }
+.loom.previewing .canvas-wrap { border: 0; border-radius: 0; }
+
+/* The frame's name, above it, as in any design tool: which screen this is. */
+.frame-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 6px 2px;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.frame-label strong { color: var(--ink-2); font-weight: 550; }
+
+/* The one primary action carries a little light: a lit top edge and depth. */
+.tb-primary {
+  background: linear-gradient(180deg, #7b9dff, var(--accent));
+  color: #fff;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.28) inset, 0 0 0 1px rgba(91, 140, 255, 0.6), 0 6px 16px -6px rgba(91, 140, 255, 0.7);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+}
+
+/* The frame: its name above, the artboard below, one unit centred on the
+   canvas. The label never scales with the zoom; it is chrome, not design. */
+.frame { display: grid; justify-items: start; align-content: start; }
+.frame-label span { color: var(--ink-3); }

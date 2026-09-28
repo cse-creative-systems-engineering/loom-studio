@@ -1205,6 +1205,17 @@ function Canvas({
     return () => ro.disconnect()
   }, [gutter, onRoom])
 
+  // The artboard is as tall as its root reaches (never shorter than 460px):
+  // the root is positioned absolutely, so a tall page used to spill out of
+  // the bottom of a 460px board.
+  const surfaceRef = React.useRef<HTMLDivElement | null>(null)
+  const [reach, setReach] = React.useState(0)
+  React.useLayoutEffect(() => {
+    const el = surfaceRef.current?.querySelector<HTMLElement>(':scope > [data-loom-id]')
+    const next = el ? el.offsetTop + el.offsetHeight : 0
+    if (next !== reach) setReach(next)
+  })
+
   return (
     <main className="canvas-wrap" ref={wrapRef}>
       {mode === 'preview' && (
@@ -1222,6 +1233,13 @@ function Canvas({
         </div>
       )}
       <div className={`canvas ${rulers ? 'rulers' : ''} ${dragging ? 'drop-active' : ''}`} hidden={mode === 'preview'}>
+        {/* The frame's name above it, as in any design tool: which screen this
+            is and how wide, at a glance. */}
+        <div className="frame">
+        <div className="frame-label" aria-hidden="true">
+          <strong>{VIEWPORTS.find((v) => v.id === viewport)?.label ?? 'Desktop'}</strong>
+          <span>{viewportWidth}</span>
+        </div>
         <div
           className={`surface ${CONTAINER_CLASS}`}
           data-loom-surface={s.doc.root ?? 'empty'}
@@ -1231,7 +1249,8 @@ function Canvas({
           // The design's type, not the Studio's: what the export's body sets.
           // Exactly the viewport's width, never squeezed to the canvas: the
           // zoom fits it instead, so positions match the preview.
-          style={{ zoom, width: viewportWidth, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
+          ref={surfaceRef}
+          style={{ zoom, width: viewportWidth, minHeight: Math.max(460, reach), fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
         >
           {s.doc.root !== null && (
             renderNode(
@@ -1263,6 +1282,7 @@ function Canvas({
             ) : (
               <div className="snap-guide-h" style={{ top: slot.y, left: slot.x, width: slot.w }} aria-hidden="true" />
             ))}
+        </div>
         </div>
       </div>
       {readout && (

@@ -72,9 +72,10 @@ export function layoutProbe(): Check[] {
     pass: Boolean(bar) && bar!.height <= 40 && document.querySelectorAll('.statusbar, .canvas-toolbar').length === 0,
     detail: `bar=${bar ? Math.round(bar.height) : 'missing'} statusbar/toolbar=${document.querySelectorAll('.statusbar, .canvas-toolbar').length}`,
   })
+  // The panels float with a 6px margin (the shell's gutter), no more.
   out.push({
     name: 'the canvas runs from the bar to the bottom edge',
-    pass: Boolean(bar && wrap) && Math.abs(wrap!.top - bar!.bottom) <= 1 && Math.abs(wrap!.bottom - window.innerHeight) <= 1,
+    pass: Boolean(bar && wrap) && Math.abs(wrap!.top - bar!.bottom) <= 1 && window.innerHeight - wrap!.bottom >= 0 && window.innerHeight - wrap!.bottom <= 8,
     detail: wrap && bar ? `top=${Math.round(wrap.top)} bar=${Math.round(bar.bottom)} bottom=${Math.round(wrap.bottom)} window=${window.innerHeight}` : 'missing',
   })
 

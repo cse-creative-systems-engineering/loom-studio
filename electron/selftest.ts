@@ -3565,6 +3565,14 @@ export async function runSelfTest(): Promise<string> {
       const width = (el.getBoundingClientRect().width - 2 * el.clientLeft * z) / z
       check(`the ${label} canvas is ${px}px wide`, Math.abs(width - px) <= 2, `${width.toFixed(1)}px at zoom ${z}`)
     }
+    // A root taller than the board's minimum stays inside it.
+    const tall = new EditorStore()
+    tall.addComponent('Panel', null, 0, 0, { w: 900, h: 1100 })
+    app.loadDocument(tall.doc)
+    await wait()
+    const board = document.querySelector<HTMLElement>('.surface')!
+    const rootEl = board.querySelector<HTMLElement>(':scope > [data-loom-id]')!
+    check('the artboard contains a root taller than its minimum', rootEl.getBoundingClientRect().bottom <= board.getBoundingClientRect().bottom + 1, `root ${rootEl.getBoundingClientRect().bottom.toFixed(0)} board ${board.getBoundingClientRect().bottom.toFixed(0)}`)
     app.loadDocument(before)
     await wait()
   }
