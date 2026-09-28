@@ -85,23 +85,21 @@ export function StatesPanel({ s, node, editing, onEditing }: Props) {
 
       {editing === null ? (
         <>
-          <div className="state-presets">
+          <div className="state-presets" title="One click for a finished effect; pick a state above to fine-tune it">
             {STATE_PRESETS.map((p) => (
               <button key={p.id} type="button" className="mini" title={p.hint} onClick={() => applyPreset(p.id)}>
                 {p.label}
               </button>
             ))}
           </div>
-          <div className="row between">
-            <span className="dim">
-              {anyStyled ? 'Pick a state to fine-tune it.' : 'One click for a finished effect, or pick a state.'}
-            </span>
-            {anyStyled && (
+          {anyStyled && (
+            <div className="row between">
+              <span className="dim">Pick a state to fine-tune it.</span>
               <button type="button" className="mini" onClick={clearAll} title="Remove hover, focus and pressed styling">
                 Clear
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </>
       ) : (
         <>

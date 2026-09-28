@@ -185,6 +185,24 @@ try {
     `${JSON.stringify(f0.order)} -> ${JSON.stringify(f1.order)}`)
   step('reorder commits exactly one history entry', f1.hist === f0.hist + 1, `${f0.hist} -> ${f1.hist}`)
 
+  // Hover outlines only the element under the pointer. `:hover` also matches
+  // every ancestor, which outlined the gauge, its card and the panel at once:
+  // boxes in boxes over the design. Real pointer, measured outlines.
+  await evaluate(ews, 'window.__loomStore.select([])')
+  await sleep(200)
+  const h0 = await evaluate(
+    ews,
+    `(() => { const r = document.querySelector('[data-loom-id="${ids.gauge}"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`,
+  )
+  await rpc(ews, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: h0.x, y: h0.y })
+  await sleep(250)
+  const outlined = await evaluate(
+    ews,
+    `[...document.querySelectorAll('.surface [data-loom-id]')].filter((el) => { const cs = getComputedStyle(el); return cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 }).map((el) => el.getAttribute('data-loom-type'))`,
+  )
+  step('hover outlines only the element under the pointer',
+    outlined.length === 1 && outlined[0] === 'Gauge', JSON.stringify(outlined))
+
   ews.close()
 } catch (e) {
   console.error('DRAG-PROBE-THREW', e)

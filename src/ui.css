@@ -119,11 +119,10 @@ input, select { font-family: inherit; font-size: 12px; }
 .scroll { overflow-y: auto; padding: 2px 6px 14px; flex: 1; min-height: 0; }
 
 .scroll h3 {
-  margin: 12px 6px 3px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.9px;
-  text-transform: uppercase;
+  margin: 14px 6px 4px;
+  font-size: 11px;
+  font-weight: 560;
+  letter-spacing: 0;
   color: var(--ink-3);
 }
 
@@ -320,8 +319,10 @@ input, select { font-family: inherit; font-size: 12px; }
   cursor: grabbing;
 }
 
-/* Hover: a faint selection-hue outline, distinct from selection itself. */
-.surface [data-loom-id]:hover {
+/* Hover: a faint selection-hue outline on the INNERMOST element under the
+   pointer only. Plain :hover also matches every ancestor, which drew the
+   element, its card and its panel at once. */
+.surface [data-loom-id]:hover:not(:has([data-loom-id]:hover)) {
   outline: 1px solid rgba(255, 178, 36, 0.45);
   outline-offset: 1px;
 }
@@ -381,14 +382,17 @@ input, select { font-family: inherit; font-size: 12px; }
 
 .insp-scroll section { margin-top: 12px; }
 
+/* Sentence-case group titles in the ink, rules between groups: a shouted
+   uppercase label over every group was the panel's loudest texture. */
 .insp-scroll h3 {
   margin: 0 0 6px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.9px;
-  text-transform: uppercase;
-  color: var(--ink-3);
+  letter-spacing: 0;
+  color: var(--ink);
 }
+
+.insp-scroll section + section { border-top: 1px solid var(--line); padding-top: 10px; }
 
 /* One row per property: label left, control right, 26px tall. Stacked
    labels spent a line on every property, which is most of the panel. The
@@ -877,17 +881,16 @@ input, select { font-family: inherit; font-size: 12px; }
  * ------------------------------------------------------------------ */
 
 .eff { margin-top: 12px; padding: 10px 0 4px; border-top: 1px solid var(--line); }
+.insp-scroll section + .eff { padding-top: 10px; }
 
 .eff h3 {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 0 0 6px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--loom-text-muted);
+  color: var(--ink);
 }
 
 .eff-count {
@@ -1028,25 +1031,25 @@ input, select { font-family: inherit; font-size: 12px; }
   grid-template-columns: repeat(4, 1fr);
   gap: 2px;
   padding: 2px;
-  margin-bottom: 10px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  margin-bottom: 6px;
+  background: var(--well);
+  border-radius: 7px;
 }
 
 .state-tab {
   position: relative;
-  padding: 5px 0;
+  height: 22px;
+  padding: 0;
   font-size: var(--text-xs);
-  color: var(--ink-2);
+  color: var(--ink-3);
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
 }
 
 .state-tab:hover { color: var(--ink); }
-.state-tab.on { color: var(--ink); background: var(--panel-2); box-shadow: 0 0 0 1px var(--line-2); }
+.state-tab.on { color: var(--ink); background: rgba(255, 255, 255, 0.09); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); }
 .state-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .state-dot {
@@ -1062,8 +1065,8 @@ input, select { font-family: inherit; font-size: 12px; }
 .state-presets {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin-bottom: 4px;
 }
 
 .state-note { margin: 0 0 10px; font-size: var(--text-sm); }
@@ -1076,18 +1079,21 @@ input, select { font-family: inherit; font-size: 12px; }
 .row.between { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .insp-scroll .dim { color: var(--ink-3); font-size: var(--text-sm); line-height: 1.45; }
 
+/* Small actions are wells like the fields: a filled shape, no outline. */
 .mini {
-  padding: 5px 8px;
+  height: 24px;
+  padding: 0 8px;
   font-size: var(--text-xs);
   color: var(--ink-2);
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--line-2);
+  background: var(--well);
+  border: 0;
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.mini:hover { color: var(--ink); border-color: rgba(91, 140, 255, 0.5); }
+.mini:hover:not(:disabled) { color: var(--ink); background: var(--well-hover); }
+.mini:disabled { opacity: 0.4; cursor: default; }
 .mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Parts: same tab strip as Interaction, but the number of parts varies per
