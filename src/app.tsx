@@ -15,6 +15,7 @@ import {
 } from './model/registry'
 import { tooltipText } from './model/tooltip'
 import { inspectorView, propLabel } from './model/inspector-view'
+import { GROUP_ORDER } from './model/prop-groups'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { STARTERS, getStarter } from './model/starters'
@@ -1415,6 +1416,38 @@ function Inspector({
   if (!spec) return <aside className="inspector" />
 
   const view = inspectorView(spec, node.props, { query, showAdvanced })
+  const fieldFor = (row: (typeof view.groups)[number]['rows'][number]) => (
+    <Field
+      key={row.key}
+      name={row.key}
+      ps={row.spec}
+      value={row.value}
+      modified={row.modified}
+      onChange={(v) => s.commit({ op: 'setProp', id: node.id, key: row.key, value: v }, `Set ${row.key}`)}
+      onReset={() => s.commit({ op: 'setProp', id: node.id, key: row.key, value: row.spec.default }, `Reset ${row.key}`)}
+      badge={supportedIn(spec, row.key, s.target) ? undefined : s.target}
+      refs={row.spec.type === 'node' ? nodeRefs(s.doc, row.spec.accepts) : undefined}
+    />
+  )
+  const flowRow = spec.container ? (
+    <div className="field" key="flow">
+      <label title="Off: children position freely. On: this container arranges them in order.">Flow layout</label>
+      <Toggle checked={node.flow} onChange={(v) => s.commit({ op: 'setFlow', id: node.id, flow: v }, v ? 'Flow on' : 'Flow off')} />
+    </div>
+  ) : null
+  // A free node's Position section holds its rotate/sticky rows too, so there
+  // is one "Position", not a picker section and a property group of that name.
+  const free = !isFlowChild(s.doc, node.id)
+  const positionGroup = view.groups.find((g) => g.name === 'Position')
+  const positionRows = free && positionGroup ? positionGroup.rows.map(fieldFor) : null
+  const hasLayout = view.groups.some((g) => g.name === 'Layout')
+  const shownGroups = [
+    ...view.groups.filter((g) => !(free && g.name === 'Position')),
+    // A container always has its Flow switch, even when every other layout
+    // property is behind "more properties" (and not while searching for
+    // something else).
+    ...(spec.container && !hasLayout && query.trim() === '' ? [{ name: 'Layout', rows: [] }] : []),
+  ].sort((a, b) => GROUP_ORDER.indexOf(a.name as never) - GROUP_ORDER.indexOf(b.name as never))
 
   const chain = ancestry(s.doc, node.id)
   const parent = parentOf(s.doc, node.id)
@@ -1469,20 +1502,10 @@ function Inspector({
             />
           </div>
         </section>
-        {spec.container && (
-          <section>
-            <h3>Layout</h3>
-            <div className="field">
-              <label title="Off: children position freely. On: this container arranges them in order.">Flow layout</label>
-              <Toggle
-                checked={node.flow}
-                onChange={(v) => s.commit({ op: 'setFlow', id: node.id, flow: v }, v ? 'Flow on' : 'Flow off')}
-              />
-            </div>
-          </section>
-        )}
         {!isFlowChild(s.doc, node.id) && (
-          <PositionSection s={s} node={node} viewport={viewport} narrow={narrow} label={label} over={over} />
+          <PositionSection s={s} node={node} viewport={viewport} narrow={narrow} label={label} over={over}>
+            {positionRows}
+          </PositionSection>
         )}
 
         {/* What this node does at other widths, and how to get rid of it. */}
@@ -1557,24 +1580,13 @@ function Inspector({
           <p className="props-empty">No properties match “{query.trim()}”.</p>
         )}
 
-        {view.groups.map((group) => (
+        {shownGroups.map((group) => (
           <section key={group.name}>
             <h3>{group.name}</h3>
-            {group.rows.map((row) => (
-              <Field
-                key={row.key}
-                name={row.key}
-                ps={row.spec}
-                value={row.value}
-                modified={row.modified}
-                onChange={(v) => s.commit({ op: 'setProp', id: node.id, key: row.key, value: v }, `Set ${row.key}`)}
-                onReset={() =>
-                  s.commit({ op: 'setProp', id: node.id, key: row.key, value: row.spec.default }, `Reset ${row.key}`)
-                }
-                badge={supportedIn(spec, row.key, s.target) ? undefined : s.target}
-                refs={row.spec.type === 'node' ? nodeRefs(s.doc, row.spec.accepts) : undefined}
-              />
-            ))}
+            {/* Flow is how a container arranges its children: the first
+                question of Layout, not a section of its own. */}
+            {group.name === 'Layout' && flowRow}
+            {group.rows.map(fieldFor)}
           </section>
         ))}
 
@@ -1779,6 +1791,7 @@ function PositionSection({
   narrow,
   label,
   over,
+  children,
 }: {
   s: EditorStore
   node: Node
@@ -1786,6 +1799,8 @@ function PositionSection({
   narrow: boolean
   label: string
   over: { x?: number; y?: number; w?: number; h?: number }
+  /** The rest of Position (rotate, sticky), as property rows. */
+  children?: React.ReactNode
 }) {
   const screen = VIEWPORTS.find((v) => v.id === viewport) ?? VIEWPORTS[VIEWPORTS.length - 1]!
   const anchor = String(node.props.anchor ?? 'none')
@@ -1850,6 +1865,7 @@ function PositionSection({
       <SlideField label="Y" value={y} max={screen.height} disabled={docked} onChange={(v) => move({ y: v })} onCommit={sealMove} why="Docked: the dock places it" />
       <SlideField label="W" value={w} min={1} max={screen.width} disabled={spansX} onChange={(v) => size({ w: v })} onCommit={sealSize} why="Docked across: it spans its parent" />
       <SlideField label="H" value={h} min={1} max={screen.height} disabled={spansY} onChange={(v) => size({ h: v })} onCommit={sealSize} why="Docked down: it spans its parent" />
+      {children}
     </section>
   )
 }

@@ -9,6 +9,7 @@
  */
 
 import type { ListItem, NodeId, PropValue } from './types'
+import { GROUP_ORDER, groupFor, relatedOrder } from './prop-groups'
 import { positionProps, STYLING_KEYS, universalStyleProps } from './prop-vocab'
 
 export type PropKind = 'string' | 'number' | 'boolean' | 'enum' | 'color' | 'delimiter' | 'node'
@@ -188,7 +189,7 @@ const registry = new Map<string, ComponentSpec>()
  * opts out with `universal: false`, which no component currently needs.
  */
 function withUniversalProps(spec: ComponentSpec): ComponentSpec {
-  if ((spec as { universal?: boolean }).universal === false) return spec
+  if ((spec as { universal?: boolean }).universal === false) return { ...spec, props: grouped(spec.props, spec) }
   // The component's own properties come FIRST (declaration order is panel
   // order, so a newcomer meets Content before Position), and an injected key
   // is only added where the component did not declare its own.
@@ -202,7 +203,34 @@ function withUniversalProps(spec: ComponentSpec): ComponentSpec {
   for (const [key, ps] of Object.entries(injected)) {
     if (!(key in props)) props[key] = ps
   }
-  return { ...spec, props }
+  return { ...spec, props: grouped(props, spec) }
+}
+
+/**
+ * Every property filed by what it means (`prop-groups.ts`), groups in the
+ * shared order, related keys side by side. Declaration order still decides
+ * the order inside a group, which is how a component puts its most important
+ * option first.
+ */
+function grouped(props: Record<string, PropSpec>, spec: ComponentSpec): Record<string, PropSpec> {
+  const byGroup = new Map<string, string[]>()
+  const filed: Record<string, PropSpec> = {}
+  for (const [key, ps] of Object.entries(props)) {
+    // A separator belongs wherever its list is filed, and a "show X" switch
+    // wherever X is.
+    const shown = /^show[A-Z]/.test(key) ? key.charAt(4).toLowerCase() + key.slice(5) : ''
+    const subject = /Sep$/.test(key) && props[key.slice(0, -3)] ? key.slice(0, -3) : shown && props[shown] ? shown : ''
+    const group = subject ? groupFor(subject, props[subject]!, spec) : groupFor(key, ps, spec)
+    filed[key] = group === ps.group ? ps : { ...ps, group }
+    const list = byGroup.get(group) ?? []
+    list.push(key)
+    byGroup.set(group, list)
+  }
+  const out: Record<string, PropSpec> = {}
+  for (const g of GROUP_ORDER) {
+    for (const key of relatedOrder(byGroup.get(g) ?? [])) out[key] = filed[key]!
+  }
+  return out
 }
 
 export function defineComponent(spec: ComponentSpec): ComponentSpec {

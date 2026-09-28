@@ -32,6 +32,7 @@ import { KNOWN_UNREACHABLE } from './area-backlog'
 import { installBehaviourRuntime } from '../src/render/behaviour-mount'
 import { STARTERS } from '../src/model/starters'
 import { hasOwnGlyph } from '../src/tool-icons'
+import { GROUP_ORDER } from '../src/model/prop-groups'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
@@ -2556,8 +2557,9 @@ export async function runSelfTest(): Promise<string> {
           ['label', 'variant', 'size', 'disabled'].every((k) => shown.includes(k)), shown.join(','))
         check('the essentials are a short list', shown.length <= 16, `${shown.length} shown: ${shown.join(',')}`)
         const all = inspectorView(spec, defaults, { query: '', showAdvanced: true })
+        // Everything but `anchor`, which the Position section's dock picker shows.
         check('"More properties" reveals everything', all.hiddenAdvanced === 0 &&
-          all.groups.reduce((n, g) => n + g.rows.length, 0) === Object.keys(spec.props).length)
+          all.groups.reduce((n, g) => n + g.rows.length, 0) === Object.keys(spec.props).length - 1)
         const changed = inspectorView(spec, { ...defaults, shadow: 'lg' }, { query: '', showAdvanced: false })
         const shadowRow = changed.groups.flatMap((g) => g.rows).find((r) => r.key === 'shadow')
         check('a changed advanced property is never hidden', shadowRow?.modified === true)
@@ -3738,6 +3740,68 @@ export async function runSelfTest(): Promise<string> {
     check('clicking it again frees it', app.doc.nodes[g]!.props.anchor === 'none', String(app.doc.nodes[g]!.props.anchor))
     app.loadDocument(before)
     await wait()
+  }
+
+  // --- 67. properties are filed by what they mean ------------------------
+  // Shane: "go through the properties and make sure they're grouped
+  // relationally". Before: `value` in three groups, `align` in three, `size`
+  // in three, a "Logic" group, a one-key "Size" group while width/height sat
+  // in Layout, separators far from their lists, two "Layout" and two
+  // "Position" headings in one panel.
+  {
+    const where = new Map<string, Set<string>>()
+    const outOfOrder: string[] = []
+    const apart: string[] = []
+    for (const c of allComponents()) {
+      const keys = Object.keys(c.props)
+      let last = -1
+      for (const k of keys) {
+        const g = c.props[k]!.group ?? ''
+        const i = (GROUP_ORDER as readonly string[]).indexOf(g)
+        if (i < 0) outOfOrder.push(`${c.name}.${k} in unknown group ${g}`)
+        else if (i < last) outOfOrder.push(`${c.name}.${k} (${g}) after a later group`)
+        last = Math.max(last, i)
+        if (!where.has(k)) where.set(k, new Set())
+        where.get(k)!.add(g)
+        // A "show X" switch sits right before X, in X's group.
+        const shows = /^show([A-Z]\w*)$/.exec(k)
+        const subj = shows ? shows[1]!.charAt(0).toLowerCase() + shows[1]!.slice(1) : ''
+        if (subj && keys.includes(subj) && (keys.indexOf(k) !== keys.indexOf(subj) - 1 || c.props[subj]!.group !== g)) apart.push(`${c.name}.${k}`)
+        // A separator sits right after its list, in the same group.
+        if (/Sep$/.test(k) && keys.includes(k.slice(0, -3))) {
+          const list = k.slice(0, -3)
+          if (keys.indexOf(k) !== keys.indexOf(list) + 1 || c.props[list]!.group !== g) apart.push(`${c.name}.${k}`)
+        }
+      }
+    }
+    check('groups come in one order on every component', outOfOrder.length === 0, outOfOrder.slice(0, 6).join(', '))
+    check('a list and its separator, and a thing and its show switch, sit together', apart.length === 0, apart.slice(0, 6).join(', '))
+    // The same key, the same meaning, the same group; the named exceptions
+    // are decided by what the value IS (words vs a number, container vs leaf).
+    const CONTEXTUAL = new Set(['align', 'value', 'max', 'maxItems', 'steps', 'columns', 'maxWidth', 'overflow', 'color', 'tone', 'label'])
+    // A "show X" switch goes where X goes, so it is contextual when X is.
+    const contextual = (k: string) => CONTEXTUAL.has(k) || (/^show[A-Z]/.test(k) && CONTEXTUAL.has(k.charAt(4).toLowerCase() + k.slice(5)))
+    const split = [...where.entries()].filter(([k, gs]) => gs.size > 1 && !contextual(k)).map(([k, gs]) => `${k}: ${[...gs].join('/')}`)
+    check('every other property is in the same group on every component', split.length === 0, split.join(', '))
+    check('no "Logic" or one-off groups remain', ![...where.values()].some((gs) => gs.has('Logic') || gs.has('General')))
+    check('size is with width and height', getComponent('Button')!.props.size!.group === 'Size' && getComponent('Panel')!.props.width!.group === 'Size')
+
+    // The real panel: one Layout heading (with Flow in it), one Position.
+    const app = window.__loomStore
+    const before = app.doc
+    const sc = new EditorStore()
+    sc.addComponent('Panel', null, 0, 0, { w: 1280, h: 800 })
+    const g = sc.dropComponent('GroupBox', sc.doc.root!, 100, 100)!
+    app.loadDocument(sc.doc)
+    app.select([g])
+    await new Promise((r) => setTimeout(r, 150))
+    const heads = [...document.querySelectorAll('.inspector .insp-scroll h3')].map((h) => h.firstChild?.textContent?.trim() ?? '')
+    const count = (n: string) => heads.filter((h) => h === n).length
+    check('the panel has one Layout and one Position heading', count('Layout') === 1 && count('Position') === 1, heads.join(' | '))
+    const layout = [...document.querySelectorAll<HTMLElement>('.inspector .insp-scroll section')].find((sec) => sec.querySelector('h3')?.textContent === 'Layout')
+    check('Flow layout is inside the Layout group', !!layout && (layout.textContent ?? '').includes('Flow layout'))
+    app.loadDocument(before)
+    await new Promise((r) => setTimeout(r, 100))
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

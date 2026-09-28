@@ -76,6 +76,9 @@ export function inspectorView(
   const groups = new Map<string, PropRow[]>()
   let hiddenAdvanced = 0
   for (const [key, ps] of Object.entries(spec.props)) {
+    // Docking has its own picture in the Position section; a dropdown of the
+    // same ten words beside it would be the same control twice.
+    if (key === 'anchor') continue
     const group = ps.group ?? 'General'
     // A missing key renders as its real default rather than a misleading 0.
     const value = Object.prototype.hasOwnProperty.call(props, key) ? props[key] : ps.default
