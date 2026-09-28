@@ -105,8 +105,10 @@ const BASE: Theme = {
   border: 'rgba(255, 255, 255, 0.09)',
   borderStrong: 'rgba(255, 255, 255, 0.16)',
 
-  fontFamily:
-    "ui-sans-serif, -apple-system, 'Inter', 'Segoe UI', system-ui, sans-serif",
+  // The output ships its own face (render/fonts.ts), so it is named FIRST:
+  // behind `ui-sans-serif` it never won, and the design fell to SF, Segoe or
+  // DejaVu depending on the machine it was opened on.
+  fontFamily: "'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif",
   fontMono: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace",
 
   // ~1.2 ratio on a 15px base.

@@ -40,6 +40,7 @@ import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
 import { THEME_NAMES } from '../src/render/theme'
+import { OUTPUT_FAMILY, fontFaceCss } from '../src/render/fonts'
 import { PreviewStage } from '../src/preview'
 import { seedDemo } from '../src/demo'
 import { reparentProbe } from './reparent-probe'
@@ -733,6 +734,41 @@ export async function runSelfTest(): Promise<string> {
     check('export embeds the active theme', html.includes(getTheme('daylight').textPrimary), 'daylight text colour missing')
     check('export is deterministic', emitHtml(se.doc) === html)
 
+    // The export carries its typeface. Without it the page fell to whatever
+    // `ui-sans-serif` meant on the machine that opened it (DejaVu Sans on
+    // Linux), which is most of why the output looked home made. Proven the
+    // way a reader sees it: the page is loaded in a frame under the app's own
+    // content-security-policy (a srcdoc frame inherits it, and a policy
+    // without `font-src data:` blocks the face) and the text is MEASURED
+    // against the platform face.
+    for (const name of THEME_NAMES) {
+      check(`theme ${name} asks for the shipped face first`, getTheme(name).fontFamily.startsWith(`'${OUTPUT_FAMILY}'`), getTheme(name).fontFamily)
+    }
+    check('export embeds the output typeface as data', /@font-face\{font-family:'Inter Variable'[^}]*src:url\(data:font\/woff2;base64,/.test(html))
+    {
+      const frame = document.createElement('iframe')
+      frame.style.cssText = 'position:fixed;left:-4000px;top:0;width:800px;height:600px'
+      document.body.appendChild(frame)
+      await new Promise<void>((r) => { frame.onload = () => r(); frame.srcdoc = html })
+      const fd = frame.contentDocument!
+      const faces = [...fd.fonts].filter((f) => f.family.replace(/["']/g, '') === OUTPUT_FAMILY)
+      const loaded = await Promise.all(faces.map((f) => f.load().then(() => f.status, () => 'error')))
+      const probe = (family: string) => {
+        const el = fd.createElement('span')
+        el.style.cssText = `font:400 32px ${family};white-space:nowrap;position:absolute`
+        el.textContent = 'Hamburgefonstiv 0123'
+        fd.body.appendChild(el)
+        const w = el.getBoundingClientRect().width
+        el.remove()
+        return w
+      }
+      const shipped = probe(getTheme('daylight').fontFamily)
+      const platform = probe('ui-sans-serif, system-ui, sans-serif')
+      frame.remove()
+      check('exported page loads its typeface', faces.length === 2 && loaded.every((st) => st === 'loaded'), `faces=${faces.length} ${loaded.join(',')}`)
+      check('exported text is set in the shipped face, not the platform one', Math.abs(shipped - platform) > 2, `shipped=${shipped.toFixed(1)} platform=${platform.toFixed(1)}`)
+    }
+
     // Hostile text must be escaped, never emitted raw.
     const evil = new EditorStore()
     evil.addComponent('Label', withRoot(evil), 0, 0, { text: '<script>alert(1)</script>' })
@@ -863,7 +899,7 @@ export async function runSelfTest(): Promise<string> {
         for (const n of Object.values(v.doc.nodes)) for (const c of n.children) counts[c] = (counts[c] ?? 0) + 1
         singleParent = Object.values(counts).every((k) => k === 1) &&
           v.issues.some((i) => i.message.includes('already has a parent'))
-        linear = emitHtml(v.doc).length < 100000
+        linear = emitHtml(v.doc).length - fontFaceCss().length < 100000
       }
       check('shared subtrees collapse to one parent with issues', singleParent)
       check('shared subtrees render linearly', linear)
@@ -880,7 +916,8 @@ export async function runSelfTest(): Promise<string> {
       let rendered = -1
       if (v.doc) {
         try {
-          rendered = emitHtml(v.doc).length
+          // The embedded typeface is a fixed cost, not rendering.
+          rendered = emitHtml(v.doc).length - fontFaceCss().length
         } catch {
           rendered = -1
         }
@@ -3462,10 +3499,12 @@ export async function runSelfTest(): Promise<string> {
     app.loadDocument(before)
   }
 
-  // --- 62. the Studio has its own typeface, and the canvas does not ------
+  // --- 62. the Studio has its own typeface, and the canvas has the export's -
   // The chrome was falling back to whatever the OS had (Noto Sans here). Inter
-  // is bundled for the TOOL. The design must not pick it up: exports do not
-  // ship the font, so a canvas in Inter would not be what gets exported.
+  // is bundled for the TOOL. The canvas must show what gets exported: it once
+  // had to avoid Inter because exports did not ship it; exports now embed the
+  // theme's face (render/fonts.ts), so the canvas uses the THEME's stack, which
+  // happens to name Inter first. The Studio's own stack must not leak in.
   {
     await document.fonts.load('12px "Inter Variable"')
     await document.fonts.ready
@@ -3497,13 +3536,15 @@ export async function runSelfTest(): Promise<string> {
     await new Promise((r) => setTimeout(r, 60))
     const label = [...host.querySelectorAll<HTMLElement>('[data-loom-type="Label"]')][0]
     const canvasFont = label ? getComputedStyle(label).fontFamily : 'missing'
-    check('the canvas keeps the export\'s type, not the Studio\'s', label !== undefined && !canvasFont.includes('Inter Variable'), canvasFont)
+    const themeFont = (name?: string) => getTheme(name).fontFamily.replace(/["']/g, '').replace(/\s*,\s*/g, ',')
+    const norm = (f: string) => f.replace(/["']/g, '').replace(/\s*,\s*/g, ',')
+    check('the canvas keeps the export\'s type, not the Studio\'s', label !== undefined && norm(canvasFont) === themeFont(s62.doc.meta.theme), canvasFont)
     r62.unmount()
     host.remove()
     // And what a component inherits: the real surface and preview stage carry
     // the theme's font, as the exported <body> does.
     const surf = document.querySelector<HTMLElement>('.loom .surface')
-    check('the real canvas inherits the theme font, not the Studio font', surf !== null && !getComputedStyle(surf).fontFamily.includes('Inter Variable'), surf ? getComputedStyle(surf).fontFamily : 'no surface')
+    check('the real canvas inherits the theme font, not the Studio font', surf !== null && norm(getComputedStyle(surf).fontFamily) === themeFont(window.__loomStore?.doc.meta.theme), surf ? getComputedStyle(surf).fontFamily : 'no surface')
   }
 
   // --- 63. every tool has its own drawing ---------------------------------
