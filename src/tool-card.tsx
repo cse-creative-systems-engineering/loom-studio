@@ -56,38 +56,50 @@ export function thumbDoc(tool: { type?: string; starter?: string }, theme?: stri
  * first paint (a component's size is whatever its content makes it), then
  * zoomed down, never up: a Badge stays badge-sized in the middle.
  */
-export function ToolThumb({ tool, theme }: { tool: { type?: string; starter?: string }; theme?: string }) {
+export function ToolThumb({ tool, theme, width = THUMB_W, height = THUMB_H }: { tool: { type?: string; starter?: string }; theme?: string; width?: number; height?: number }) {
   const doc = React.useMemo(() => thumbDoc(tool, theme), [tool.type, tool.starter, theme])
   const inner = React.useRef<HTMLDivElement | null>(null)
-  const [fit, setFit] = React.useState<{ z: number; w: number; h: number } | null>(null)
+  // The fit belongs to the tool it was measured for: a card switching tools
+  // must lay the new one out unconstrained, not inside the last one's box
+  // (a code snippet measured inside a link's 68px wrapped onto two lines).
+  const [measured, setFit] = React.useState<{ z: number; w: number; h: number; doc: Document } | null>(null)
+  const fit = measured && measured.doc === doc ? measured : null
   // A docked tool (a sidebar pinned top to bottom) is as tall as the screen
   // it is docked to, so it is drawn on a small screen of the card's shape;
   // anything else is drawn at its own size.
   const anchor = String(doc.nodes[doc.root!]?.props.anchor ?? 'none')
-  const screen = anchor !== 'none' && anchor !== '' ? { w: 720, h: Math.round((720 * THUMB_H) / THUMB_W) } : null
+  const screen = anchor !== 'none' && anchor !== '' ? { w: 720, h: Math.round((720 * height) / width) } : null
   React.useLayoutEffect(() => {
     const el = inner.current?.firstElementChild as HTMLElement | null
     if (!el) return
-    const w = screen ? screen.w : Math.max(1, el.offsetWidth)
-    const h = screen ? screen.h : Math.max(1, el.offsetHeight)
-    const z = screen ? THUMB_W / screen.w : Math.min(1, (THUMB_W - 16) / w, (THUMB_H - 16) / h)
-    setFit({ z, w, h })
-  }, [doc])
+    // The exact box, rounded UP: offsetWidth truncates (67.4 -> 67), and text
+    // given 0.4px too little wraps onto a second line. The box on screen is
+    // scaled by whatever zoom is applied now (the previous tool's, when the
+    // card switches tools), so it is divided back out.
+    const zoomNow = Number(getComputedStyle(inner.current!).zoom) || 1
+    const box = el.getBoundingClientRect()
+    const w = screen ? screen.w : Math.max(1, Math.ceil(box.width / zoomNow))
+    const h = screen ? screen.h : Math.max(1, Math.ceil(box.height / zoomNow))
+    const z = screen ? width / screen.w : Math.min(1, (width - 16) / w, (height - 16) / h)
+    setFit({ z, w, h, doc })
+  }, [doc, width, height])
   const t = getTheme(theme)
   return (
-    <div className="thumb" style={{ width: THUMB_W, height: THUMB_H, background: t.bg, color: t.textPrimary, fontFamily: t.fontFamily }} aria-hidden="true">
+    <div className="thumb" style={{ width, height, background: t.bg, color: t.textPrimary, fontFamily: t.fontFamily }} aria-hidden="true">
       <div
         ref={inner}
         className="thumb-inner"
         inert
         style={{
           zoom: fit?.z ?? 1,
-          width: fit ? fit.w : screen?.w,
+          // Measured in a wide box, so a tool with words in it is as wide as
+          // its words (a zero-width box wrapped "Learn more" one word a line).
+          width: fit ? fit.w : screen?.w ?? 1200,
           height: fit ? fit.h : screen?.h,
           // Centred in the box once measured; hidden until then so it never
           // flashes at full size.
-          left: fit ? (THUMB_W / (fit.z || 1) - fit.w) / 2 : 0,
-          top: fit ? (THUMB_H / (fit.z || 1) - fit.h) / 2 : 0,
+          left: fit ? (width / (fit.z || 1) - fit.w) / 2 : 0,
+          top: fit ? (height / (fit.z || 1) - fit.h) / 2 : 0,
           visibility: fit ? 'visible' : 'hidden',
         }}
       >

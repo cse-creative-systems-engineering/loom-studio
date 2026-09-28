@@ -458,3 +458,14 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ---------------- specimen board (tooling only) ---------------- */
+#loom-specimen { position: fixed; inset: 0; z-index: 1000; overflow: auto; }
+.specimen { min-height: 100%; padding: 24px; }
+.specimen-head { font: 500 13px var(--font); color: #8a8f99; margin: 0 0 16px; }
+.specimen-head strong { color: #e9eaee; }
+.specimen-grid { display: grid; grid-template-columns: repeat(4, 320px); gap: 28px 24px; }
+.specimen-cell { margin: 0; }
+.specimen-cell .thumb { box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.18); }
+.specimen-cell figcaption { margin-top: 8px; font: 500 12px var(--font); color: #9a9fa9; }
+.specimen-cell figcaption span { margin-left: 6px; font-weight: 400; opacity: 0.6; }

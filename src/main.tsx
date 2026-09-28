@@ -4,6 +4,7 @@ import { App } from './app'
 import { runSelfTest } from '../electron/selftest'
 import { reparentProbe } from '../electron/reparent-probe'
 import { layoutProbe } from '../electron/layout-probe-renderer'
+import { showSpecimen, hideSpecimen } from './specimen'
 import type { EditorStore } from './state/store'
 import { store } from './app'
 import { seedDemo } from './demo'
@@ -33,6 +34,8 @@ declare global {
     __runSelfTest?: () => Promise<string>
     __loomProbe?: () => unknown[]
     __loomLayoutProbe?: () => unknown[]
+    __loomSpecimen?: (theme: string, only?: string[]) => number
+    __loomSpecimenHide?: () => void
     __loomStore: EditorStore
   }
 }
@@ -40,4 +43,6 @@ if (typeof window !== 'undefined') {
   window.__runSelfTest = runSelfTest
   window.__loomProbe = reparentProbe
   window.__loomLayoutProbe = layoutProbe
+  window.__loomSpecimen = showSpecimen
+  window.__loomSpecimenHide = hideSpecimen
 }

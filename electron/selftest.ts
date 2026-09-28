@@ -3832,6 +3832,21 @@ export async function runSelfTest(): Promise<string> {
       else if (dr.left < tr.left - 1 || dr.top < tr.top - 1 || dr.right > tr.right + 1 || dr.bottom > tr.bottom + 1) bad.push(`${tool.label}: spills out`)
     }
     check('every tool and starter draws a thumbnail that fits its card', bad.length === 0, bad.join(', '))
+    // A short label must not wrap one word per line (it was measured in a
+    // zero-width box: "Learn / more", "npm / run / verify").
+    const oneLine: string[] = []
+    // Counted as lines of text, not pixels: fonts differ between machines.
+    for (const type of ['Link', 'InlineCode', 'Badge', 'Button']) {
+      r68.render(React.createElement(ToolThumb, { tool: { type }, theme: 'midnight' }))
+      await new Promise((r) => setTimeout(r, 20))
+      const drawn = host.querySelector<HTMLElement>('.thumb-inner')?.firstElementChild as HTMLElement | null
+      if (!drawn) { oneLine.push(`${type}: nothing drawn`); continue }
+      const range = document.createRange()
+      range.selectNodeContents(drawn)
+      const lines = new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size
+      if (lines > 1) oneLine.push(`${type} on ${lines} lines`)
+    }
+    check('short labels stay on one line in a thumbnail', oneLine.length === 0, oneLine.join(', '))
     r68.render(React.createElement(ToolThumb, { tool: { type: 'GroupBox' }, theme: 'midnight' }))
     await new Promise((r) => setTimeout(r, 20))
     check('the thumbnail is the real component (a GroupBox shows its legend)', (host.textContent ?? '').includes('Group'), host.textContent ?? '')
