@@ -22,6 +22,7 @@ import { STARTERS, getStarter } from './model/starters'
 import { iconMarkup } from './render/icons'
 import { starterGlyph, toolGlyph } from './tool-icons'
 import { PreviewStage } from './preview'
+import { ToolCard, type CardTarget } from './tool-card'
 import { StatesPanel } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
@@ -526,6 +527,26 @@ function Toolbox({
   const added = addedTypes()
   const [filter, setFilter] = React.useState('')
   const [tab, setTab] = React.useState<'components' | 'layers'>('components')
+  // The hover card: a moment's pause on a tool shows what it looks like.
+  const [card, setCard] = React.useState<CardTarget | null>(null)
+  const cardTimer = React.useRef<number | null>(null)
+  const hideCard = () => {
+    if (cardTimer.current !== null) window.clearTimeout(cardTimer.current)
+    cardTimer.current = null
+    setCard(null)
+  }
+  const cardOn = (tool: CardTarget['tool'], name: string, text: string) => ({
+    onPointerEnter: (e: React.PointerEvent<HTMLElement>) => {
+      const row = e.currentTarget.getBoundingClientRect()
+      const box = e.currentTarget.closest('.toolbox')?.getBoundingClientRect()
+      if (cardTimer.current !== null) window.clearTimeout(cardTimer.current)
+      // Instant once a card is up (moving down the list), a pause before the first.
+      const delay = card ? 0 : 280
+      cardTimer.current = window.setTimeout(() => setCard({ tool, name, text, top: row.top, left: (box?.right ?? row.right) + 8 }), delay)
+    },
+    onPointerLeave: hideCard,
+    'aria-description': text,
+  })
   const draggedType = React.useRef<string | null>(null)
 
   const startDrag = (e: React.PointerEvent, type: string) => {
@@ -620,10 +641,12 @@ function Toolbox({
     }`
   }
 
-  const elementCount = Object.keys(s.doc.nodes).length - 1
+  // Everything but the root; an empty workspace has no root and no layers.
+  const elementCount = Math.max(0, Object.keys(s.doc.nodes).length - 1)
 
   return (
-    <aside className="toolbox">
+    <aside className="toolbox" onPointerLeave={hideCard}>
+      {card && <ToolCard target={card} theme={s.doc.meta.theme} />}
       {tab === 'components' && (
         <input
           className="search"
@@ -667,8 +690,11 @@ function Toolbox({
                   <button
                     key={st.id}
                     className="tool"
-                    title={st.description}
-                    onPointerDown={(e) => startDrag(e, STARTER_PREFIX + st.id)}
+                    {...cardOn({ starter: st.id }, st.label, st.description)}
+                    onPointerDown={(e) => {
+                      hideCard()
+                      startDrag(e, STARTER_PREFIX + st.id)
+                    }}
                   >
                     <span className="tool-icon"><Glyph markup={starterGlyph(st.id)} /></span>
                     <span className="tool-name">{st.label}</span>
@@ -690,8 +716,11 @@ function Toolbox({
                       <button
                         key={c.name}
                         className="tool"
-                        title={tooltipText(c, s.target)}
-                        onPointerDown={(e) => startDrag(e, c.name)}
+                        {...cardOn({ type: c.name }, c.name, tooltipText(c, s.target))}
+                        onPointerDown={(e) => {
+                          hideCard()
+                          startDrag(e, c.name)
+                        }}
                       >
                         <span className="tool-icon"><Glyph markup={toolGlyph(c.name, c.category)} /></span>
                         <span className="tool-name">{c.name}</span>

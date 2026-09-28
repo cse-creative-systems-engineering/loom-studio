@@ -33,6 +33,7 @@ import { installBehaviourRuntime } from '../src/render/behaviour-mount'
 import { STARTERS } from '../src/model/starters'
 import { hasOwnGlyph } from '../src/tool-icons'
 import { GROUP_ORDER } from '../src/model/prop-groups'
+import { ToolThumb } from '../src/tool-card'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
@@ -3800,6 +3801,60 @@ export async function runSelfTest(): Promise<string> {
     check('the panel has one Layout and one Position heading', count('Layout') === 1 && count('Position') === 1, heads.join(' | '))
     const layout = [...document.querySelectorAll<HTMLElement>('.inspector .insp-scroll section')].find((sec) => sec.querySelector('h3')?.textContent === 'Layout')
     check('Flow layout is inside the Layout group', !!layout && (layout.textContent ?? '').includes('Flow layout'))
+    app.loadDocument(before)
+    await new Promise((r) => setTimeout(r, 100))
+  }
+
+  // --- 68. every tool shows what it looks like on hover --------------------
+  // Shane: "a tiny thumbnail of each tool in its tooltip would make the
+  // toolbox much less intimidating". The picture is the real component at
+  // its drop size, scaled into the card: every tool and starter must draw
+  // something visible that fits the box.
+  {
+    const bad: string[] = []
+    const host = document.createElement('div')
+    host.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden'
+    document.body.appendChild(host)
+    const r68 = createRoot(host)
+    const tools = [
+      ...allComponents().filter((c) => !addedTypes().has(c.name)).map((c) => ({ type: c.name, label: c.name })),
+      ...STARTERS.map((st) => ({ starter: st.id, label: st.label })),
+    ]
+    for (const tool of tools) {
+      r68.render(React.createElement(ToolThumb, { tool, theme: 'midnight' }))
+      await new Promise((r) => setTimeout(r, 20))
+      const thumb = host.querySelector<HTMLElement>('.thumb')
+      const drawn = host.querySelector<HTMLElement>('.thumb-inner')?.firstElementChild as HTMLElement | null
+      if (!thumb || !drawn) { bad.push(`${tool.label}: nothing drawn`); continue }
+      const tr = thumb.getBoundingClientRect()
+      const dr = drawn.getBoundingClientRect()
+      if (dr.width < 4 || dr.height < 1) bad.push(`${tool.label}: ${dr.width.toFixed(0)}x${dr.height.toFixed(0)}`)
+      else if (dr.left < tr.left - 1 || dr.top < tr.top - 1 || dr.right > tr.right + 1 || dr.bottom > tr.bottom + 1) bad.push(`${tool.label}: spills out`)
+    }
+    check('every tool and starter draws a thumbnail that fits its card', bad.length === 0, bad.join(', '))
+    r68.render(React.createElement(ToolThumb, { tool: { type: 'GroupBox' }, theme: 'midnight' }))
+    await new Promise((r) => setTimeout(r, 20))
+    check('the thumbnail is the real component (a GroupBox shows its legend)', (host.textContent ?? '').includes('Group'), host.textContent ?? '')
+    r68.unmount()
+    host.remove()
+
+    // The real toolbox: hover a tool, the card appears with its picture; leave, it goes.
+    const row = [...document.querySelectorAll<HTMLElement>('.toolbox .tool')].find((b) => b.textContent?.trim() === 'GroupBox')
+    row?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 400))
+    const card = document.querySelector<HTMLElement>('.tool-card')
+    check('hovering a tool shows its card with a picture', !!card && !!card.querySelector('.thumb .thumb-inner > *') && (card.textContent ?? '').includes('Group'), card?.textContent?.slice(0, 60) ?? 'no card')
+    check('the tool no longer has a plain browser tooltip on top', row?.getAttribute('title') === null)
+    row?.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: document.body }))
+    await new Promise((r) => setTimeout(r, 50))
+    check('leaving the tool hides its card', document.querySelector('.tool-card') === null)
+    // Seen in the same screenshots: an empty workspace said "Layers · -1".
+    const app = window.__loomStore
+    const before = app.doc
+    app.loadDocument({ version: 1, meta: { name: 'empty', targets: ['web'], created: 0 }, root: null, nodes: {} } as unknown as Document)
+    await new Promise((r) => setTimeout(r, 100))
+    const layersTab = [...document.querySelectorAll('.toolbox button')].find((b) => /Layers/.test(b.textContent ?? ''))?.textContent ?? ''
+    check('an empty workspace has 0 layers, not -1', /Layers\s*·\s*0/.test(layersTab), layersTab)
     app.loadDocument(before)
     await new Promise((r) => setTimeout(r, 100))
   }
