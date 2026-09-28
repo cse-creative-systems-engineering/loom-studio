@@ -714,7 +714,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       // The treatments a text field actually comes in. `default` is the
       // outlined surface the component has always drawn.
       const variants: Record<string, React.CSSProperties> = {
-        default: { background: t.surface, border: `1px solid ${t.borderStrong}` },
+        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
+        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
         primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
         secondary: { background: t.bg, border: 'none' },
         ghost: { background: 'transparent', border: `1px solid ${t.border}` },
@@ -1057,7 +1058,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       s.padding = `${ipy}px ${ipx}px`; s.borderRadius = `${t.radiusMd}px`
       // The treatments a field actually comes in, named as they are elsewhere.
       const iVariants: Record<string, React.CSSProperties> = {
-        default: { background: t.surface, border: `1px solid ${t.borderStrong}` },
+        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
+        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
         primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
         secondary: { background: t.bg, border: `1px solid ${t.border}` },
         ghost: { background: 'transparent', border: `1px solid ${t.border}` },
@@ -1078,7 +1080,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       s.width = px(p.width, 280); s.padding = `${apy}px ${apx}px`
       s.borderRadius = `${t.radiusMd}px`
       const aVariants: Record<string, React.CSSProperties> = {
-        default: { background: t.surface, border: `1px solid ${t.borderStrong}` },
+        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
+        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
         primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
         secondary: { background: t.bg, border: `1px solid ${t.border}` },
         ghost: { background: 'transparent', border: `1px solid ${t.border}` },
@@ -1151,8 +1154,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
     case 'Segmented': {
       s.display = 'inline-flex'; s.gap = '2px'
       s.padding = str(p.size) === 'sm' ? '2px' : str(p.size) === 'lg' ? '4px' : '3px'
-      s.borderRadius = `${t.radiusMd}px`; s.background = t.bg
-      s.border = `1px solid ${t.border}`
+      s.borderRadius = `${t.radiusMd}px`; s.background = t.wellFill
+      s.border = `1px solid ${t.wellEdge}`; s.boxShadow = t.wellShadow
       break
     }
     case 'TagInput': case 'OtpInput': {
@@ -1164,7 +1167,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       }
       const [vpy, vpx, vfs] = vSizes[str(p.size)] ?? vSizes.md
       s.padding = `${vpy}px ${vpx}px`; s.borderRadius = `${t.radiusMd}px`
-      s.border = `1px solid ${t.borderStrong}`; s.background = t.surface
+      s.border = `1px solid ${t.wellEdge}`; s.background = t.wellFill; s.boxShadow = t.wellShadow
       s.fontSize = `${vfs}px`; s.color = t.textPrimary
       break
     }
@@ -1783,6 +1786,12 @@ function themeVars(t: Theme): React.CSSProperties {
     '--loom-off': t.borderStrong,
     '--loom-on-bg': `${t.accent}1f`,
     '--loom-on-accent': t.textOnAccent,
+    '--loom-well': t.wellFill,
+    '--loom-well-shadow': t.wellShadow,
+    '--loom-knob': t.knobFill,
+    '--loom-knob-shadow': t.knobShadow,
+    '--loom-raised': t.raisedFill,
+    '--loom-raised-shadow': t.raisedShadow,
     '--loom-chevron': chevronUrl(t.textMuted),
     colorScheme: t.colorScheme,
     '--loom-on-fg': t.accent,
@@ -3206,7 +3215,7 @@ function renderPreviewBody(
               lines up. */}
           <input type="checkbox" defaultChecked={on} disabled={p.disabled === true} tabIndex={-1} aria-hidden="true" style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }} />
           <span data-loom-track style={{ width: '34px', height: '20px', borderRadius: '999px', display: 'inline-flex', alignItems: 'center', padding: '2px' }}>
-            <span data-loom-knob style={{ width: '14px', height: '14px', borderRadius: '999px', background: '#fff', display: 'block' }} />
+            <span data-loom-knob style={{ width: '14px', height: '14px', borderRadius: '999px', display: 'block' }} />
           </span>
           <span>{str(p.label)}</span>
         </label>
@@ -3233,7 +3242,11 @@ function renderPreviewBody(
             disabled={off}
             aria-label={str(p.ariaLabel) || undefined}
             data-loom-output={showValue ? readoutId : undefined}
-            style={{ accentColor: accent, height: str(p.size) === 'sm' ? 16 : str(p.size) === 'lg' ? 28 : 20 }}
+            data-loom-range=""
+            // The track is a well, filled with the tone up to the value
+            // (--loom-fill, kept current by the runtime as it moves), and the
+            // thumb is an extruded knob: see the state stylesheet.
+            style={{ '--loom-tick': accent, '--loom-fill': `${max > min ? Math.round(((v - min) / (max - min)) * 100) : 0}%`, height: str(p.size) === 'sm' ? 16 : str(p.size) === 'lg' ? 28 : 20 } as React.CSSProperties}
           />
           {showValue ? <span id={readoutId} data-loom-readout>{v}</span> : null}
         </label>
@@ -3534,24 +3547,24 @@ function renderPreviewBody(
       return (
         <div
           key={key}
-          style={{ ...style, width: full ? '100%' : style.width }}
+          // `tone` tints the SELECTED option; `inherit` leaves it the raised
+          // neutral. The selected look itself lives in the state stylesheet
+          // (data-loom-seg), so it FOLLOWS the choice when one is clicked: as
+          // inline style it stayed on the authored option forever.
+          style={{ ...style, width: full ? '100%' : style.width, ...(str(p.tone) === 'inherit' ? {} : { '--loom-seg-on': `${tint}24` }) } as React.CSSProperties}
           role="radiogroup"
           aria-label={str(p.ariaLabel) || undefined}
         >
           {opts.map((o) => (
             <label
               key={o}
+              data-loom-seg=""
               {...behaviourAttrs({ role: 'radio', group: node.id, index: opts.indexOf(o), on: current === o })}
               style={{
                 fontSize: `${fs}px`,
                 fontWeight: t.weightMedium,
                 padding: str(p.size) === 'sm' ? '3px 9px' : str(p.size) === 'lg' ? '7px 15px' : '5px 12px',
                 borderRadius: `${t.radiusSm}px`,
-                // `tone` tints the SELECTED option; `inherit` leaves it the
-                // neutral surface it has always been.
-                background: current === o ? (str(p.tone) === 'inherit' ? t.surface : `${tint}1f`) : 'transparent',
-                color: current === o ? t.textPrimary : t.textMuted,
-                border: `1px solid ${current === o ? t.borderStrong : 'transparent'}`,
                 cursor: 'pointer',
                 textAlign: 'center',
                 // `fullWidth` means the options SHARE the control's width — the
@@ -3684,7 +3697,8 @@ function renderPreviewBody(
               defaultValue={str(p.value)[i] ?? ''}
               disabled={p.disabled === true}
               aria-label={`digit ${i + 1}`}
-              style={{ width: `${box}px`, height: `${tall}px`, textAlign: 'center', fontSize: str(p.size) === 'sm' ? `${t.textMd}px` : `${t.textLg}px`, fontFamily: t.fontMono, borderRadius: `${t.radiusMd}px`, border: `1px solid ${t.borderStrong}`, background: t.surface, color: t.textPrimary }}
+              data-loom-well=""
+              style={{ width: `${box}px`, height: `${tall}px`, textAlign: 'center', fontSize: str(p.size) === 'sm' ? `${t.textMd}px` : `${t.textLg}px`, fontFamily: t.fontMono, borderRadius: `${t.radiusMd}px`, border: `1px solid ${t.wellEdge}`, background: t.wellFill, color: t.textPrimary }}
             />
           ))}
         </div>

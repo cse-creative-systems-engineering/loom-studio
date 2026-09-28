@@ -4046,7 +4046,7 @@ export async function runSelfTest(): Promise<string> {
     check('a checked box is filled with the accent', boxBg() === rgb(theme.accent), boxBg())
     cbBox?.click()
     await new Promise((r) => setTimeout(r, 30))
-    check('clicking the drawn box unchecks the real input', cbInput?.checked === false && boxBg() === rgb(theme.surface), `checked=${cbInput?.checked} bg=${boxBg()}`)
+    check('clicking the drawn box unchecks the real input', cbInput?.checked === false && boxBg() !== rgb(theme.accent), `checked=${cbInput?.checked} bg=${boxBg()}`)
     const radios = [...host.querySelectorAll<HTMLInputElement>('input[type=radio][data-loom-ctl]')]
     const radioOn = radios.find((r) => r.checked)
     check('a radio group draws its rings, the chosen one in the accent', radios.length >= 2 && radioOn !== undefined &&
@@ -4207,6 +4207,53 @@ export async function runSelfTest(): Promise<string> {
       if (!html.includes('backdrop-filter:blur')) flat.push(type)
     }
     check('every surface component is glass', flat.length === 0, flat.join(', '))
+  }
+
+  // --- 95. soft depth as an accent: wells, knobs, a raised choice ----------
+  // Fields are wells pressed into the surface, knobs are extruded from it,
+  // a segmented control's choice is raised. And the choice FOLLOWS a click:
+  // its look was inline, so it stayed on the authored option forever.
+  {
+    installBehaviourRuntime()
+    const s95 = new EditorStore()
+    const root95 = withRoot(s95)
+    s95.addComponent('Segmented', root95, 0, 0)
+    s95.addComponent('Slider', root95, 0, 60, { value: 20 })
+    s95.addComponent('Switch', root95, 0, 120)
+    s95.addComponent('Input', root95, 0, 180)
+    const host = document.createElement('div')
+    host.id = 'selftest-95'
+    host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px;z-index:99999'
+    document.body.appendChild(host)
+    const still = document.createElement('style')
+    still.textContent = '#selftest-95 *{transition:none !important}'
+    document.head.appendChild(still)
+    const r95 = createRoot(host)
+    r95.render(renderNode({ doc: s95.doc, selected: new Set(), mode: 'preview', theme: getTheme('midnight') }, s95.doc.root!))
+    await new Promise((r) => setTimeout(r, 80))
+    const segs = [...host.querySelectorAll<HTMLElement>('[data-loom-seg]')]
+    const raisedIdx = () => segs.findIndex((l) => getComputedStyle(l).boxShadow !== 'none')
+    const before95 = raisedIdx()
+    const other = segs.find((_, i) => i !== before95)
+    other?.click()
+    await new Promise((r) => setTimeout(r, 40))
+    check('a segmented choice is raised, and the raise follows a click', segs.length >= 2 && before95 >= 0 && other !== undefined && raisedIdx() === segs.indexOf(other),
+      `before=${before95} after=${raisedIdx()} clicked=${other ? segs.indexOf(other) : -1}`)
+    const range = host.querySelector<HTMLInputElement>('input[data-loom-range]')
+    const fillAt = () => range?.style.getPropertyValue('--loom-fill') ?? ''
+    const fill0 = fillAt()
+    if (range) {
+      range.value = '80'
+      range.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    check('a slider track fills to the value and follows the thumb', range !== null && fill0 === '20%' && fillAt() === '80%', `${fill0} -> ${fillAt()}`)
+    const knob = host.querySelector<HTMLElement>('[data-loom-knob]')
+    check('a switch knob is extruded, not a flat dot', knob !== null && getComputedStyle(knob).boxShadow !== 'none' && getComputedStyle(knob).backgroundImage.includes('gradient'))
+    const field = host.querySelector<HTMLInputElement>('input:not([type=range]):not([type=checkbox]):not([type=radio])')
+    check('a field is a well pressed into the surface', field !== null && getComputedStyle(field).boxShadow.includes('inset'), field ? getComputedStyle(field).boxShadow : 'no field')
+    r95.unmount()
+    host.remove()
+    still.remove()
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

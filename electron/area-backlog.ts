@@ -172,7 +172,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "Modal|div>button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "lineHeight", "paddingX", "paddingY", "radius"],
   "Modal|div>div": ["color", "fontSize", "fontWeight"],
   // OtpInput
-  "OtpInput|input": ["align", "background", "border", "borderWidth", "color", "fontFamily", "fontSize", "radius"],
+  "OtpInput|input data-loom-well": ["align", "background", "border", "borderWidth", "color", "fontFamily", "fontSize", "radius"],
   // Pagination
   "Pagination|button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "radius"],
   "Pagination|label": ["color", "fontSize", "gap"],
@@ -205,7 +205,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   // Section
   "Section|div": ["color", "fontSize", "fontWeight"],
   // Segmented
-  "Segmented|label data-loom-b": ["align", "background", "border", "borderWidth", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
+  "Segmented|label data-loom-seg": ["align", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
   "Segmented|label>input": ["opacity"],
   // SettingsRow
   "SettingsRow|div": ["gap"],
@@ -222,8 +222,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "SidebarPanel|div data-loom-body": ["gap"],
   // Skeleton
   "Skeleton|div": ["background", "opacity", "radius"],
-  // Slider
-  "Slider|input data-loom-output": ["accent"],
   // Sparkline
   "Sparkline|svg>circle data-loom-spark-head": ["fill"],
   "Sparkline|svg>path data-loom-spark-line": ["stroke"],
@@ -248,7 +246,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   // Switch
   "Switch|input": ["opacity"],
   "Switch|span data-loom-track": ["paddingX", "paddingY", "radius"],
-  "Switch|span>span data-loom-knob": ["background", "radius"],
+  "Switch|span>span data-loom-knob": ["radius"],
   // TabBar
   "TabBar|button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius", "shadow"],
   // TabPanel

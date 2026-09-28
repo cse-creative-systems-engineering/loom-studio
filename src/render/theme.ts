@@ -72,6 +72,20 @@ export interface Theme {
   glassShadow: string
   glassBlur: number
 
+  /**
+   * Soft depth, used as an ACCENT (neumorphism where it helps, never where
+   * contrast is at stake): a field is a WELL pressed into the surface, a
+   * switch or slider knob is EXTRUDED from it, a segmented control's choice
+   * is RAISED. Text and buttons keep their full contrast.
+   */
+  wellFill: string
+  wellEdge: string
+  wellShadow: string
+  knobFill: string
+  knobShadow: string
+  raisedFill: string
+  raisedShadow: string
+
   /* type scale — a real ratio, not ad-hoc values */
   fontFamily: string
   fontMono: string
@@ -152,6 +166,14 @@ const BASE: Theme = {
   glassHighlight: 'inset 0 1px 0 rgba(255,255,255,0.08)',
   glassShadow: '0 24px 60px -24px rgba(0,0,0,0.65), 0 2px 8px -2px rgba(0,0,0,0.35)',
   glassBlur: 28,
+
+  wellFill: 'rgba(0,0,0,0.26)',
+  wellEdge: 'rgba(255,255,255,0.06)',
+  wellShadow: 'inset 0 1px 3px rgba(0,0,0,0.45), inset 0 -1px 0 rgba(255,255,255,0.04)',
+  knobFill: 'linear-gradient(180deg, #ffffff, #dfe4ee)',
+  knobShadow: '0 1px 1px rgba(0,0,0,0.3), 0 3px 8px -1px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.9)',
+  raisedFill: 'linear-gradient(180deg, rgba(255,255,255,0.13), rgba(255,255,255,0.06))',
+  raisedShadow: '0 1px 2px rgba(0,0,0,0.45), 0 2px 6px -2px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.12)',
   fontMono: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace",
 
   // ~1.2 ratio on a 15px base.
@@ -219,6 +241,13 @@ const DAYLIGHT: Theme = {
   glassEdge: 'rgba(255,255,255,0.8)',
   glassHighlight: 'inset 0 1px 0 rgba(255,255,255,0.95)',
   glassShadow: '0 0 0 1px rgba(16,20,28,0.05), 0 24px 48px -24px rgba(16,20,28,0.22), 0 2px 6px -2px rgba(16,20,28,0.08)',
+  wellFill: 'rgba(16,20,28,0.045)',
+  wellEdge: 'rgba(16,20,28,0.10)',
+  wellShadow: 'inset 0 1px 2px rgba(16,20,28,0.10), inset 0 -1px 0 rgba(255,255,255,0.8)',
+  knobFill: 'linear-gradient(180deg, #ffffff, #f1f3f7)',
+  knobShadow: '0 1px 2px rgba(16,20,28,0.2), 0 3px 8px -2px rgba(16,20,28,0.22), inset 0 1px 0 #ffffff',
+  raisedFill: '#ffffff',
+  raisedShadow: '0 1px 2px rgba(16,20,28,0.12), 0 0 0 1px rgba(16,20,28,0.04)',
 }
 
 const CONTRAST: Theme = {
@@ -244,6 +273,11 @@ const CONTRAST: Theme = {
   glassEdge: 'rgba(255,255,255,0.38)',
   glassHighlight: 'inset 0 1px 0 rgba(255,255,255,0.12)',
   glassBlur: 20,
+  // Contrast: wells and raised parts keep a real edge, not just a shadow.
+  wellFill: 'rgba(0,0,0,0.6)',
+  wellEdge: 'rgba(255,255,255,0.38)',
+  raisedFill: 'rgba(255,255,255,0.14)',
+  raisedShadow: '0 0 0 1px rgba(255,255,255,0.45)',
 }
 
 const THEMES: Record<ThemeName, Theme> = {
