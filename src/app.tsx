@@ -25,6 +25,7 @@ import { iconMarkup } from './render/icons'
 import { starterGlyph, toolGlyph } from './tool-icons'
 import { PreviewStage } from './preview'
 import { ToolCard, type CardTarget } from './tool-card'
+import { installAiBridge } from './ai/editor-bridge'
 import { StatesPanel, ColorInput } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
@@ -189,6 +190,9 @@ export function App() {
     if (!api) return
     return api.onClosed(() => setPreviewOpen(false))
   }, [])
+
+  // AI agents reach the live document through this (src/ai/editor-bridge.ts).
+  React.useEffect(() => installAiBridge(s), [s])
 
   // Autosave: a crash should cost the user nothing.
   React.useEffect(() => {

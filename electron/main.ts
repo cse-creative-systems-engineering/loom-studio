@@ -8,6 +8,7 @@
 
 import { app, BrowserWindow, dialog, ipcMain, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { desktopBounds, type RunTarget } from '../src/model/desktop-run'
+import { startAiSocket, type AiSocket } from './ai-socket'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { autosaveFileName, isExternalUrlAllowed } from './guards'
@@ -305,8 +306,33 @@ function runOnDesktop(payload: { doc: unknown; target: RunTarget }) {
   return bounds
 }
 
+/**
+ * The AI agents' way in (see ai-socket.ts). Started with the app; an agent
+ * launched by Loom gets `mcpServerConfig()` so it can reach the live editor.
+ */
+let aiSocket: AiSocket | null = null
+
+/** How an MCP client launches Loom's server: Loom's own Electron, as Node. */
+export function mcpServerConfig(): { command: string; args: string[]; env: Record<string, string> } | null {
+  if (!aiSocket) return null
+  return {
+    command: process.execPath,
+    args: [path.join(here, 'mcp-bridge.cjs')],
+    env: { ELECTRON_RUN_AS_NODE: '1', ...aiSocket.bridgeEnv() },
+  }
+}
+
 app.whenReady().then(() => {
   createWindow()
+  try {
+    aiSocket = startAiSocket(() => editorWin)
+    aiSocket.writeConfig(mcpServerConfig()!)
+  } catch (e) {
+    // No AI this run; the editor itself must still open.
+    console.error(`[loom] AI connection unavailable: ${e instanceof Error ? e.message : String(e)}`)
+    aiSocket = null
+  }
+  app.on('will-quit', () => aiSocket?.close())
 
   ipcMain.handle('desktop:run', (e, payload: { doc: unknown; target: RunTarget }) => {
     if (!fromEditor(e)) return null

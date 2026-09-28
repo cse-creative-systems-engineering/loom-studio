@@ -36,6 +36,7 @@ import { GROUP_ORDER } from '../src/model/prop-groups'
 import { ToolThumb } from '../src/tool-card'
 import { cleanPage } from '../src/model/page'
 import { desktopBounds } from '../src/model/desktop-run'
+import { AiTurn, runTool, TOOLS } from '../src/ai/tools'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
@@ -3946,6 +3947,65 @@ export async function runSelfTest(): Promise<string> {
     check('centre and fill', eq(at('center'), { x: 780, y: 354, width: 360, height: 400 }) && eq(at('fill'), work))
     check('undocked keeps its own place, on the screen', eq(at('none', 360, 400, 100, 50), { x: 100, y: 77, width: 360, height: 400 }) && at('none', 360, 400, 5000, 5000).x === 1560)
     check('never bigger than the usable screen', at('left', 9999, 9999).width === 1920 && at('center', 9999, 9999).height === 1053)
+  }
+
+  // --- 71. the AI agent's building tools ------------------------------------
+  // An agent builds through the same ops a person does, VALIDATED first (a
+  // model's guessed property must never reach the document), and one agent
+  // turn is one undo step.
+  {
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const val = (r: ReturnType<typeof run>) => (r.ok ? (r.result as Record<string, unknown>) : ({ error: r.error } as Record<string, unknown>))
+    check('every tool has a schema and a description', TOOLS.length >= 14 && TOOLS.every((t) => t.description.length > 20 && (t.inputSchema as { type?: string }).type === 'object'))
+    const root = val(run('add_component', { type: 'Panel', parent_id: null, props: { title: 'Home' } })).id as string
+    check('an empty document gets its root from the agent', st.doc.root === root && st.doc.nodes[root]?.props.title === 'Home')
+    const bad = run('add_component', { type: 'Buton', parent_id: root })
+    check('an unknown component is refused, pointing at the catalogue', !bad.ok && /list_components/.test(bad.ok ? '' : bad.error))
+    const card = val(run('add_component', { type: 'Card', parent_id: root, x: 40, y: 50, props: { padding: '20', nonsense: 1, radius: 9999 } }))
+    const cardId = card.id as string
+    check('valid props land (and "20" becomes 20), invalid ones are refused and said so', st.doc.nodes[cardId]?.props.padding === 20 && Array.isArray(card.rejected) && (card.rejected as string[]).some((r) => r.startsWith('nonsense')))
+    check('numbers are clamped into range', (st.doc.nodes[cardId]?.props.radius as number) <= 64, String(st.doc.nodes[cardId]?.props.radius))
+    const btn = val(run('add_component', { type: 'Button', parent_id: cardId, props: { label: 'Save', variant: 'loud' } }))
+    check('an enum outside its options is refused with the options listed', (btn.rejected as string[]).some((r) => /variant: expected one of/.test(r)))
+    const ro = run('set_props', { id: btn.id, props: { label: 'Save changes', size: 'lg' } })
+    check('set_props applies what is valid', ro.ok && st.doc.nodes[btn.id as string]?.props.label === 'Save changes' && st.doc.nodes[btn.id as string]?.props.size === 'lg')
+    const side = val(run('add_component', { type: 'SidebarPanel', parent_id: root }))
+    run('dock', { id: side.id, anchor: 'left' })
+    check('dock sets the anchor', st.doc.nodes[side.id as string]?.props.anchor === 'left')
+    check('a bad anchor is refused', !run('dock', { id: side.id, anchor: 'sideways' }).ok)
+    run('move_into', { id: btn.id, parent_id: side.id })
+    check('move_into re-parents', st.doc.nodes[side.id as string]?.children.includes(btn.id as string) === true)
+    check('a node cannot move into itself', !run('move_into', { id: side.id, parent_id: btn.id }).ok && !run('move_into', { id: side.id, parent_id: side.id }).ok)
+    const tl = val(run('add_component', { type: 'Timeline', parent_id: root }))
+    run('set_list', { id: tl.id, list: 'events', items: [{ title: 'Shipped', time: 'now', tone: 'success' }, { title: 'Bad tone', tone: 'purple' }] })
+    const events = st.doc.nodes[tl.id as string]?.lists?.events ?? []
+    check('set_list replaces rows, fixing invalid fields to defaults', events.length === 2 && events[0]?.title === 'Shipped' && events[1]?.tone !== 'purple')
+    run('set_page', { background: 'color', color: 'rgba(10, 12, 20, 0.6)', blur: 20 })
+    check('set_page sets a see-through page', st.doc.meta.page?.color === 'rgba(10, 12, 20, 0.6)' && st.doc.meta.page?.blur === 20)
+    check('an unsafe page colour is refused', !run('set_page', { background: 'color', color: 'red;}x{' }).ok)
+    const doc = val(run('get_document'))
+    const flat = JSON.stringify(doc)
+    check('get_document shows the tree with what was set', flat.includes('"Save changes"') && flat.includes('"anchor":"left"') && flat.includes(cardId))
+    const cat = val(run('list_components'))
+    check('the catalogue lists components and starters, without internal pieces', (cat.components as Array<{ name: string }>).some((c) => c.name === 'KpiCard') && !(cat.components as Array<{ name: string }>).some((c) => c.name === 'TabPanel') && (cat.starters as unknown[]).length >= 1)
+    const desc = val(run('describe_component', { type: 'Button' }))
+    check('describe_component gives each property\'s type and options', ((desc.props as Record<string, { options?: string[] }>).variant?.options ?? []).includes('primary'))
+
+    // One turn, many writes, one undo step.
+    const hist = st.history.length
+    const nodes = Object.keys(st.doc.nodes).length
+    turn.begin('AI: add a footer')
+    const f = val(run('add_component', { type: 'FooterBar', parent_id: root }))
+    run('set_props', { id: f.id, props: { text: 'v1.0' } })
+    run('add_starter', { starter: 'chat-sidebar', parent_id: root, x: 700, y: 0 })
+    turn.end()
+    check('an agent turn is one undo step', st.history.length === hist + 1 && st.history[st.history.length - 1]?.label === 'AI: add a footer', `${hist} -> ${st.history.length}`)
+    st.undo()
+    check('undoing the turn removes everything it added', Object.keys(st.doc.nodes).length === nodes, `${nodes} vs ${Object.keys(st.doc.nodes).length}`)
+    const rm = val(run('remove', { ids: [cardId] }))
+    check('remove deletes', rm.removed === 1 && !st.doc.nodes[cardId])
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

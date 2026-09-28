@@ -89,3 +89,17 @@ contextBridge.exposeInMainWorld('loomDesktop', {
     return () => ipcRenderer.removeListener('desktop:closed', h)
   },
 })
+
+/**
+ * AI agents (editor window only; main checks the sender). Main relays a tool
+ * request from an agent's MCP bridge; the editor runs it against the live
+ * store and answers. The editor never reaches the agent or the socket itself.
+ */
+contextBridge.exposeInMainWorld('loomAi', {
+  onRequest: (cb: (reqId: string, method: string, params: unknown) => void) => {
+    const h = (_e: unknown, reqId: string, method: string, params: unknown) => cb(reqId, method, params)
+    ipcRenderer.on('ai:request', h)
+    return () => ipcRenderer.removeListener('ai:request', h)
+  },
+  respond: (reqId: string, reply: unknown) => ipcRenderer.invoke('ai:response', reqId, reply),
+})

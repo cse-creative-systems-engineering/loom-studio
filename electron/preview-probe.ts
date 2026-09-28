@@ -11,7 +11,9 @@
 import { app, BrowserWindow, screen } from 'electron'
 // Side effect: registers the REAL preview/save IPC handlers from main.ts,
 // so this probe drives production code, not a copy.
-import { setClosePromptForProbe } from './main'
+import { setClosePromptForProbe, mcpServerConfig } from './main'
+import { spawn } from 'node:child_process'
+import fs from 'node:fs'
 
 // The editor window main.ts creates loads the seeded demo scene. It must be
 // THAT window the probe drives: preview IPC is honoured only from the editor
@@ -98,6 +100,63 @@ async function run() {
     await win.webContents.executeJavaScript('window.loomPreview.close()', true)
     await new Promise((r) => setTimeout(r, 800))
     step('close destroys the preview window', previewWindows().length === 0 && pv.isDestroyed())
+  }
+
+  // AI agents: the MCP bridge, launched exactly as Claude Code / Codex would
+  // launch it from Loom's config, speaks raw MCP and builds in the live editor.
+  {
+    await win.webContents.executeJavaScript(`(() => { window.__loomStore.loadDocument({ version: 1, meta: { name: 'ai', targets: ['web'], created: 0 }, root: null, nodes: {} }); return true })()`, true)
+    const cfg = mcpServerConfig()
+    step('Loom hands out an MCP server config', !!cfg && cfg.args[0]!.endsWith('mcp-bridge.cjs'))
+    if (cfg) {
+      const mode = fs.statSync(cfg.env.LOOM_MCP_SOCKET!).mode & 0o777
+      step('the socket is private to this user', mode === 0o600, mode.toString(8))
+      // Socket paths are capped near 104-108 bytes: one under a long data
+      // directory crashed Loom's main process with EINVAL.
+      step('the socket path is short, whatever the data directory', cfg.env.LOOM_MCP_SOCKET!.length <= 100, `${cfg.env.LOOM_MCP_SOCKET!.length} chars`)
+      const talk = async (env: Record<string, string>, msgs: object[]) => {
+        const child = spawn(cfg.command, cfg.args, { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
+        const replies: Array<Record<string, unknown>> = []
+        let buf = ''
+        child.stdout.setEncoding('utf8')
+        child.stdout.on('data', (c: string) => {
+          buf += c
+          let nl: number
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            replies.push(JSON.parse(buf.slice(0, nl)))
+            buf = buf.slice(nl + 1)
+          }
+        })
+        for (const m of msgs) {
+          child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n')
+          const want = replies.length + ('id' in m ? 1 : 0)
+          for (let i = 0; i < 100 && replies.length < want; i++) await new Promise((r) => setTimeout(r, 50))
+        }
+        child.stdin.end()
+        return replies
+      }
+      const r = await talk(cfg.env, [
+        { id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'probe', version: '1' } } },
+        { method: 'notifications/initialized' },
+        { id: 2, method: 'tools/list' },
+        { id: 3, method: 'tools/call', params: { name: 'add_component', arguments: { type: 'Panel', parent_id: null, props: { title: 'Built by an agent' } } } },
+        { id: 4, method: 'tools/call', params: { name: 'add_component', arguments: { type: 'Nope', parent_id: null } } },
+      ])
+      const init = r.find((x) => x.id === 1)?.result as { serverInfo?: { name?: string }; capabilities?: { tools?: object } } | undefined
+      step('MCP handshake: Loom introduces itself with tools', init?.serverInfo?.name === 'loom' && !!init?.capabilities?.tools)
+      const tools = (r.find((x) => x.id === 2)?.result as { tools?: Array<{ name: string }> } | undefined)?.tools ?? []
+      step('tools/list returns the building tools', tools.some((t) => t.name === 'add_component') && tools.some((t) => t.name === 'dock'), `${tools.length} tools`)
+      const call = r.find((x) => x.id === 3)?.result as { content?: Array<{ text: string }>; isError?: boolean } | undefined
+      const built = await win.webContents.executeJavaScript(`(() => { const d = window.__loomStore.doc; return d.root ? d.nodes[d.root].props.title : null })()`, true)
+      step('a tool call builds in the live editor', !call?.isError && built === 'Built by an agent', `${JSON.stringify(call).slice(0, 100)} -> ${built}`)
+      const err = r.find((x) => x.id === 4)?.result as { isError?: boolean; content?: Array<{ text: string }> } | undefined
+      step('a refused call comes back as an MCP tool error', err?.isError === true && /unknown component/.test(err?.content?.[0]?.text ?? ''))
+      const forged = await talk({ ...cfg.env, LOOM_MCP_TOKEN: 'x'.repeat(48) }, [
+        { id: 1, method: 'tools/call', params: { name: 'remove', arguments: { ids: ['anything'] } } },
+      ])
+      const fr = forged[0]?.result as { isError?: boolean; content?: Array<{ text: string }> } | undefined
+      step('a wrong token is refused before reaching the editor', fr?.isError === true && /bad token/.test(fr?.content?.[0]?.text ?? ''))
+    }
   }
 
   // Run on desktop: a sidebar docked left in the design runs docked to the
