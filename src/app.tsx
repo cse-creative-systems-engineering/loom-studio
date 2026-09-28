@@ -555,7 +555,7 @@ function Toolbox({
       const flowParent = hit.parent !== null && s.doc.nodes[hit.parent]?.flow === true
       const { x, y } = snapTo(hit.host, ev)
       if (type.startsWith(STARTER_PREFIX)) s.addStarter(type.slice(STARTER_PREFIX.length), hit.parent, flowParent ? 0 : x, flowParent ? 0 : y)
-      else s.addComponent(type, hit.parent, flowParent ? 0 : x, flowParent ? 0 : y)
+      else s.dropComponent(type, hit.parent, x, y)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)

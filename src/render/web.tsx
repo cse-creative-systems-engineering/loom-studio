@@ -51,12 +51,23 @@ export interface RenderCtx {
 }
 
 /**
- * Components the canvas draws with their real output body although they
- * declare no parts yet: the canvas stub dropped something the output shows (a
- * header's title, a divider's label). Every component moves to the real body
- * as it gains parts; this set is the bridge until then, and only shrinks.
+ * The canvas draws EVERY component with its real output body, wearing the
+ * editor's attributes. Hand-written canvas stubs drifted from the output one
+ * component at a time (a GroupBox without its legend, a Section without its
+ * title, a Select without its value: 22 of 112) and were deleted; selftest
+ * §65 holds every tool's canvas to its output, word for word and box for box.
+ *
+ * CHILDLESS: elements that cannot take children (the editor's handles among
+ * them), so the canvas wraps them in a box that can.
  */
-const REAL_ON_CANVAS: ReadonlySet<string> = new Set(['HeaderBar', 'FooterBar', 'Tabs', 'TabPanel', 'Accordion', 'AccordionItem', 'SettingsSection', 'SettingsRow'])
+const CHILDLESS: ReadonlySet<string> = new Set(['input', 'img', 'hr', 'textarea', 'select', 'svg', 'progress', 'meter', 'canvas', 'video', 'iframe', 'br', 'wbr'])
+
+/** Where a node sits and how big it is: the box keeps these, the element the rest. */
+const PLACEMENT: ReadonlySet<string> = new Set([
+  'position', 'left', 'top', 'right', 'bottom', 'inset', 'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+  'zIndex', 'transform', 'translate', 'rotate', 'scale', 'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
+  'flex', 'flexGrow', 'flexShrink', 'flexBasis', 'alignSelf', 'justifySelf', 'gridArea', 'gridColumn', 'gridRow', 'order', 'opacity',
+])
 
 export const CORNERS = ['nw', 'ne', 'sw', 'se'] as const
 export type Corner = (typeof CORNERS)[number]
@@ -260,6 +271,7 @@ function LabelledDivider({
   middle,
   nodeKey,
   attrs,
+  extra,
 }: {
   p: Record<string, PropValue>
   t: Theme
@@ -268,6 +280,8 @@ function LabelledDivider({
   nodeKey?: string | number
   /** The editor's attributes and handlers, so the canvas can select it. */
   attrs?: Record<string, unknown>
+  /** Editor chrome drawn inside it on the canvas (selection handles). */
+  extra?: React.ReactNode
 }) {
   const thickness = num(p.thickness, 1)
   const colour = str(p.color) || t.borderStrong
@@ -302,6 +316,7 @@ function LabelledDivider({
         {middle}
       </span>
       <span style={rule(align === 'end' ? fixed : '1')} />
+      {extra}
     </div>
   )
 }
@@ -5298,266 +5313,6 @@ function pgBtn(t: Theme, on: boolean): React.CSSProperties {
   }
 }
 
-/** Inner content for a SELECTED leaf in authoring mode (outer div + handles wrap it). */
-function authorInner(node: Node, t: Theme): React.ReactNode {
-  const p = node.props
-  switch (node.type) {
-    case 'Button': {
-      const icon = str(p.icon) ? <IconGlyph value={str(p.icon)} size={str(p.size) === 'sm' ? 12 : 14} /> : null
-      const rawType = str(p.type)
-      return (
-        <button
-          type={rawType === 'submit' ? 'submit' : rawType === 'reset' ? 'reset' : 'button'}
-          tabIndex={-1}
-          disabled={p.disabled === true || p.loading === true}
-          aria-busy={p.loading === true ? 'true' : undefined}
-          // The outer div IS the designed button; this one only carries the
-          // semantics, so it must draw nothing of its own.
-          style={{ all: 'unset', display: 'contents' }}
-        >
-          {icon ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              {str(p.iconPosition) === 'end' ? str(p.label) : icon}
-              {str(p.iconPosition) === 'end' ? icon : str(p.label)}
-            </span>
-          ) : (
-            str(p.label)
-          )}
-        </button>
-      )
-    }
-    case 'Label':
-      return <div>{str(node.props.text)}</div>
-    case 'Input': {
-      const rawType = str(p.type)
-      const type = ['text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(rawType) ? rawType : 'text'
-      const maxLength = num(p.maxLength, -1)
-      return (
-        <input
-          type={type}
-          tabIndex={-1}
-          readOnly={p.readOnly === true}
-          disabled={p.disabled === true}
-          required={p.required === true}
-          name={str(p.name) || undefined}
-          maxLength={maxLength > 0 ? maxLength : undefined}
-          aria-label={str(p.ariaLabel) || undefined}
-          placeholder={str(node.props.placeholder)}
-          defaultValue={str(node.props.value)}
-        />
-      )
-    }
-    case 'Gauge':
-      return <GaugeFace node={node} t={t} />
-    case 'Sparkline':
-      return <Spark node={node} t={t} />
-    case 'Heading': {
-      // The level IS the type, so the canvas shows it: a selected heading that
-      // changes size only in the preview is a heading the designer cannot edit
-      // by looking at it.
-      const level = str(p.level) || '1'
-      const size = level === '1' ? t.textXxl : level === '2' ? t.textXl : t.textLg
-      const fs = num(p.fontSize, -1)
-      return (
-        <div style={{ fontSize: fs > 0 ? `${fs}px` : `${size}px`, fontWeight: level === '1' ? t.weightBold : t.weightSemibold }}>
-          {str(p.text)}
-        </div>
-      )
-    }
-    case 'IconButton':
-      return <button type="button" tabIndex={-1} disabled={p.disabled === true}><IconGlyph value={str(p.icon)} size={str(p.size) === 'sm' ? 14 : str(p.size) === 'lg' ? 20 : 16} /></button>
-    case 'Checkbox':
-      return <label><input type="checkbox" tabIndex={-1} checked={p.checked === true} disabled={p.disabled === true} readOnly /> {str(p.label)}</label>
-    case 'Switch':
-      return <span>{str(p.label)} {p.on === true ? '●' : '○'}</span>
-    case 'Slider':
-      return <input type="range" tabIndex={-1} defaultValue={num(p.value, 50)} min={num(p.min, 0)} max={num(p.max, 100)} step={num(p.step, 1) || 1} disabled={p.disabled === true} readOnly />
-    case 'Select':
-      return <select tabIndex={-1}><option>{str(p.value)}</option></select>
-    case 'ComboBox':
-      return <input tabIndex={-1} readOnly defaultValue={str(p.value)} placeholder={str(p.placeholder)} />
-    case 'TextArea':
-      return <textarea tabIndex={-1} readOnly rows={num(p.rows, 4) || 4} defaultValue={str(p.value)} placeholder={str(p.placeholder)} />
-    case 'SearchBox':
-      return <input type="search" tabIndex={-1} readOnly defaultValue={str(p.value)} placeholder={str(p.placeholder)} />
-    case 'NumberInput':
-      return <input type="number" tabIndex={-1} readOnly defaultValue={num(p.value, 0)} />
-    case 'PasswordInput':
-      return <input type="password" tabIndex={-1} readOnly defaultValue={str(p.value)} placeholder={str(p.placeholder)} />
-    case 'DatePicker':
-      return <input type="date" tabIndex={-1} defaultValue={str(p.value)} />
-    case 'TimePicker':
-      return <input type="time" tabIndex={-1} defaultValue={str(p.value)} />
-    case 'ColorInput':
-      return <input type="color" tabIndex={-1} value={/^#[0-9a-fA-F]{6}$/.test(str(p.value)) ? str(p.value) : t.accent} readOnly />
-    case 'DropdownButton':
-      return <span>{str(p.label)} ▾</span>
-    case 'Rating': {
-      const v = num(p.value, 3)
-      const max = num(p.max, 5) || 5
-      return <span>{Array.from({ length: max }, (_, i) => (i < v ? '★' : '☆')).join('')}</span>
-    }
-    case 'ToggleButton':
-      return <button type="button" tabIndex={-1}>{str(p.label)}</button>
-    case 'Segmented':
-      return <span>{str(p.value) || list(p.options, p.optionsSep)[0] || ''}</span>
-    case 'SpinBox':
-      return <span>{num(p.value, 1)}</span>
-    case 'TagInput':
-      return <span>{str(p.value)}</span>
-    case 'OtpInput':
-      return <span>{'•'.repeat(num(p.length, 6) || 6)}</span>
-    case 'FileUpload':
-      return <span>{str(p.label)}</span>
-    case 'Field': {
-      // The field's own type scale, so `size` is something the designer can see
-      // while authoring rather than only in the preview.
-      const scales: Record<string, number> = { sm: t.textXs, md: t.textSm, lg: t.textMd }
-      return <span style={{ fontSize: `${scales[str(p.size)] ?? t.textSm}px` }}>{str(p.label)}</span>
-    }
-    case 'AppShell':
-      return <span>shell</span>
-    case 'Icon':
-      // The canvas draws the icon at the size it will ship at: a 32px icon
-      // shown as 16px is a property panel lying to the person reading it.
-      return <IconGlyph value={str(p.name)} size={num(p.size, 20) || 20} color={str(p.color) || iconTone(p.tone, t)} />
-    case 'CommandPalette':
-      return <span>⌘K</span>
-    case 'SettingsSection':
-      return <span>{str(p.title)}</span>
-    case 'SettingsRow':
-      return <span>{str(p.label)}</span>
-    case 'Paragraph':
-      return <span>{str(p.text)}</span>
-    case 'Caption':
-      return <span>{str(p.text)}</span>
-    case 'Quote':
-      return <span>{str(p.text)}</span>
-    case 'CodeBlock':
-      return <code>{str(p.code)}</code>
-    case 'InlineCode':
-      return <code>{str(p.code)}</code>
-    case 'Link':
-      return <a tabIndex={-1}>{str(p.text)}</a>
-    case 'BulletList':
-      return <span>{list(p.items, p.itemsSep).join(' • ')}</span>
-    case 'NumberedList':
-      return <span>{list(p.items, p.itemsSep).join(', ')}</span>
-    case 'Divider':
-      return <hr />
-    case 'Badge':
-      return <span>{str(p.text)}</span>
-    case 'Tag':
-      return <span>{str(p.text)}</span>
-    case 'Kbd':
-      return <kbd>{str(p.keys)}</kbd>
-    case 'DataGrid':
-      return <span>{list(p.columns, p.columnsSep).join(' · ')}</span>
-    case 'Stat':
-      return <span>{str(p.value)} {str(p.label)}</span>
-    case 'KpiCard':
-      return <span>{str(p.value)}</span>
-    case 'ProgressBar':
-      return <span>{num(p.value, 0)}%</span>
-    case 'ProgressRing':
-      return <span>{num(p.value, 0)}%</span>
-    case 'Avatar':
-      return <span>{str(p.initials)}</span>
-    case 'AvatarGroup':
-      return <span>{str(p.names)}</span>
-    case 'Image':
-      return <span>{str(p.alt) || 'Image'}</span>
-    case 'BarChart':
-      return <span>bars</span>
-    case 'PieChart':
-      return <span>pie</span>
-    case 'LineChart':
-      return <span>trend</span>
-    case 'TreeList':
-      return <span>{list(p.items, p.itemsSep).join(', ')}</span>
-    case 'DataList':
-      return <span>{list(p.items, p.itemsSep).join(', ')}</span>
-    case 'KeyValue':
-      return <span>{str(p.label)}: {str(p.value)}</span>
-    case 'Calendar':
-      return <span>{str(p.month)}</span>
-    case 'EmptyState':
-      return <span>{str(p.title)}</span>
-    case 'Skeleton':
-      return <span>loading…</span>
-    case 'Breadcrumbs':
-      return <span>{list(p.trail, p.trailSep).join(' / ')}</span>
-    case 'Pagination':
-      return <span>{num(p.page, 1)} / {num(p.total, 12)}</span>
-    case 'Stepper':
-      return <span>{list(p.steps, p.stepsSep).join(' → ')}</span>
-    case 'TabBar':
-      return <span>{list(p.tabs, p.tabsSep).join(' · ')}</span>
-    case 'AnchorList':
-      return <span>{list(p.links, p.linksSep).join(', ')}</span>
-    case 'BackButton':
-      return <button type="button" tabIndex={-1}>← {str(p.label)}</button>
-    case 'Alert':
-      return <span>{str(p.title)}: {str(p.body)}</span>
-    case 'Toast':
-      return <span>{str(p.message)}</span>
-    case 'Spinner':
-      return <span>{str(p.label) || 'Loading…'}</span>
-    case 'LoadingBar':
-      return <span>{num(p.progress, 0)}%</span>
-    case 'ProgressDots':
-      return <span>{num(p.current, 0)}/{num(p.steps, 0)}</span>
-    case 'InlineMessage':
-      return <span>{str(p.text)}</span>
-    case 'ErrorSummary':
-      return <span>{str(p.title)}</span>
-    case 'SuccessCheck':
-      return <span>✓ {str(p.label)}</span>
-    case 'WarningCallout':
-      return <span>{str(p.title)}</span>
-    case 'InfoCallout':
-      return <span>{str(p.title)}</span>
-    /* Containers render children; never reach here as leaves. */
-    case 'Panel':
-    case 'Stack':
-    case 'Grid':
-    case 'Card':
-    case 'Tabs':
-    case 'TabPanel':
-    case 'Accordion':
-    case 'AccordionItem':
-    case 'Modal':
-    case 'Drawer':
-    case 'Section':
-    case 'GroupBox':
-    case 'ScrollView':
-    case 'SplitH':
-    case 'SplitV':
-    case 'Toolbar':
-    case 'StatusBar':
-    case 'Hero':
-    case 'HeaderBar':
-    case 'FooterBar':
-    case 'SidebarPanel':
-    case 'FormGrid':
-    case 'BannerBox':
-    case 'RadioGroup':
-    case 'ButtonGroup':
-    case 'Checklist':
-    case 'KanbanColumn':
-    case 'DataCard':
-    case 'NavBar':
-    case 'SideNav':
-    case 'Menu':
-    case 'CommandBar':
-    case 'ConfirmDialog':
-    case 'NotificationList':
-      return null
-    default:
-      throw new Error(`unknown component: ${node.type}`)
-  }
-}
-
 export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): React.ReactElement {
   const node = ctx.doc.nodes[id]
   if (!node) throw new Error(`missing node: ${id}`)
@@ -5615,13 +5370,14 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     },
   }
 
-  // A component with styleable parts is drawn FOR REAL on the canvas: the
-  // output's own body, wearing the editor's attributes. A stub ("48200" in an
-  // empty box) cannot show a part being styled, and an editor that cannot show
-  // what it is editing is guesswork. Selected or not, it looks the same.
-  if (spec.parts || REAL_ON_CANVAS.has(node.type)) {
+  // Every component is drawn FOR REAL on the canvas: the output's own body,
+  // wearing the editor's attributes. A stub ("48200" in an empty box, a
+  // GroupBox without its legend) cannot show what is being designed, and an
+  // editor that cannot show what it is editing is guesswork. Selected or not,
+  // it looks the same.
+  {
     const body = renderPreviewBody(node, { ...authored, ...themeVars(t) }, children, t, key, parentOf(ctx.doc, id), ctx)
-    if (body.type === React.Fragment) throw new Error(`${node.type} declares parts but has no root element`)
+    if (body.type === React.Fragment) throw new Error(`${node.type} has no root element to draw on the canvas`)
     const own = body.props as { style?: React.CSSProperties; children?: React.ReactNode }
     // A leaf's insides are output controls (a grid's filter field, its row
     // checkboxes). On the canvas they are a picture of those controls:
@@ -5636,6 +5392,32 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     const handles = ctx.selected.has(id)
       ? CORNERS.map((corner) => <span key={corner} className="loom-handle" data-corner={corner} data-loom-handle={corner} />)
       : null
+    if (body.type === LabelledDivider) {
+      // A labelled divider is drawn by a small component; it takes the editor
+      // attributes and chrome through its own props.
+      const { style: _s, ...attrs } = common
+      return React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { attrs, extra: [eff.layers, handles] })
+    }
+    if (typeof body.type !== 'string') throw new Error(`${node.type}: the canvas can only draw an element or LabelledDivider as a body`)
+    if (CHILDLESS.has(body.type)) {
+      // An <input>, <img> or <select> cannot hold the handles (or effect
+      // layers). A box takes the node's place in the layout and wears the
+      // editor attributes; the element fills it, inert, as a picture.
+      const outer: React.CSSProperties = {}
+      const rest: React.CSSProperties = {}
+      for (const [k, v] of Object.entries(own.style ?? {})) (PLACEMENT.has(k) ? outer : rest)[k as never] = v as never
+      if (outer.position === undefined) outer.position = 'relative'
+      if (own.style?.display === 'none') outer.display = 'none'
+      else if (flowChild) outer.display = own.style?.display === 'block' || own.style?.width !== undefined ? 'block' : 'inline-block'
+      const fill: React.CSSProperties = { ...rest, width: outer.width !== undefined ? '100%' : rest.width, height: outer.height !== undefined ? '100%' : rest.height, boxSizing: 'border-box', display: 'block' }
+      return (
+        <div key={key} {...common} style={outer}>
+          {eff.layers}
+          {React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { style: fill, inert: true, tabIndex: -1 })}
+          {handles}
+        </div>
+      )
+    }
     return React.cloneElement(
       body,
       { ...common, style: own.style, key } as Record<string, unknown>,
@@ -5643,312 +5425,6 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     )
   }
 
-  if (ctx.selected.has(id)) {
-    // Handles are editor chrome, not output: they are injected only while
-    // authoring and never appear in an exported document. The root gets them
-    // too: the user placed it, so it is sized and moved like any other node.
-    const handles = CORNERS.map((corner) => (
-      <span key={corner} className="loom-handle" data-corner={corner} data-loom-handle={corner} />
-    ))
-    const inner = isContainer ? children : authorInner(node, t)
-    return (
-      <div key={key} {...common}>
-        {eff.layers}
-        {inner}
-        {handles}
-      </div>
-    )
-  }
-
-  switch (node.type) {
-    case 'Button': {
-      const p = node.props
-      const icon = str(p.icon) ? <IconGlyph value={str(p.icon)} size={str(p.size) === 'sm' ? 12 : str(p.size) === 'lg' ? 16 : 14} /> : null
-      const label = <span style={{ opacity: p.loading === true ? 0.55 : 1 }}>{str(p.label)}</span>
-      const rawType = str(p.type)
-      return (
-        <button
-          key={key}
-          type={rawType === 'submit' ? 'submit' : rawType === 'reset' ? 'reset' : 'button'}
-          {...common}
-          disabled={p.disabled === true || p.loading === true}
-          aria-busy={p.loading === true ? 'true' : undefined}
-        >
-          {icon ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              {str(p.iconPosition) === 'end' ? label : icon}
-              {str(p.iconPosition) === 'end' ? icon : label}
-            </span>
-          ) : (
-            label
-          )}
-        </button>
-      )
-    }
-    case 'Label':
-      return (
-        <div key={key} {...common}>
-          {str(node.props.text)}
-        </div>
-      )
-    case 'Input': {
-      const p = node.props
-      const rawType = str(p.type)
-      const type = ['text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(rawType) ? rawType : 'text'
-      return (
-        <input
-          key={key}
-          {...common}
-          type={type}
-          placeholder={str(node.props.placeholder)}
-          defaultValue={str(node.props.value)}
-          disabled={p.disabled === true}
-          readOnly={p.readOnly === true}
-          required={p.required === true}
-          name={str(p.name) || undefined}
-          maxLength={num(p.maxLength, -1) > 0 ? num(p.maxLength) : undefined}
-          aria-label={str(p.ariaLabel) || undefined}
-          onChange={() => {
-            /* designer mode: value binding is not live yet */
-          }}
-        />
-      )
-    }
-    case 'Heading': {
-      const p = node.props
-      const level = str(p.level) || '1'
-      const size = level === '1' ? t.textXxl : level === '2' ? t.textXl : t.textLg
-      // Same rule as the preview: the level sets the type, and a declared
-      // override wins where it is set — otherwise the canvas and the output
-      // would disagree about the very same node.
-      const fs = num(p.fontSize, -1)
-      return (
-        <div key={key} {...common} style={{ ...(common.style as React.CSSProperties), fontSize: fs > 0 ? `${fs}px` : `${size}px`, fontWeight: level === '1' ? t.weightBold : t.weightSemibold, color: str(p.color) || t.textPrimary, textAlign: (str(p.align) || 'left') as React.CSSProperties['textAlign'] }}>
-          {str(p.text)}
-        </div>
-      )
-    }
-    case 'Field': {
-      const scales: Record<string, number> = { sm: t.textXs, md: t.textSm, lg: t.textMd }
-      return (
-        <div key={key} {...common}>
-          <span style={{ fontSize: `${scales[str(node.props.size)] ?? t.textSm}px` }}>{str(node.props.label)}</span>
-        </div>
-      )
-    }
-    case 'AppShell':
-      return <div key={key} {...common}><span>shell</span></div>
-    case 'Icon':
-      return <div key={key} {...common}><IconGlyph value={str(node.props.name)} size={num(node.props.size, 20) || 20} color={str(node.props.color) || iconTone(node.props.tone, t)} /></div>
-    case 'CommandPalette':
-      return <div key={key} {...common}><span>⌘K</span></div>
-    case 'SettingsSection':
-      return <div key={key} {...common}><span>{str(node.props.title)}</span></div>
-    case 'SettingsRow':
-      return <div key={key} {...common}><span>{str(node.props.label)}</span></div>
-    case 'Gauge':
-      return (
-        <div key={key} {...common}>
-          <GaugeFace node={node} t={t} />
-        </div>
-      )
-    case 'Sparkline':
-      return (
-        <div key={key} {...common}>
-          <Spark node={node} t={t} />
-        </div>
-      )
-    case 'Panel':
-    case 'Stack':
-    case 'Grid':
-    case 'Card':
-    case 'Tabs':
-    case 'TabPanel':
-    case 'Accordion':
-    case 'AccordionItem':
-    case 'Modal':
-    case 'Drawer':
-    case 'Section':
-    case 'GroupBox':
-    case 'ScrollView':
-    case 'SplitH':
-    case 'SplitV':
-    case 'Toolbar':
-    case 'StatusBar':
-    case 'Hero':
-    case 'HeaderBar':
-    case 'FooterBar':
-    case 'SidebarPanel':
-    case 'FormGrid':
-    case 'BannerBox':
-    case 'RadioGroup':
-    case 'ButtonGroup':
-    case 'Checklist':
-    case 'KanbanColumn':
-    case 'DataCard':
-    case 'NavBar':
-    case 'SideNav':
-    case 'Menu':
-    case 'CommandBar':
-    case 'ConfirmDialog':
-    case 'NotificationList':
-      return (
-        <div key={key} {...common}>
-          {children}
-        </div>
-      )
-    case 'IconButton':
-      return (
-        <button key={key} type="button" {...common} disabled={node.props.disabled === true} aria-label={str(node.props.ariaLabel) || str(node.props.icon) || 'icon'}>
-          <IconGlyph value={str(node.props.icon)} size={str(node.props.size) === 'sm' ? 14 : str(node.props.size) === 'lg' ? 20 : 16} />
-        </button>
-      )
-    case 'Checkbox':
-      return <label key={key} {...common}><input type="checkbox" tabIndex={-1} checked={node.props.checked === true} disabled={node.props.disabled === true} readOnly /> {str(node.props.label)}</label>
-    case 'Switch':
-      return <div key={key} {...common}><span>{str(node.props.label)}</span></div>
-    case 'Slider':
-      return <input key={key} {...common} type="range" min={num(node.props.min, 0)} max={num(node.props.max, 100)} step={num(node.props.step, 1) || 1} defaultValue={num(node.props.value, 50)} disabled={node.props.disabled === true} />
-    case 'Select':
-      return <select key={key} {...common} defaultValue={str(node.props.value)} disabled={node.props.disabled === true}>{list(node.props.options, node.props.optionsSep).map((o) => <option key={o} value={o}>{o}</option>)}</select>
-    case 'ComboBox':
-      return <input key={key} {...common} defaultValue={str(node.props.value)} placeholder={str(node.props.placeholder)} disabled={node.props.disabled === true} />
-    case 'TextArea':
-      return <textarea key={key} {...common} rows={num(node.props.rows, 4) || 4} defaultValue={str(node.props.value)} placeholder={str(node.props.placeholder)} disabled={node.props.disabled === true} />
-    case 'SearchBox':
-      return <input key={key} {...common} type="search" defaultValue={str(node.props.value)} placeholder={str(node.props.placeholder)} disabled={node.props.disabled === true} />
-    case 'NumberInput':
-      return <input key={key} {...common} type="number" defaultValue={num(node.props.value, 0)} disabled={node.props.disabled === true} />
-    case 'PasswordInput':
-      return <input key={key} {...common} type={node.props.reveal === true ? 'text' : 'password'} defaultValue={str(node.props.value)} placeholder={str(node.props.placeholder)} disabled={node.props.disabled === true} />
-    case 'DatePicker':
-      return <input key={key} {...common} type="date" defaultValue={str(node.props.value)} disabled={node.props.disabled === true} />
-    case 'TimePicker':
-      return <input key={key} {...common} type="time" defaultValue={str(node.props.value)} disabled={node.props.disabled === true} />
-    case 'ColorInput':
-      return <input key={key} {...common} type="color" value={/^#[0-9a-fA-F]{6}$/.test(str(node.props.value)) ? str(node.props.value) : t.accent} />
-    case 'FileUpload':
-      return <div key={key} {...common}>{str(node.props.label)}</div>
-    case 'DropdownButton':
-      return <button key={key} type="button" {...common}>{str(node.props.label)} ▾</button>
-    case 'Rating': {
-      const v = num(node.props.value, 3)
-      const max = num(node.props.max, 5) || 5
-      return <div key={key} {...common}>{Array.from({ length: max }, (_, i) => (i < v ? '★' : '☆')).join('')}</div>
-    }
-    case 'ToggleButton':
-      return <button key={key} type="button" {...common}>{str(node.props.label)}</button>
-    case 'Segmented':
-      return <div key={key} {...common}>{str(node.props.value)}</div>
-    case 'SpinBox':
-      return <div key={key} {...common}>{num(node.props.value, 1)}</div>
-    case 'TagInput':
-      return <div key={key} {...common}>{str(node.props.value)}</div>
-    case 'OtpInput':
-      return <div key={key} {...common}>{'•'.repeat(num(node.props.length, 6) || 6)}</div>
-    case 'Paragraph':
-      return <p key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}>{str(node.props.text)}</p>
-    case 'Caption':
-      return <div key={key} {...common}>{str(node.props.text)}</div>
-    case 'Quote':
-      return <blockquote key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}>{str(node.props.text)}</blockquote>
-    case 'CodeBlock':
-      return <pre key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}><code>{str(node.props.code)}</code></pre>
-    case 'InlineCode':
-      return <code key={key} {...common}>{str(node.props.code)}</code>
-    case 'Link':
-      return <a key={key} {...common} href={str(node.props.href) || '#'}>{str(node.props.text)}</a>
-    case 'BulletList':
-      return <ul key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}>{list(node.props.items, node.props.itemsSep).map((it) => <li key={it}>{it}</li>)}</ul>
-    case 'NumberedList':
-      return <ol key={key} {...common} style={{ ...(common.style as React.CSSProperties), margin: 0 }}>{list(node.props.items, node.props.itemsSep).map((it) => <li key={it}>{it}</li>)}</ol>
-    case 'Divider': {
-      // The canvas draws the labelled divider too: an editor that renders a
-      // bare rule while the output renders a heading is an editor that cannot
-      // be used to check the output.
-      // The label is a property OR a child, exactly as in the output.
-      const label = str(node.props.label)
-      if (node.children.length === 0 && !label) return <hr key={key} {...common} />
-      // With the editor's attributes, or a labelled divider could not be
-      // selected, moved or deleted on the canvas.
-      const { style: dividerStyle, ...dividerAttrs } = common
-      return <LabelledDivider key={key} p={node.props} t={t} style={dividerStyle as React.CSSProperties} attrs={dividerAttrs} middle={label ? label : children} />
-    }
-    case 'Badge':
-      return <span key={key} {...common}>{str(node.props.text)}</span>
-    case 'Tag':
-      return <span key={key} {...common}>{str(node.props.text)}</span>
-    case 'Kbd':
-      return <kbd key={key} {...common}>{str(node.props.keys)}</kbd>
-    case 'DataGrid':
-      return <div key={key} {...common}>{list(node.props.columns, node.props.columnsSep).join(' · ')}</div>
-    case 'Stat':
-      return <div key={key} {...common}>{str(node.props.value)} {str(node.props.label)}</div>
-    case 'KpiCard':
-      return <div key={key} {...common}>{str(node.props.value)}</div>
-    case 'ProgressBar':
-      return <div key={key} {...common}>{num(node.props.value, 0)}%</div>
-    case 'ProgressRing':
-      return <div key={key} {...common}>{num(node.props.value, 0)}%</div>
-    case 'Avatar':
-      return <div key={key} {...common}>{str(node.props.initials)}</div>
-    case 'AvatarGroup':
-      return <div key={key} {...common}>{str(node.props.names)}</div>
-    case 'Image':
-      return <div key={key} {...common}>{str(node.props.alt)}</div>
-    case 'BarChart':
-      return <div key={key} {...common}>bars</div>
-    case 'PieChart':
-      return <div key={key} {...common}>pie</div>
-    case 'LineChart':
-      return <div key={key} {...common}>trend</div>
-    case 'TreeList':
-      return <div key={key} {...common}>{list(node.props.items, node.props.itemsSep).join(', ')}</div>
-    case 'DataList':
-      return <div key={key} {...common}>{list(node.props.items, node.props.itemsSep).join(', ')}</div>
-    case 'KeyValue':
-      return <div key={key} {...common}>{str(node.props.label)}: {str(node.props.value)}</div>
-    case 'Calendar':
-      return <div key={key} {...common}>{str(node.props.month)}</div>
-    case 'EmptyState':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
-    case 'Skeleton':
-      return <div key={key} {...common}>loading…</div>
-    case 'Breadcrumbs':
-      return <div key={key} {...common}>{list(node.props.trail, node.props.trailSep).join(' / ')}</div>
-    case 'Pagination':
-      return <div key={key} {...common}>{num(node.props.page, 1)} / {num(node.props.total, 12)}</div>
-    case 'Stepper':
-      return <div key={key} {...common}>{list(node.props.steps, node.props.stepsSep).join(' → ')}</div>
-    case 'TabBar':
-      return <div key={key} {...common}>{list(node.props.tabs, node.props.tabsSep).join(' · ')}</div>
-    case 'AnchorList':
-      return <div key={key} {...common}>{list(node.props.links, node.props.linksSep).join(', ')}</div>
-    case 'BackButton':
-      return <button key={key} type="button" {...common}>← {str(node.props.label)}</button>
-    case 'Alert':
-      return <div key={key} {...common}>{str(node.props.title)}: {str(node.props.body)}</div>
-    case 'Toast':
-      return <div key={key} {...common}>{str(node.props.message)}</div>
-    case 'Spinner':
-      return <div key={key} {...common}>{str(node.props.label)}</div>
-    case 'LoadingBar':
-      return <div key={key} {...common}>{num(node.props.progress, 0)}%</div>
-    case 'ProgressDots':
-      return <div key={key} {...common}>{num(node.props.current, 0)}/{num(node.props.steps, 0)}</div>
-    case 'InlineMessage':
-      return <div key={key} {...common}>{str(node.props.text)}</div>
-    case 'ErrorSummary':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
-    case 'SuccessCheck':
-      return <div key={key} {...common}>✓ {str(node.props.label)}</div>
-    case 'WarningCallout':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
-    case 'InfoCallout':
-      return <div key={key} {...common}>{str(node.props.title)}</div>
-    default:
-      throw new Error(`unknown component: ${node.type}`)
-  }
 }
 
 /**

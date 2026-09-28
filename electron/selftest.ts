@@ -3569,6 +3569,59 @@ export async function runSelfTest(): Promise<string> {
     await wait()
   }
 
+  // --- 65. the canvas is the output, for every component, at a usable size -
+  // Shane: "Design doesn't render text: a GroupBox is a box, Preview shows
+  // 'Group' in it; same with Section and others", and "dragged from the
+  // toolbox it lands as a tiny speck". Hand-written canvas stubs had drifted
+  // (22 of 112 dropped text the output shows) and empty containers arrived
+  // 35px square or 0x0 (51 of 112 under 48x24). Every tool, dropped the way
+  // the toolbox drops it, measured live on both surfaces.
+  {
+    const host = (mode: 'authoring' | 'preview', doc: Document, root: string) => {
+      const h = document.createElement('div')
+      h.className = mode === 'authoring' ? 'surface' : 'preview-stage'
+      h.style.cssText = 'position:fixed;left:0;top:0;width:1280px;height:900px;overflow:hidden;visibility:hidden'
+      document.body.appendChild(h)
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc, selected: new Set(), mode }, root))
+      return h
+    }
+    const words = (t: string) => t.replace(/\s+/g, ' ').trim().split(' ').filter((w) => w.length > 2)
+    const missingText: string[] = []
+    const drift: string[] = []
+    const tiny: string[] = []
+    const added = addedTypes()
+    for (const c of allComponents()) {
+      if (added.has(c.name)) continue
+      const st = new EditorStore()
+      st.addComponent('Panel', null, 0, 0, { w: 1200, h: 860 })
+      const root = st.doc.root!
+      const id = st.dropComponent(c.name, root, 40, 40)
+      if (!id) { tiny.push(`${c.name}: drop refused`); continue }
+      const a = host('authoring', st.doc, root)
+      const p = host('preview', st.doc, root)
+      const ce = a.querySelector<HTMLElement>(`[data-loom-id="${id}"]`)
+      const pe = p.firstElementChild?.firstElementChild as HTMLElement | null
+      if (!ce || !pe) { drift.push(`${c.name}: not drawn`); a.remove(); p.remove(); continue }
+      const ct = ce.textContent ?? ''
+      const lost = words(pe.textContent ?? '').filter((w) => !ct.includes(w))
+      if (lost.length) missingText.push(`${c.name} (${lost.slice(0, 3).join(' ')})`)
+      const cr = ce.getBoundingClientRect()
+      const pr = pe.getBoundingClientRect()
+      if (Math.abs(cr.width - pr.width) > 4 || Math.abs(cr.height - pr.height) > 4) drift.push(`${c.name} ${Math.round(cr.width)}x${Math.round(cr.height)} vs ${Math.round(pr.width)}x${Math.round(pr.height)}`)
+      // A container is a frame at least 120 wide and a bar's height; a leaf
+      // is at least a word; a rule (Divider, LoadingBar) is a line, so only
+      // its length counts.
+      const line = c.name === 'Divider' || c.name === 'LoadingBar'
+      const need = c.container ? [120, 20] : line ? [120, 0] : [16, 8]
+      if (cr.width < need[0]! || cr.height < need[1]!) tiny.push(`${c.name} ${Math.round(cr.width)}x${Math.round(cr.height)}`)
+      a.remove()
+      p.remove()
+    }
+    check('the canvas shows every word the output shows, for every tool', missingText.length === 0, missingText.join(', '))
+    check('the canvas draws every tool at the size the output does', drift.length === 0, drift.join(', '))
+    check('every tool lands at a size you can see and use', tiny.length === 0, tiny.join(', '))
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

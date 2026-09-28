@@ -11,6 +11,7 @@
  */
 
 import { buildStarter, getStarter } from '../model/starters'
+import { dropSize } from '../model/drop-size'
 import { apply, duplicateSubtree, parentOf } from '../model/ops'
 import { instantiate } from '../model/registry'
 import type { Document, Node, NodeId, Op, PropValue, TargetId } from '../model/types'
@@ -264,6 +265,16 @@ export class EditorStore {
     const ok = this.commit({ op: 'insert', parent, node }, `Add ${name}`)
     if (ok) this.select([id])
     return ok ? id : undefined
+  }
+
+  /**
+   * A component dropped from the toolbox: `addComponent` plus the size it
+   * should arrive at (see `model/drop-size.ts`), so an empty container lands
+   * as a frame, not a 35px square.
+   */
+  dropComponent(name: string, parent: NodeId | null, x: number, y: number): NodeId | undefined {
+    const intoFlow = parent !== null && this.doc.nodes[parent]?.flow === true
+    return this.addComponent(name, parent, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow))
   }
 
   /**
