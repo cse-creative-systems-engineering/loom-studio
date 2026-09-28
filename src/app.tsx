@@ -1,6 +1,6 @@
 import React from 'react'
 import { EditorStore, emptyDocument } from './state/store'
-import type { Breakpoint, Document, InteractionState, Node, NodeId, PropValue } from './model/types'
+import type { Breakpoint, Document, InteractionState, Node, NodeId, PageBackground, PropValue } from './model/types'
 import { ancestry, descendants, parentOf } from './model/ops'
 import { snapMove as snapTo, artboardAnchors, type SnapBox } from './model/snap'
 import {
@@ -16,6 +16,7 @@ import {
 import { tooltipText } from './model/tooltip'
 import { inspectorView, propLabel } from './model/inspector-view'
 import { GROUP_ORDER } from './model/prop-groups'
+import { pageFill, MAX_PAGE_BLUR } from './model/page'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { STARTERS, getStarter } from './model/starters'
@@ -23,7 +24,7 @@ import { iconMarkup } from './render/icons'
 import { starterGlyph, toolGlyph } from './tool-icons'
 import { PreviewStage } from './preview'
 import { ToolCard, type CardTarget } from './tool-card'
-import { StatesPanel } from './states-inspector'
+import { StatesPanel, ColorInput } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
 import { partStyled } from './render/parts'
@@ -1344,6 +1345,9 @@ function Canvas({
     if (next !== reach) setReach(next)
   })
   const screenHeight = Math.max(viewportHeight, reach)
+  // What is behind the UI (Page, in the inspector with nothing selected).
+  const fill = pageFill(s.doc.meta.page, getTheme(s.doc.meta.theme).bg)
+  const blur = s.doc.meta.page?.blur ?? 0
 
   return (
     <main className="canvas-wrap" ref={wrapRef}>
@@ -1352,10 +1356,22 @@ function Canvas({
           {/* The artifact, running: same viewport, same zoom, real behaviour. */}
           {/* It is a SCREEN: the page's own background, edge to edge at the
               viewport's width, so where the artifact sits on it is visible. */}
+          {/* The page is drawn only if the document has one: with no
+              background the UI stands alone, no screen, no frame, no grid. */}
           <div
-            className={`stage ${CONTAINER_CLASS}`}
+            className={`stage ${CONTAINER_CLASS} ${fill === undefined ? 'bare' : ''}`}
             ref={stageRef}
-            style={{ zoom, width: viewportWidth, height: screenHeight, ['--screen-h' as string]: `${screenHeight}px`, background: getTheme(s.doc.meta.theme).bg, color: getTheme(s.doc.meta.theme).textPrimary, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
+            data-page={s.doc.meta.page?.background ?? 'none'}
+            style={{
+              zoom,
+              width: viewportWidth,
+              height: screenHeight,
+              ['--screen-h' as string]: `${screenHeight}px`,
+              background: fill,
+              backdropFilter: blur ? `blur(${blur}px)` : undefined,
+              color: getTheme(s.doc.meta.theme).textPrimary,
+              fontFamily: getTheme(s.doc.meta.theme).fontFamily,
+            }}
             data-viewport={viewport}
           >
             <PreviewStage s={s} />
@@ -1380,7 +1396,7 @@ function Canvas({
           // Exactly the viewport's width, never squeezed to the canvas: the
           // zoom fits it instead, so positions match the preview.
           ref={surfaceRef}
-          style={{ zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
+          style={{ zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily, ...(fill ? { backgroundColor: fill } : {}) }}
         >
           {s.doc.root !== null && (
             renderNode(
@@ -1525,9 +1541,12 @@ function Inspector({
   if (!node) {
     return (
       <aside className="inspector">
-        <div className="empty">
-          <p>Nothing selected</p>
-          <p className="dim">Drag a component onto the canvas, or click one to edit its properties.</p>
+        <div className="insp-scroll">
+          <PagePanel s={s} />
+          <div className="empty compact">
+            <p>Nothing selected</p>
+            <p className="dim">Drag a component onto the canvas, or click one to edit its properties.</p>
+          </div>
         </div>
       </aside>
     )
@@ -1895,6 +1914,85 @@ function ColorField({ value, onChange }: { value: string; onChange: (v: string) 
       />
     </div>
   )
+}
+
+/**
+ * What is behind the UI. Nothing, unless the designer picks something: a
+ * sidebar meant to float over a desktop has to be seen floating. A colour
+ * can be see-through, and blur softens whatever shows through it.
+ */
+function PagePanel({ s }: { s: EditorStore }) {
+  const page = s.doc.meta.page
+  const mode = page?.background ?? 'none'
+  const { hex, alpha } = splitColour(page?.color ?? '#101218')
+  const set = (next: PageBackground | null, label: string) => s.commit({ op: 'setPage', page: next }, label)
+  const blurNative = !/Linux/i.test(navigator.userAgent)
+  return (
+    <section className="page-panel">
+      <h3>Page</h3>
+      <div className="field">
+        <label title="What is drawn behind the UI">Background</label>
+        <div className="seg page-seg" role="group" aria-label="Page background">
+          {(['none', 'theme', 'color'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={mode === m ? 'on' : ''}
+              aria-pressed={mode === m}
+              onClick={() =>
+                set(m === 'none' ? (page?.blur ? { background: 'none', blur: page.blur } : null) : { background: m, color: m === 'color' ? joinColour(hex, alpha) : page?.color, blur: page?.blur }, `Page: ${m}`)
+              }
+            >
+              {m === 'none' ? 'None' : m === 'theme' ? 'Theme' : 'Colour'}
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === 'color' && (
+        <>
+          <div className="field">
+            <label>Colour</label>
+            <ColorInput value={hex} label="Page colour" onChange={(v) => typeof v === 'string' && set({ ...page!, color: joinColour(v, alpha) }, 'Page colour')} />
+          </div>
+          <SlideField label="α" value={Math.round(alpha * 100)} max={100} onChange={(v) => s.poke({ op: 'setPage', page: { ...page!, color: joinColour(hex, v / 100) } })} onCommit={() => s.seal('Page opacity')} />
+        </>
+      )}
+      {mode !== 'none' && (
+        <SlideField
+          label="⌾"
+          value={page?.blur ?? 0}
+          max={MAX_PAGE_BLUR}
+          onChange={(v) => s.poke({ op: 'setPage', page: { ...page!, blur: v } })}
+          onCommit={() => s.seal('Page blur')}
+        />
+      )}
+      <p className="dock-note">
+        {mode === 'none'
+          ? 'No background: the UI is drawn on whatever is behind it. Pop out the preview (Export menu) to see it float on your desktop.'
+          : mode === 'color' && alpha < 1
+            ? blurNative
+              ? 'See-through. Blur softens what shows behind it, including your desktop in the popped-out preview.'
+              : 'See-through. Your desktop shows behind it in the popped-out preview; blurring the desktop needs Windows or macOS.'
+            : 'Painted behind the whole UI, in exports too.'}
+      </p>
+    </section>
+  )
+}
+
+/** `#rrggbb` + alpha <-> the stored colour (`rgba(...)` when see-through). */
+function splitColour(c: string): { hex: string; alpha: number } {
+  const m = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)(?:[\s,/]+([\d.]+))?\s*\)$/.exec(c.trim())
+  if (m) {
+    const h = (n: string) => Number(n).toString(16).padStart(2, '0')
+    return { hex: `#${h(m[1]!)}${h(m[2]!)}${h(m[3]!)}`, alpha: m[4] === undefined ? 1 : Math.max(0, Math.min(1, Number(m[4]))) }
+  }
+  return { hex: /^#[0-9a-fA-F]{6}$/.test(c) ? c : '#101218', alpha: 1 }
+}
+
+function joinColour(hex: string, alpha: number): string {
+  if (alpha >= 1) return hex
+  const n = (i: number) => parseInt(hex.slice(i, i + 2), 16)
+  return `rgba(${n(1)}, ${n(3)}, ${n(5)}, ${Math.round(alpha * 100) / 100})`
 }
 
 /**

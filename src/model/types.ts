@@ -209,7 +209,21 @@ export interface DocMeta {
    * re-skins the whole document — the reason tokens exist.
    */
   theme?: string
+  /**
+   * What is behind the UI. Absent or `none` means nothing: the UI is drawn on
+   * whatever it is shown over (a browser's white, a desktop behind a
+   * transparent window). `theme` is the theme's page colour; `color` any
+   * colour, alpha included. `blur` (px) blurs what is behind a translucent
+   * page where the platform can (a window's native material).
+   */
+  page?: PageBackground
   created: number
+}
+
+export interface PageBackground {
+  background: 'none' | 'theme' | 'color'
+  color?: string
+  blur?: number
 }
 
 export interface Document {
@@ -312,6 +326,7 @@ export type Op =
    * document unsaved like any other edit.
    */
   | { op: 'setTheme'; theme: string | null }
+  | { op: 'setPage'; page: PageBackground | null }
 
 /** An op plus enough context to describe it in the undo history. */
 export interface OpFrame {

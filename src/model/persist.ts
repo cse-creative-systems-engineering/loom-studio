@@ -12,6 +12,7 @@
  */
 
 import { BREAKPOINTS, INTERACTION_STATES, type Breakpoint, type DocMeta, type Document, type InteractionState, type InteractionStyles, type Node, type NodeId } from './types'
+import { cleanPage } from './page'
 import { getComponent, validateProps } from './registry'
 import { clampZ } from './ops'
 import { normalizeEffects } from '../render/effects'
@@ -489,6 +490,11 @@ function validateMeta(input: unknown, issues: ValidationIssue[]): DocMeta {
       typeof a.h === 'number' && Number.isFinite(a.h) && a.h > 0
     if (ok) meta.artboard = { w: Math.round(a.w as number), h: Math.round(a.h as number) }
     else issues.push({ path: '$.meta.artboard', message: 'expected { w, h } positive finite numbers (dropped)' })
+  }
+  if (m.page !== undefined) {
+    const page = cleanPage(m.page)
+    if (page) meta.page = page
+    else issues.push({ path: '$.meta.page', message: 'expected { background: none|theme|color, color?, blur? } with a safe colour (dropped)' })
   }
   if (m.snapGrid !== undefined) {
     if (typeof m.snapGrid === 'number' && Number.isFinite(m.snapGrid) && m.snapGrid >= 0) meta.snapGrid = m.snapGrid

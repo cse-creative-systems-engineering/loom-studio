@@ -13,6 +13,7 @@ import { renderNode } from './render/web'
 import { resolveTheme, THEME_NAMES, type ThemeName } from './render/theme'
 import { emptyDocument } from './state/store'
 import type { Document } from './model/types'
+import { pageFill } from './model/page'
 import { installBehaviourRuntime, installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import './preview-window.css'
 import './model/toolbox'
@@ -108,11 +109,13 @@ function App() {
         <div
           className={`pvwin-stage ${CONTAINER_CLASS}`}
           ref={stageRef}
-          style={
-            effective !== undefined
-              ? { transform: `scale(${effective})`, transformOrigin: 'top left' }
-              : undefined
-          }
+          data-page={doc.meta.page?.background ?? 'none'}
+          style={{
+            ...(effective !== undefined ? { transform: `scale(${effective})`, transformOrigin: 'top left' } : {}),
+            // The page, only if the document has one; a translucent page
+            // shows the desktop through it.
+            background: pageFill(doc.meta.page, resolveTheme(themeName).bg),
+          }}
         >
           {doc.root === null
             ? null

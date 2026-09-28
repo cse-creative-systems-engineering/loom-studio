@@ -8,6 +8,7 @@
  */
 
 import type { Document, Node, NodeId, Op, PropValue } from './types'
+import { cleanPage } from './page'
 import { acceptsChild, getComponent, normalizeProps } from './registry'
 // Effects are a pure data module (values in, style out) with no model
 // dependency, so importing it here does NOT invert the model->render
@@ -304,6 +305,17 @@ export function apply(doc: Document, op: Op): Document {
       else meta.theme = op.theme
       return { ...next, meta }
     }
+
+    case 'setPage': {
+      // Only a valid page lands: an unsafe colour or a nonsense blur is refused
+      // here as well as in the loader, since ops are the other way in.
+      const page = op.page === null ? null : cleanPage(op.page)
+      if (op.page !== null && page === null) return doc
+      const meta = { ...next.meta }
+      if (page === null) delete meta.page
+      else meta.page = page
+      return { ...next, meta }
+    }
   }
 }
 
@@ -467,6 +479,9 @@ export function invert(doc: Document, op: Op): Op | undefined {
     }
     case 'rename': {
       return { op: 'rename', name: doc.meta.name }
+    }
+    case 'setPage': {
+      return { op: 'setPage', page: doc.meta.page ? { ...doc.meta.page } : null }
     }
     case 'setTheme': {
       return { op: 'setTheme', theme: doc.meta.theme ?? null }

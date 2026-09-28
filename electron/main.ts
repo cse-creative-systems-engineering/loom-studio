@@ -147,7 +147,25 @@ let previewWin: BrowserWindow | null = null
 let pendingPreviewDoc: unknown = undefined
 
 /** Push a doc to the open preview, or stash it for `did-finish-load`. */
+/**
+ * Blur what is behind a translucent page with the platform's own material:
+ * Windows 11 acrylic, macOS vibrancy. Linux has no such material in Electron,
+ * so there the desktop shows through unblurred (the Page panel says so).
+ */
+function applyPageMaterial(doc: unknown) {
+  if (!previewWin || previewWin.isDestroyed()) return
+  const page = (doc as { meta?: { page?: { background?: string; blur?: number } } } | null)?.meta?.page
+  const blur = page && page.background !== 'none' ? page.blur ?? 0 : 0
+  try {
+    if (process.platform === 'win32') previewWin.setBackgroundMaterial(blur > 0 ? 'acrylic' : 'none')
+    else if (process.platform === 'darwin') previewWin.setVibrancy(blur > 0 ? 'under-window' : null)
+  } catch {
+    // An older OS without the material: the page is simply unblurred.
+  }
+}
+
 function sendPreviewDoc(doc: unknown) {
+  applyPageMaterial(doc)
   if (previewWin && !previewWin.isDestroyed() && !previewWin.webContents.isLoading()) {
     previewWin.webContents.send('preview:document', doc)
   } else {
@@ -167,7 +185,12 @@ function openPreview(doc: unknown) {
     height: 640,
     minWidth: 320,
     minHeight: 240,
-    backgroundColor: '#0a0c11',
+    // Transparent: the window draws only the design. With no page background
+    // the UI floats on the desktop, which is how a docked sidebar or an
+    // overlay is actually judged.
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
     show: false,
     // Frameless: the preview IS the built UI, with no OS chrome and no
     // in-window header. A floating pill (drag region) carries zoom/pin/close

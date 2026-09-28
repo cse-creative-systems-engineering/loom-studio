@@ -34,6 +34,7 @@ import { STARTERS } from '../src/model/starters'
 import { hasOwnGlyph } from '../src/tool-icons'
 import { GROUP_ORDER } from '../src/model/prop-groups'
 import { ToolThumb } from '../src/tool-card'
+import { cleanPage } from '../src/model/page'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
@@ -726,7 +727,9 @@ export async function runSelfTest(): Promise<string> {
     check('export emits a doctype', html.startsWith('<!DOCTYPE html>'))
     check('export has no editor hooks', !html.includes('data-loom-id') && !html.includes('loom-handle'))
     check('export renders real controls', html.includes('<button') && html.includes('<input'))
-    check('export embeds the active theme', html.includes('#f6f7f9'), 'daylight bg missing')
+    // The theme's text colour (the page colour is only painted when a page
+    // background is chosen, §69).
+    check('export embeds the active theme', html.includes(getTheme('daylight').textPrimary), 'daylight text colour missing')
     check('export is deterministic', emitHtml(se.doc) === html)
 
     // Hostile text must be escaped, never emitted raw.
@@ -3872,6 +3875,60 @@ export async function runSelfTest(): Promise<string> {
     check('an empty workspace has 0 layers, not -1', /Layers\s*·\s*0/.test(layersTab), layersTab)
     app.loadDocument(before)
     await new Promise((r) => setTimeout(r, 100))
+  }
+
+  // --- 69. a background only when you choose one --------------------------
+  // Shane: "when doing the preview, the design grid shows up as a big
+  // background for the UI"; asked for UI without windows or decorations, no
+  // background unless chosen, and transparency with blur.
+  {
+    // The model: validated, undoable, unsafe colours refused.
+    check('a page takes none, theme, or a colour with alpha', cleanPage({ background: 'color', color: 'rgba(10, 20, 30, 0.5)', blur: 12 })?.color === 'rgba(10, 20, 30, 0.5)' && cleanPage({ background: 'none' })?.background === 'none')
+    check('an unsafe or missing page colour is refused', cleanPage({ background: 'color', color: 'red;}body{x:y' }) === null && cleanPage({ background: 'color' }) === null && cleanPage({ background: 'image' }) === null)
+    const sp = new EditorStore()
+    sp.addComponent('Panel', null, 0, 0)
+    sp.commit({ op: 'setPage', page: { background: 'color', color: '#112233', blur: 99 } }, 'page')
+    check('blur is clamped to its range', sp.doc.meta.page?.blur === 60, String(sp.doc.meta.page?.blur))
+    sp.undo()
+    check('setting the page undoes in one step', sp.doc.meta.page === undefined)
+    sp.redo()
+    const back = validate(serialize(sp.doc))
+    check('the page survives save and load', back.doc?.meta.page?.color === '#112233' && back.issues.length === 0)
+    const forged = validate(JSON.stringify({ ...JSON.parse(serialize(sp.doc)), meta: { ...sp.doc.meta, page: { background: 'color', color: 'url(javascript:x)' } } }))
+    check('a forged page colour is dropped on load, and said so', forged.doc?.meta.page === undefined && forged.issues.some((i) => i.path === '$.meta.page'))
+    check('an export paints no page unless one is chosen', !/body\{background:/.test(emitHtml(new EditorStore().doc)) && /body\{background:#112233/.test(emitHtml(sp.doc)))
+
+    // The real preview: nothing behind the UI by default; the page when chosen.
+    const app = window.__loomStore
+    const before = app.doc
+    const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms))
+    const mode = (m: string) => [...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === m)?.click()
+    const sc = new EditorStore()
+    sc.addComponent('Panel', null, 0, 0, { w: 400, h: 300 })
+    app.loadDocument(sc.doc)
+    await wait()
+    mode('Preview')
+    await wait(250)
+    const stage = () => document.querySelector<HTMLElement>('.canvas.previewing .stage')!
+    const cs = getComputedStyle(stage())
+    const wrap = getComputedStyle(document.querySelector('.canvas-wrap')!)
+    check('Preview draws no page, frame or shadow by default', cs.backgroundColor === 'rgba(0, 0, 0, 0)' && cs.boxShadow === 'none', `${cs.backgroundColor} / ${cs.boxShadow}`)
+    check('Preview shows no dot grid behind the UI', !/radial-gradient/.test(wrap.backgroundImage), wrap.backgroundImage.slice(0, 60))
+    app.commit({ op: 'setPage', page: { background: 'color', color: 'rgba(200, 10, 10, 0.5)', blur: 8 } }, 'page')
+    await wait()
+    const cs2 = getComputedStyle(stage())
+    check('a chosen see-through page is drawn, with its blur', cs2.backgroundColor === 'rgba(200, 10, 10, 0.5)' && /blur\(8px\)/.test(cs2.backdropFilter), `${cs2.backgroundColor} / ${cs2.backdropFilter}`)
+    mode('Design')
+    await wait()
+    app.select([])
+    await wait()
+    const panel = document.querySelector<HTMLElement>('.inspector .page-panel')
+    check('with nothing selected, the inspector offers the Page', !!panel && /Background/.test(panel.textContent ?? ''))
+    ;[...(panel?.querySelectorAll<HTMLButtonElement>('.page-seg button') ?? [])].find((b) => b.textContent === 'Theme')?.click()
+    await wait()
+    check('choosing Theme sets the page to the theme colour', app.doc.meta.page?.background === 'theme')
+    app.loadDocument(before)
+    await wait()
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

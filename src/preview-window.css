@@ -7,7 +7,8 @@ html, body, #root {
 }
 
 body.preview-window {
-  background: #0a0c11;
+  /* The window is transparent: only the design is drawn (see main.ts). */
+  background: transparent;
   overflow: hidden;
   font-family: ui-sans-serif, -apple-system, 'Inter', 'Segoe UI', system-ui, sans-serif;
   color: #e6e9ef;
@@ -106,13 +107,9 @@ body.preview-window {
   display: grid;
   place-items: center;
   padding: 16px;
-  /* A neutral backdrop so the artifact's own theme is what you judge. */
-  background:
-    linear-gradient(45deg, #0c0f16 25%, transparent 25%) 0 0 / 14px 14px,
-    linear-gradient(-45deg, #0c0f16 25%, transparent 25%) 0 7px / 14px 14px,
-    linear-gradient(45deg, transparent 75%, #0c0f16 75%) 7px -7px / 14px 14px,
-    linear-gradient(-45deg, transparent 75%, #0c0f16 75%) -7px 0 / 14px 14px,
-    #0a0c11;
+  /* Nothing behind the design: the desktop shows through, unless the
+     document chose a page background (drawn on the stage). */
+  background: transparent;
 }
 
 .pvwin-body.panning { cursor: grabbing; }
@@ -120,10 +117,6 @@ body.preview-window {
 .pvwin-stage {
   width: 720px;
   min-height: 460px;
-  background: #12151d;
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.9);
   flex: none;
 }
 
