@@ -75,7 +75,7 @@ export const STARTERS: Starter[] = [
           type: 'Composer',
           flow: true,
           props: { sendsTo: '@list', placeholder: 'Ask anything…' },
-          children: [{ type: 'IconButton', props: { icon: 'plus', variant: 'ghost', ariaLabel: 'Attach a file' } }],
+          children: [{ type: 'IconButton', props: { icon: 'paperclip', variant: 'ghost', ariaLabel: 'Attach a file' } }],
         },
       ],
     },

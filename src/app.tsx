@@ -18,6 +18,8 @@ import { inspectorView, propLabel } from './model/inspector-view'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { STARTERS, getStarter } from './model/starters'
+import { iconMarkup } from './render/icons'
+import { PreviewStage } from './preview'
 import { StatesPanel } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
@@ -29,6 +31,7 @@ import { installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import { ContextMenu, type MenuState } from './context-menu'
 import { THEME_NAMES, getTheme } from './render/theme'
 import './ui.css'
+import './chrome.css'
 
 interface PreviewApi {
   open: (doc: unknown) => Promise<boolean>
@@ -91,6 +94,13 @@ export function App() {
   // Canvas zoom is view state, not document state: it never touches the
   // doc, the history, or the output. 1 = 100%.
   const [zoom, setZoom] = React.useState(1)
+  // Design or preview, IN PLACE: the canvas becomes the running artifact at
+  // the same viewport and zoom, and the panels step aside. A separate window
+  // made you look away from where you were working; it is still one click
+  // away ("Pop out") for a second screen.
+  const [mode, setMode] = React.useState<'design' | 'preview'>('design')
+  const modeRef = React.useRef(mode)
+  modeRef.current = mode
 
   /**
    * The preview is a DETACHED window, on demand.
@@ -200,7 +210,7 @@ export function App() {
           void s.exportHtmlFile()
         } else if (e.key === 'p') {
           e.preventDefault()
-          togglePreview()
+          setMode((m) => (m === 'design' ? 'preview' : 'design'))
         } else if (e.key === 'r') {
           e.preventDefault()
           void s.exportReactFile()
@@ -215,6 +225,13 @@ export function App() {
       }
 
       if (typing) return
+
+      // Previewing is using the artifact, not editing it: Esc returns to the
+      // design, and no editing key reaches a document you cannot see.
+      if (modeRef.current === 'preview') {
+        if (e.key === 'Escape') setMode('design')
+        return
+      }
 
       // Bare-key shortcuts: the obvious ones a designer reaches for.
       if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -256,10 +273,10 @@ export function App() {
   }, [s])
 
   return (
-    <div className="loom">
-      <TitleBar s={s} previewOpen={previewOpen} onTogglePreview={togglePreview} />
+    <div className={`loom ${mode === 'preview' ? 'previewing' : ''}`}>
+      <TitleBar s={s} mode={mode} onMode={setMode} previewOpen={previewOpen} onTogglePreview={togglePreview} />
       <div className="body">
-        <Toolbox s={s} onDragChange={setDragging} zoom={zoom} />
+        {mode === 'design' && <Toolbox s={s} onDragChange={setDragging} zoom={zoom} />}
         <Canvas
           viewport={viewport}
           editState={editState}
@@ -269,19 +286,74 @@ export function App() {
           onMenu={setMenu}
           zoom={zoom}
           onZoom={(z) => setZoom(Math.min(2, Math.max(0.25, Math.round(z * 100) / 100)))}
+          mode={mode}
+          onMode={setMode}
         />
-        <Inspector s={s} viewport={viewport} editState={editState} onEditState={setEditState} />
+        {mode === 'design' && <Inspector s={s} viewport={viewport} editState={editState} onEditState={setEditState} />}
       </div>
-      <StatusBar s={s} previewOpen={previewOpen} onTogglePreview={togglePreview} />
       {menu && <ContextMenu s={s} state={menu} onClose={() => setMenu(null)} />}
     </div>
   )
 }
 
-function TitleBar({ s, previewOpen, onTogglePreview }: { s: EditorStore; previewOpen: boolean; onTogglePreview: () => void }) {
-  // Copy confirmation is local view state: it reports a clipboard write,
-  // never document state, so it stays out of the store.
+/** One icon from Loom's own set, for the chrome: the same family the output uses. */
+function Ico({ name, size = 14 }: { name: string; size?: number }) {
+  const markup = iconMarkup(name)
+  if (!markup) throw new Error(`chrome icon missing from the set: ${name}`)
+  return (
+    <svg
+      className="ico"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      // Compile-time constants from icons.ts, never user input.
+      dangerouslySetInnerHTML={{ __html: markup }}
+    />
+  )
+}
+
+/**
+ * The one bar above the work. Compact on purpose: every pixel here is a pixel
+ * the canvas does not get. File actions are icons (their shortcuts are in the
+ * tooltips), the output actions live under one Export menu, and the mode
+ * switch sits in the middle because it is the question the bar answers:
+ * are you designing, or looking at what you built?
+ */
+function TitleBar({
+  s,
+  mode,
+  onMode,
+  previewOpen,
+  onTogglePreview,
+}: {
+  s: EditorStore
+  mode: 'design' | 'preview'
+  onMode: (m: 'design' | 'preview') => void
+  previewOpen: boolean
+  onTogglePreview: () => void
+}) {
+  const [exportOpen, setExportOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
+  const exportRef = React.useRef<HTMLDivElement | null>(null)
+  React.useEffect(() => {
+    if (!exportOpen) return
+    const close = (e: PointerEvent) => {
+      if (!exportRef.current?.contains(e.target as HTMLElement | null)) setExportOpen(false)
+    }
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setExportOpen(false)
+    window.addEventListener('pointerdown', close, true)
+    window.addEventListener('keydown', esc)
+    return () => {
+      window.removeEventListener('pointerdown', close, true)
+      window.removeEventListener('keydown', esc)
+    }
+  }, [exportOpen])
   const copyHtml = () => {
     if (typeof navigator === 'undefined' || !navigator.clipboard) return
     let html: string
@@ -295,78 +367,109 @@ function TitleBar({ s, previewOpen, onTogglePreview }: { s: EditorStore; preview
       window.setTimeout(() => setCopied(false), 1500)
     })
   }
-  // A fresh empty workspace. History resets with the document (an OPEN, not
-  // an edit), and unsaved work gets a confirmation first — silently
-  // discarding it would be the worst kind of data loss.
-  const newWorkspace = () => {
-    confirmNewWorkspace(s)
+  const last = s.history[s.history.length - 1]
+  const next = s.future[s.future.length - 1]
+  const gated = [...componentsByCategory().values()].flat().filter((c) => unsupportedProps(c, s.target).length > 0)
+  const act = (f: () => void) => () => {
+    f()
+    setExportOpen(false)
   }
   return (
     <header className="titlebar">
-      <div className="brand">
-        <span className="mark" />
-        <span className="wordmark">Loom</span>
+      <div className="tb-left">
+        <span className="mark" aria-hidden="true" />
+        <div className="doc-name" title={s.dirty ? 'Unsaved changes' : 'Saved'}>
+          <span className="doc-title">{s.doc.meta.name}</span>
+          {s.dirty && <span className="dirty-dot" aria-label="Unsaved changes" />}
+        </div>
+        <div className="tb-group" role="group" aria-label="File">
+          <button className="tb-btn" onClick={() => confirmNewWorkspace(s)} title="New empty workspace (Ctrl+N)" aria-label="New">
+            <Ico name="file" />
+          </button>
+          <button className="tb-btn" onClick={() => void s.open()} title="Open a document (Ctrl+O)" aria-label="Open">
+            <Ico name="folder" />
+          </button>
+          <button className="tb-btn" onClick={() => void s.save()} title="Save (Ctrl+S)" aria-label="Save">
+            <Ico name="save" />
+          </button>
+        </div>
+        <div className="tb-group" role="group" aria-label="History">
+          <button className="tb-btn" disabled={!last} onClick={() => s.undo()} title={last ? `Undo ${last.label} (Ctrl+Z)` : 'Nothing to undo'} aria-label="Undo">
+            <Ico name="undo" />
+          </button>
+          <button className="tb-btn" disabled={!next} onClick={() => s.redo()} title={next ? `Redo ${next.label} (Ctrl+Shift+Z)` : 'Nothing to redo'} aria-label="Redo">
+            <Ico name="redo" />
+          </button>
+        </div>
       </div>
-      <div className="doc-name">
-        {s.doc.meta.name}
-        {s.dirty && <span className="dirty-dot" title="Unsaved changes" aria-label="Unsaved changes" />}
-      </div>
-      <div className="file-actions">
-        <button className="file-btn" onClick={newWorkspace} title="New empty workspace (Ctrl+N)">
-          New
-        </button>
-        <button className="file-btn" onClick={() => void s.open()} title="Open a document (Ctrl+O)">
-          Open
-        </button>
-        <button className="file-btn primary" onClick={() => void s.save()} title="Save (Ctrl+S)">
-          Save
-        </button>
-        <button className="file-btn" onClick={() => void s.exportHtmlFile()} title="Export standalone HTML (Ctrl+E)">
-          Export
-        </button>
-        <button
-          className={`file-btn${previewOpen ? ' primary' : ''}`}
-          onClick={onTogglePreview}
-          title={previewOpen ? 'Hide the live preview (Ctrl+P)' : 'Show a live preview of what is built (Ctrl+P)'}
-          aria-pressed={previewOpen}
-        >
-          {previewOpen ? '◉ Preview' : '○ Preview'}
-        </button>
-        <button className="file-btn" onClick={copyHtml} title="Copy the standalone HTML output to the clipboard">
-          {copied ? 'Copied ✓' : 'Copy'}
-        </button>
-        <button className="file-btn" onClick={() => void s.exportReactFile()} title="Export a self-contained React component (.jsx, Ctrl+R)">
-          React
-        </button>
-      </div>
-      <span className="spacer" />
-      <div className="theme-picker" role="group" aria-label="Output theme">
-        {THEME_NAMES.map((n) => (
+
+      <div className="mode-switch pv-toggle" role="tablist" aria-label="Mode">
+        {(['design', 'preview'] as const).map((m) => (
           <button
-            key={n}
-            className={`theme-chip ${(s.doc.meta.theme ?? 'midnight') === n ? 'on' : ''}`}
-            onClick={() => s.setTheme(n)}
-            title={`Apply the ${n} theme to the whole document`}
+            key={m}
+            role="tab"
+            aria-selected={mode === m}
+            className={mode === m ? 'on' : ''}
+            onClick={() => onMode(m)}
+            title={m === 'design' ? 'Edit the design (Esc)' : 'Use what you built, in place (Ctrl+P)'}
           >
-            <span
-              className="theme-swatch"
-              style={{ background: getTheme(n).accent }}
-              aria-hidden="true"
-            />
-            {n}
+            {m === 'design' ? 'Design' : 'Preview'}
           </button>
         ))}
       </div>
-      <div className="targets" role="group" aria-label="Export target">
-        {(['web', 'desktop'] as const).map((t) => (
-          <button
-            key={t}
-            className={`target ${s.target === t ? 'on' : ''}`}
-            onClick={() => s.setTarget(t)}
+
+      <div className="tb-right">
+        <div className="seg" role="group" aria-label="Output theme">
+          {THEME_NAMES.map((n) => (
+            <button
+              key={n}
+              className={(s.doc.meta.theme ?? 'midnight') === n ? 'on' : ''}
+              onClick={() => s.setTheme(n)}
+              title={`Apply the ${n} theme to the whole document`}
+              aria-label={`${n} theme`}
+              aria-pressed={(s.doc.meta.theme ?? 'midnight') === n}
+            >
+              <span className="theme-swatch" style={{ background: getTheme(n).accent }} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+        <div className="seg" role="group" aria-label="Export target">
+          {(['web', 'desktop'] as const).map((t) => (
+            <button key={t} className={s.target === t ? 'on' : ''} aria-pressed={s.target === t} onClick={() => s.setTarget(t)}>
+              {t === 'web' ? 'Web' : 'Desktop'}
+            </button>
+          ))}
+        </div>
+        {gated.length > 0 && (
+          <span
+            className="gate-note"
+            title={`${gated.length} components have properties the ${s.target === 'web' ? 'desktop' : 'web'} target cannot represent: ${gated.map((c) => c.name).join(', ')}`}
           >
-            {t === 'web' ? 'Web' : 'Desktop'}
+            {gated.length} web-only
+          </span>
+        )}
+        <div className="export" ref={exportRef}>
+          <button className="tb-primary" aria-haspopup="menu" aria-expanded={exportOpen} onClick={() => setExportOpen((o) => !o)}>
+            Export <Ico name="chevron-down" size={12} />
           </button>
-        ))}
+          {exportOpen && (
+            <div className="export-menu" role="menu">
+              <button role="menuitem" onClick={act(() => void s.exportHtmlFile())}>
+                HTML file <kbd>Ctrl E</kbd>
+              </button>
+              <button role="menuitem" onClick={act(() => void s.exportReactFile())}>
+                React component <kbd>Ctrl R</kbd>
+              </button>
+              <button role="menuitem" onClick={act(copyHtml)}>
+                {copied ? 'Copied' : 'Copy HTML'}
+              </button>
+              <span className="menu-rule" />
+              <button role="menuitem" onClick={act(onTogglePreview)}>
+                {previewOpen ? 'Close preview window' : 'Pop out preview window'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   )
@@ -847,6 +950,8 @@ function Canvas({
   viewport,
   onViewport,
   editState,
+  mode,
+  onMode,
 }: {
   s: EditorStore
   editState: InteractionState | null
@@ -856,6 +961,8 @@ function Canvas({
   onZoom: (z: number) => void
   viewport: Breakpoint
   onViewport: (b: Breakpoint) => void
+  mode: 'design' | 'preview'
+  onMode: (m: 'design' | 'preview') => void
 }) {
   const dragRef = React.useRef<DragState | null>(null)
   const [rulers, setRulers] = React.useState(false)
@@ -1051,43 +1158,15 @@ function Canvas({
 
   return (
     <main className="canvas-wrap">
-      <div className="canvas-toolbar">
-        <button className="chip" onClick={() => setRulers((r) => !r)}>
-          {rulers ? 'Rulers on' : 'Rulers off'}
-        </button>
-        <div className="viewport-group" role="group" aria-label="Design viewport">
-          {VIEWPORTS.map((v) => (
-            <button
-              key={v.id}
-              className={`chip${viewport === v.id ? ' on' : ''}`}
-              onClick={() => onViewport(v.id)}
-              title={`${v.label} — ${v.width}px. Nudge the artboard to see how the layout responds.`}
-              aria-pressed={viewport === v.id}
-            >
-              {v.label}
-            </button>
-          ))}
+      {mode === 'preview' && (
+        <div className="canvas previewing">
+          {/* The artifact, running: same viewport, same zoom, real behaviour. */}
+          <div className={`stage ${CONTAINER_CLASS}`} style={{ zoom, width: viewportWidth, maxWidth: '100%' }} data-viewport={viewport}>
+            <PreviewStage s={s} />
+          </div>
         </div>
-        <div className="zoom-group" role="group" aria-label="Canvas zoom">
-          <button className="chip" onClick={() => onZoom(zoom / 1.25)} title="Zoom out" aria-label="Zoom out">
-            −
-          </button>
-          <button
-            className="chip zoom-readout"
-            onClick={() => onZoom(1)}
-            title="Reset to 100%"
-            aria-label={`Zoom ${Math.round(zoom * 100)} percent, activate to reset`}
-          >
-            {Math.round(zoom * 100)}%
-          </button>
-          <button className="chip" onClick={() => onZoom(zoom * 1.25)} title="Zoom in" aria-label="Zoom in">
-            +
-          </button>
-        </div>
-        <span className="spacer" />
-        <span className="hint">Del delete · ⌘Z undo · ↑↓ nudge · Esc deselect</span>
-      </div>
-      <div className={`canvas ${rulers ? 'rulers' : ''} ${dragging ? 'drop-active' : ''}`}>
+      )}
+      <div className={`canvas ${rulers ? 'rulers' : ''} ${dragging ? 'drop-active' : ''}`} hidden={mode === 'preview'}>
         <div
           className={`surface ${CONTAINER_CLASS}`}
           data-loom-surface={s.doc.root ?? 'empty'}
@@ -1133,6 +1212,51 @@ function Canvas({
           x {readout.x} · y {readout.y}
         </div>
       )}
+      {/* The dock: what you look AT the canvas through (width, zoom, rulers),
+          floating over it instead of taking a row away from it. */}
+      <div className="dock" role="toolbar" aria-label="View">
+        <div className="dock-group" role="group" aria-label="Viewport">
+          {VIEWPORTS.map((v) => (
+            <button
+              key={v.id}
+              className={viewport === v.id ? 'on' : ''}
+              onClick={() => onViewport(v.id)}
+              title={`${v.label} · ${v.width}px`}
+              aria-label={v.label}
+              aria-pressed={viewport === v.id}
+            >
+              <Ico name={v.id === 'sm' ? 'smartphone' : v.id === 'md' ? 'tablet' : 'monitor'} />
+            </button>
+          ))}
+        </div>
+        <span className="dock-rule" />
+        <div className="dock-group" role="group" aria-label="Zoom">
+          <button onClick={() => onZoom(zoom / 1.25)} title="Zoom out" aria-label="Zoom out">
+            <Ico name="minus" size={12} />
+          </button>
+          <button className="dock-zoom" onClick={() => onZoom(1)} title="Reset to 100%" aria-label={`Zoom ${Math.round(zoom * 100)} percent, activate to reset`}>
+            {Math.round(zoom * 100)}%
+          </button>
+          <button onClick={() => onZoom(zoom * 1.25)} title="Zoom in" aria-label="Zoom in">
+            <Ico name="plus" size={12} />
+          </button>
+        </div>
+        {mode === 'design' ? (
+          <>
+            <span className="dock-rule" />
+            <button className={rulers ? 'on' : ''} onClick={() => setRulers((r) => !r)} title="Rulers and grid" aria-label="Rulers" aria-pressed={rulers}>
+              <Ico name="ruler" />
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="dock-rule" />
+            <button className="dock-text" onClick={() => onMode('design')} title="Back to the design (Esc)">
+              Done
+            </button>
+          </>
+        )}
+      </div>
     </main>
   )
 }
@@ -1654,70 +1778,3 @@ function NumField({
  * Status bar
  * ------------------------------------------------------------------ */
 
-function StatusBar({
-  s,
-  previewOpen,
-  onTogglePreview,
-}: {
-  s: EditorStore
-  previewOpen: boolean
-  onTogglePreview: () => void
-}) {
-  const total = Object.keys(s.doc.nodes).length - 1
-  const last = s.history[s.history.length - 1]
-  const gatedComponents = [...componentsByCategory().values()]
-    .flat()
-    .filter((c) => unsupportedProps(c, s.target).length > 0)
-  const canUndo = s.history.length > 0
-  const canRedo = s.future.length > 0
-
-  return (
-    <footer className="statusbar">
-      <button
-        className="hist-btn"
-        disabled={!canUndo}
-        onClick={() => s.undo()}
-        title="Undo (Ctrl+Z)"
-        aria-label="Undo"
-      >
-        ↶
-      </button>
-      <button
-        className="hist-btn"
-        disabled={!canRedo}
-        onClick={() => s.redo()}
-        title="Redo (Ctrl+Shift+Z)"
-        aria-label="Redo"
-      >
-        ↷
-      </button>
-      <span className="sep" />
-      <span>{total} element{total === 1 ? '' : 's'}</span>
-      <span className="sep" />
-      <span>{s.selection.length ? `${s.selection.length} selected` : 'no selection'}</span>
-      <span className="sep" />
-      <span className="dim">{last ? `last: ${last.label}` : 'no edits yet'}</span>
-      <span className="spacer" />
-      <button
-        className="pv-toggle"
-        onClick={onTogglePreview}
-        title={previewOpen ? 'Hide the live preview' : 'Show the live preview'}
-      >
-        {previewOpen ? '◉' : '○'} preview
-      </button>
-      {gatedComponents.length > 0 && (
-        <button
-          className="warn-btn"
-          onClick={() => s.setTarget(s.target === 'web' ? 'desktop' : 'web')}
-          title={
-            s.target === 'desktop'
-              ? `${gatedComponents.length} components have properties the desktop target cannot represent: ${gatedComponents.map((c) => c.name).join(', ')}. Click to switch back to Web.`
-              : `${gatedComponents.length} components have web-only properties: ${gatedComponents.map((c) => c.name).join(', ')}. Click to preview the desktop target.`
-          }
-        >
-          {s.target === 'desktop' ? '◈' : '◉'} {gatedComponents.length} web-only
-        </button>
-      )}
-    </footer>
-  )
-}
