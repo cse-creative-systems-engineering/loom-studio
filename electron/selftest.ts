@@ -151,6 +151,23 @@ function snapshot(s: EditorStore) {
 export async function runSelfTest(): Promise<string> {
   const s = new EditorStore()
 
+  // --- 0. the canvas has the output's state stylesheet from the start ---
+  // FIRST, before anything opens a preview: the sheet used to arrive only
+  // with the docked preview, so until then a Switch drew its knob with no
+  // track (in the canvas, the toolbox cards and the specimen board alike).
+  {
+    const host0 = document.createElement('div')
+    document.body.appendChild(host0)
+    const r0 = createRoot(host0)
+    r0.render(React.createElement(ToolThumb, { tool: { type: 'Switch' }, theme: 'midnight' }))
+    await new Promise((r) => setTimeout(r, 60))
+    const track = host0.querySelector<HTMLElement>('[data-loom-track]')
+    const bg = track ? getComputedStyle(track).backgroundColor : 'missing'
+    r0.unmount()
+    host0.remove()
+    check('a Switch draws its track before any preview has opened', bg !== 'missing' && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent', bg)
+  }
+
   // --- 1. drop a component with declared defaults applied ---
   const btn = s.addComponent('Button', withRoot(s), 40, 60)
   check('drop returns an id', Boolean(btn), String(btn))
