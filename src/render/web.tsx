@@ -502,12 +502,20 @@ function applyCommonStyle(
       case 'bottom-left': s.bottom = '0'; s.left = '0'; break
       case 'left': s.top = '0'; s.bottom = '0'; s.left = '0'; break
       case 'center':
+        // Its CENTRE at the parent's centre: 50%/50% alone put its top-left
+        // corner there.
         s.top = '50%'
         s.left = '50%'
+        s.transform = s.transform ? `translate(-50%, -50%) ${str(s.transform)}` : 'translate(-50%, -50%)'
         break
       case 'fill': s.inset = '0'; break
       default: break
     }
+    // Docked to an edge means spanning it: a top/bottom dock is the parent's
+    // width and a left/right dock its height, whatever size it had. Left in
+    // place, a set width beat `left:0; right:0` and the "dock" did not span.
+    if (anchor === 'top' || anchor === 'bottom' || anchor === 'fill') { s.width = undefined; s.maxWidth = undefined }
+    if (anchor === 'left' || anchor === 'right' || anchor === 'fill') { s.height = undefined; s.maxHeight = undefined }
   }
   if (p.sticky === true) {
     // Sticky is the other half of docking: it keeps a node put while the

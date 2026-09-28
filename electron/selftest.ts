@@ -3660,6 +3660,86 @@ export async function runSelfTest(): Promise<string> {
     check('every tool lands at a size you can see and use', tiny.length === 0, tiny.join(', '))
   }
 
+  // --- 66. docking does what it says, and the Position panel shows it ----
+  // Shane: "positioning only has text entry, can we add sliders? Is there
+  // anything for docking?" Docking existed (every component's `anchor`) but
+  // sat behind "more properties" as a dropdown, `center` put the top-left
+  // corner at the centre, and a top/bottom dock with a set width did not span.
+  // Typing W on a content-sized node also set its height to 1px.
+  {
+    const box = (mode: 'authoring' | 'preview', anchor: string) => {
+      const st = new EditorStore()
+      st.addComponent('Panel', null, 0, 0, { w: 600, h: 400, padding: 0 })
+      const root = st.doc.root!
+      const id = st.addComponent('Card', root, 50, 60, { w: 120, h: 80, anchor })!
+      const h = document.createElement('div')
+      h.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:600px;visibility:hidden'
+      h.innerHTML = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode }, root))
+      document.body.appendChild(h)
+      const parent = h.firstElementChild as HTMLElement
+      const child = (mode === 'authoring' ? h.querySelector(`[data-loom-id="${id}"]`) : parent.firstElementChild) as HTMLElement
+      const pr = parent.getBoundingClientRect()
+      const cr = child.getBoundingClientRect()
+      const inner = { l: pr.left + parent.clientLeft, t: pr.top + parent.clientTop, w: parent.clientWidth, h: parent.clientHeight }
+      h.remove()
+      return { l: cr.left - inner.l, t: cr.top - inner.t, w: cr.width, h: cr.height, pw: inner.w, ph: inner.h }
+    }
+    for (const mode of ['authoring', 'preview'] as const) {
+      const c = box(mode, 'center')
+      check(`${mode}: a centre dock centres it`, Math.abs(c.l + c.w / 2 - c.pw / 2) <= 1 && Math.abs(c.t + c.h / 2 - c.ph / 2) <= 1, JSON.stringify(c))
+      const t = box(mode, 'top')
+      check(`${mode}: a top dock spans the width, whatever its own width`, Math.abs(t.w - t.pw) <= 1 && Math.abs(t.t) <= 1, JSON.stringify(t))
+      const r = box(mode, 'right')
+      check(`${mode}: a right dock spans the height at the right edge`, Math.abs(r.h - r.ph) <= 1 && Math.abs(r.l + r.w - r.pw) <= 1, JSON.stringify(r))
+    }
+
+    // The real panel: docking is on screen without "more properties", a click
+    // docks, and the numbers the dock owns step aside.
+    const app = window.__loomStore
+    const before = app.doc
+    const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms))
+    const sc = new EditorStore()
+    sc.addComponent('Panel', null, 0, 0, { w: 1280, h: 800 })
+    const g = sc.dropComponent('GroupBox', sc.doc.root!, 200, 200)!
+    const btn = sc.dropComponent('Button', sc.doc.root!, 600, 300)!
+    app.loadDocument(sc.doc)
+    app.select([btn])
+    await wait()
+    const field = (l: string) => document.querySelector<HTMLInputElement>(`.inspector .slide-field input[aria-label="${l}"]`)
+    check('Position has a slider for each of X, Y, W and H', ['X', 'Y', 'W', 'H'].every((l) => document.querySelector(`.inspector .slide-field input[aria-label="${l} slider"]`) !== null))
+    const hBefore = Number(field('H')?.value)
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    const wField = field('W')
+    if (wField) {
+      setValue.call(wField, '220')
+      wField.dispatchEvent(new Event('input', { bubbles: true }))
+      wField.dispatchEvent(new Event('blur'))
+    }
+    await wait()
+    const bp = app.doc.nodes[btn]!.props
+    check('typing W keeps the height it had (it used to become 1px)', bp.w === 220 && bp.h === hBefore && hBefore > 10, `w=${bp.w} h=${bp.h} before=${hBefore}`)
+    const slider = document.querySelector<HTMLInputElement>('.inspector .slide-field input[aria-label="X slider"]')
+    if (slider) {
+      setValue.call(slider, '333')
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    await wait()
+    check('the X slider moves it', app.doc.nodes[btn]!.props.x === 333, String(app.doc.nodes[btn]!.props.x))
+    app.select([g])
+    await wait()
+    const cell = document.querySelector<HTMLButtonElement>('.inspector .dock-cell[data-cell="right"]')
+    check('the dock picker is in Position, not behind more properties', cell !== null)
+    cell?.click()
+    await wait()
+    check('clicking the right edge docks it right', app.doc.nodes[g]!.props.anchor === 'right', String(app.doc.nodes[g]!.props.anchor))
+    check('docked, the numbers the dock owns are disabled', field('X')?.disabled === true && field('H')?.disabled === true && field('W')?.disabled === false)
+    document.querySelector<HTMLButtonElement>('.inspector .dock-cell[data-cell="right"]')?.click()
+    await wait()
+    check('clicking it again frees it', app.doc.nodes[g]!.props.anchor === 'none', String(app.doc.nodes[g]!.props.anchor))
+    app.loadDocument(before)
+    await wait()
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

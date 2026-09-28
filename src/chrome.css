@@ -294,3 +294,120 @@
    canvas. The label never scales with the zoom; it is chrome, not design. */
 .frame { display: grid; justify-items: start; align-content: start; }
 .frame-label span { color: var(--ink-3); }
+
+/* ---------------- position: dock picker + sliders ---------------- */
+
+.dock-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; margin-bottom: 8px; }
+.dock-note { margin: 2px 0 0; font-size: 11px; line-height: 1.45; color: var(--ink-3); }
+.dock-note strong { color: var(--ink); font-weight: 550; }
+
+.dock-picker { display: grid; gap: 4px; }
+
+/* The parent, drawn: a 3x3 of targets over a frame. */
+.dock-frame {
+  position: relative;
+  width: 72px;
+  height: 54px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  background: var(--well);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.dock-cell {
+  position: relative;
+  z-index: 1;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.dock-cell::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  opacity: 0.6;
+}
+.dock-cell:hover::after { background: var(--ink); opacity: 1; }
+.dock-cell.on::after { opacity: 0; }
+.dock-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Where the node goes, in the accent: a bar along an edge, a block in a
+   corner or the middle, the whole frame for fill. */
+.dock-mark { position: absolute; border-radius: 2px; background: var(--accent); opacity: 0; transition: all 140ms ease; pointer-events: none; }
+.dock-frame:not([data-dock='none']) .dock-mark { opacity: 0.9; }
+.dock-frame[data-dock='top'] .dock-mark { left: 3px; right: 3px; top: 3px; height: 8px; }
+.dock-frame[data-dock='bottom'] .dock-mark { left: 3px; right: 3px; bottom: 3px; height: 8px; }
+.dock-frame[data-dock='left'] .dock-mark { top: 3px; bottom: 3px; left: 3px; width: 12px; }
+.dock-frame[data-dock='right'] .dock-mark { top: 3px; bottom: 3px; right: 3px; width: 12px; }
+.dock-frame[data-dock='top-left'] .dock-mark { left: 3px; top: 3px; width: 16px; height: 11px; }
+.dock-frame[data-dock='top-right'] .dock-mark { right: 3px; top: 3px; width: 16px; height: 11px; }
+.dock-frame[data-dock='bottom-left'] .dock-mark { left: 3px; bottom: 3px; width: 16px; height: 11px; }
+.dock-frame[data-dock='bottom-right'] .dock-mark { right: 3px; bottom: 3px; width: 16px; height: 11px; }
+.dock-frame[data-dock='center'] .dock-mark { left: 50%; top: 50%; width: 18px; height: 12px; margin: -6px 0 0 -9px; }
+.dock-frame[data-dock='fill'] .dock-mark { inset: 3px; opacity: 0.55; }
+
+.dock-extra { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.dock-extra .mini { height: 20px; padding: 0 4px; font-size: 10.5px; }
+.mini.on { color: #fff; background: var(--accent); }
+
+/* X / Y / W / H: label, exact number, slider. One 26px row each. */
+.slide-field {
+  display: grid;
+  grid-template-columns: 12px 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+.slide-label { font-size: 11px; color: var(--ink-3); }
+.slide-field input[type='number'] {
+  width: 100%;
+  height: 24px;
+  padding: 0 7px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.slide-field input[type='number']::-webkit-inner-spin-button,
+.slide-field input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.slide-field input[type='number']:focus { border-color: rgba(91, 140, 255, 0.65); }
+.slide-field.off { opacity: 0.4; }
+
+/* A thin track with a small bright knob, not the browser's default slider. */
+.insp-scroll input[type='range'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.insp-scroll input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.insp-scroll input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.35), 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.insp-scroll input[type='range']:disabled { cursor: default; }

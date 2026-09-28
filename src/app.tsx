@@ -1482,52 +1482,7 @@ function Inspector({
           </section>
         )}
         {!isFlowChild(s.doc, node.id) && (
-          <section>
-            <h3>
-              Position
-              {narrow && <span className="dim"> — at {label} only</span>}
-            </h3>
-            <div className="row two">
-              <NumField
-                label="X"
-                value={narrow ? (over.x ?? Number(node.props.x) ?? 0) : Number(node.props.x) || 0}
-                onChange={(v) => {
-                  if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: bp, patch: { x: v } })
-                  else s.poke({ op: 'move', id: node.id, x: v, y: Number(node.props.y) || 0 })
-                }}
-                onCommit={() => (narrow ? s.seal(`Position at ${label}`) : s.seal('Move'))}
-              />
-              <NumField
-                label="Y"
-                value={narrow ? (over.y ?? Number(node.props.y) ?? 0) : Number(node.props.y) || 0}
-                onChange={(v) => {
-                  if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: bp, patch: { y: v } })
-                  else s.poke({ op: 'move', id: node.id, x: Number(node.props.x) || 0, y: v })
-                }}
-                onCommit={() => (narrow ? s.seal(`Position at ${label}`) : s.seal('Move'))}
-              />
-            </div>
-            <div className="row two">
-              <NumField
-                label="W"
-                value={narrow ? (over.w ?? Number(node.props.w) ?? 0) : Number(node.props.w) || 0}
-                onChange={(v) => {
-                  if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: bp, patch: { w: Math.max(1, v) } })
-                  else s.poke({ op: 'resize', id: node.id, w: Math.max(1, v), h: Number(node.props.h) || 0 || 1 })
-                }}
-                onCommit={() => (narrow ? s.seal(`Size at ${label}`) : s.seal('Resize'))}
-              />
-              <NumField
-                label="H"
-                value={narrow ? (over.h ?? Number(node.props.h) ?? 0) : Number(node.props.h) || 0}
-                onChange={(v) => {
-                  if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: bp, patch: { h: Math.max(1, v) } })
-                  else s.poke({ op: 'resize', id: node.id, w: Number(node.props.w) || 0 || 1, h: Math.max(1, v) })
-                }}
-                onCommit={() => (narrow ? s.seal(`Size at ${label}`) : s.seal('Resize'))}
-              />
-            </div>
-          </section>
+          <PositionSection s={s} node={node} viewport={viewport} narrow={narrow} label={label} over={over} />
         )}
 
         {/* What this node does at other widths, and how to get rid of it. */}
@@ -1804,6 +1759,199 @@ function ColorField({ value, onChange }: { value: string; onChange: (v: string) 
         placeholder="default"
         spellCheck={false}
         onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  )
+}
+
+/**
+ * Where a free node sits: docked to its parent, or placed by X/Y, and how big.
+ *
+ * Docking was every component's `anchor` property, behind "more properties"
+ * as a dropdown: it existed and nobody could find it. It is the first thing
+ * here, as a picture of the parent you click where the node should go. Each
+ * number has a slider beside it, scaled to the screen.
+ */
+function PositionSection({
+  s,
+  node,
+  viewport,
+  narrow,
+  label,
+  over,
+}: {
+  s: EditorStore
+  node: Node
+  viewport: Breakpoint
+  narrow: boolean
+  label: string
+  over: { x?: number; y?: number; w?: number; h?: number }
+}) {
+  const screen = VIEWPORTS.find((v) => v.id === viewport) ?? VIEWPORTS[VIEWPORTS.length - 1]!
+  const anchor = String(node.props.anchor ?? 'none')
+  const docked = anchor !== 'none' && anchor !== ''
+  const spansX = anchor === 'top' || anchor === 'bottom' || anchor === 'fill'
+  const spansY = anchor === 'left' || anchor === 'right' || anchor === 'fill'
+
+  // A content-sized node has no w/h of its own; its size is what it draws.
+  // Shown (and kept) as that, so typing a width no longer sets the height to
+  // 1px, which is what the resize op did with an unset height.
+  const [drawn, setDrawn] = React.useState<{ w: number; h: number }>({ w: 0, h: 0 })
+  React.useLayoutEffect(() => {
+    const el = document.querySelector<HTMLElement>(`.surface [data-loom-id="${node.id}"]`)
+    const surf = document.querySelector<HTMLElement>('.surface')
+    if (!el || !surf) return
+    const z = Number(surf.dataset.zoom) / 100 || 1
+    const r = el.getBoundingClientRect()
+    const next = { w: Math.round(r.width / z), h: Math.round(r.height / z) }
+    if (next.w !== drawn.w || next.h !== drawn.h) setDrawn(next)
+  })
+
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+  const x = narrow ? over.x ?? num(node.props.x) ?? 0 : num(node.props.x) ?? 0
+  const y = narrow ? over.y ?? num(node.props.y) ?? 0 : num(node.props.y) ?? 0
+  const w = (narrow ? over.w : undefined) ?? num(node.props.w) ?? drawn.w
+  const h = (narrow ? over.h : undefined) ?? num(node.props.h) ?? drawn.h
+
+  const move = (patch: { x?: number; y?: number }) => {
+    if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: viewport, patch })
+    else s.poke({ op: 'move', id: node.id, x: patch.x ?? x, y: patch.y ?? y })
+  }
+  const size = (patch: { w?: number; h?: number }) => {
+    const next = { w: Math.max(1, patch.w ?? w), h: Math.max(1, patch.h ?? h) }
+    if (narrow) s.poke({ op: 'setResponsive', id: node.id, breakpoint: viewport, patch: patch.w !== undefined ? { w: next.w } : { h: next.h } })
+    else s.poke({ op: 'resize', id: node.id, w: next.w, h: next.h })
+  }
+  const sealMove = () => s.seal(narrow ? `Position at ${label}` : 'Move')
+  const sealSize = () => s.seal(narrow ? `Size at ${label}` : 'Resize')
+
+  return (
+    <section className="position">
+      <h3>
+        Position
+        {narrow && <span className="dim"> — at {label} only</span>}
+      </h3>
+      <div className="dock-row">
+        <DockPicker
+          value={anchor}
+          onChange={(a) => s.commit({ op: 'setProp', id: node.id, key: 'anchor', value: a }, a === 'none' ? 'Undock' : `Dock ${a}`)}
+        />
+        <p className="dock-note">
+          {docked ? (
+            <>
+              Docked <strong>{DOCK_WORDS[anchor] ?? anchor}</strong>. It stays there when its parent resizes.
+            </>
+          ) : (
+            'Free: placed at X and Y. Pick an edge, a corner or the centre to dock it.'
+          )}
+        </p>
+      </div>
+      <SlideField label="X" value={x} max={screen.width} disabled={docked} onChange={(v) => move({ x: v })} onCommit={sealMove} why="Docked: the dock places it" />
+      <SlideField label="Y" value={y} max={screen.height} disabled={docked} onChange={(v) => move({ y: v })} onCommit={sealMove} why="Docked: the dock places it" />
+      <SlideField label="W" value={w} min={1} max={screen.width} disabled={spansX} onChange={(v) => size({ w: v })} onCommit={sealSize} why="Docked across: it spans its parent" />
+      <SlideField label="H" value={h} min={1} max={screen.height} disabled={spansY} onChange={(v) => size({ h: v })} onCommit={sealSize} why="Docked down: it spans its parent" />
+    </section>
+  )
+}
+
+const DOCK_WORDS: Record<string, string> = {
+  'top-left': 'to the top-left corner',
+  top: 'to the top edge',
+  'top-right': 'to the top-right corner',
+  left: 'to the left edge',
+  center: 'in the centre',
+  right: 'to the right edge',
+  'bottom-left': 'to the bottom-left corner',
+  bottom: 'to the bottom edge',
+  'bottom-right': 'to the bottom-right corner',
+  fill: 'to fill its parent',
+}
+
+const DOCK_CELLS = ['top-left', 'top', 'top-right', 'left', 'center', 'right', 'bottom-left', 'bottom', 'bottom-right'] as const
+
+/** A picture of the parent: click where the node should stay. Click again to free it. */
+function DockPicker({ value, onChange }: { value: string; onChange: (a: string) => void }) {
+  return (
+    <div className="dock-picker" role="group" aria-label="Dock">
+      <div className="dock-frame" data-dock={value}>
+        <span className="dock-mark" aria-hidden="true" />
+        {DOCK_CELLS.map((a) => (
+          <button
+            key={a}
+            type="button"
+            className={`dock-cell ${value === a ? 'on' : ''}`}
+            data-cell={a}
+            aria-pressed={value === a}
+            aria-label={`Dock ${DOCK_WORDS[a]}`}
+            title={value === a ? 'Undock' : `Dock ${DOCK_WORDS[a]}`}
+            onClick={() => onChange(value === a ? 'none' : a)}
+          />
+        ))}
+      </div>
+      <div className="dock-extra">
+        <button type="button" className={`mini ${value === 'fill' ? 'on' : ''}`} aria-pressed={value === 'fill'} onClick={() => onChange(value === 'fill' ? 'none' : 'fill')} title="Fill its parent">
+          Fill
+        </button>
+        <button type="button" className="mini" disabled={value === 'none' || value === ''} onClick={() => onChange('none')} title="Place it freely at X and Y">
+          Free
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** A number with a slider beside it: type an exact value or scrub to it. */
+function SlideField({
+  label,
+  value,
+  min = 0,
+  max,
+  disabled,
+  why,
+  onChange,
+  onCommit,
+}: {
+  label: string
+  value: number
+  min?: number
+  max: number
+  disabled?: boolean
+  why?: string
+  onChange: (v: number) => void
+  onCommit: () => void
+}) {
+  // The slider never clips a real value: past the screen, its end moves out.
+  const top = Math.max(max, Math.ceil(value))
+  return (
+    <div className={`slide-field ${disabled ? 'off' : ''}`} title={disabled ? why : undefined}>
+      <span className="slide-label">{label}</span>
+      <input
+        type="number"
+        aria-label={label}
+        value={Math.round(value)}
+        min={min}
+        disabled={disabled}
+        onChange={(e) => {
+          const v = Number(e.target.value)
+          if (Number.isFinite(v)) onChange(Math.max(min, v))
+        }}
+        onBlur={onCommit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onCommit()
+        }}
+      />
+      <input
+        type="range"
+        aria-label={`${label} slider`}
+        min={min}
+        max={top}
+        step={1}
+        value={Math.round(value)}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onPointerUp={onCommit}
+        onKeyUp={onCommit}
+        onBlur={onCommit}
       />
     </div>
   )
