@@ -472,12 +472,18 @@ export const WEB_CAPABILITIES: Capability[] = [
 ]
 
 /**
- * Conservative: what a GTK/Qt widget tree can faithfully represent. CSS
- * layout mechanisms are NOT native capabilities — `css-grid` used to be
- * listed here, which would have let Grid pass desktop gating without a real
- * native equivalent.
+ * The desktop backend IS Chromium: "Run on desktop" and a packaged desktop
+ * app render the same output in an Electron window, so desktop can express
+ * everything the web can, plus the native affordances.
+ *
+ * (It used to be modelled as a future GTK/Qt widget tree, which gated glass,
+ * blur and the atmosphere effects off the default target. Decided
+ * 2026-09-28: desktop output is Chromium, and the premium look, glass over
+ * animated colour, is available on it. If a native backend ever returns, its
+ * subset belongs to IT, not to the Chromium one.)
  */
 export const DESKTOP_CAPABILITIES: Capability[] = [
+  ...WEB_CAPABILITIES,
   'native-widget',
   'native-canvas',
 ]

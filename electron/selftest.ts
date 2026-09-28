@@ -41,6 +41,7 @@ import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
 import { THEME_NAMES } from '../src/render/theme'
 import { OUTPUT_FAMILY, fontFaceCss } from '../src/render/fonts'
+import { effectSupported } from '../src/render/effects'
 import { PreviewStage } from '../src/preview'
 import { seedDemo } from '../src/demo'
 import { reparentProbe } from './reparent-probe'
@@ -1015,7 +1016,11 @@ export async function runSelfTest(): Promise<string> {
     const panel = getComponent('Panel')
     check('Panel defaults to a portable solid surface', panel?.props.surface?.default === 'solid')
     check('Panel glass defaults off (web-only effect)', panel?.props.glass?.default === false)
-    check('desktop capabilities exclude CSS layout mechanisms', !DESKTOP_CAPABILITIES.includes('css-grid' as never))
+    // Desktop output renders in Chromium (decided 2026-09-28), so it admits
+    // every web capability: glass and atmosphere are not web-only.
+    check('desktop renders in Chromium: it can express everything the web can',
+      (['webview', 'webgl', 'css-filter', 'css-grid', 'css-backdrop-filter'] as const).every((c) => DESKTOP_CAPABILITIES.includes(c)))
+    check('no effect is gated off desktop', (['glass', 'aurora', 'grain', 'glow', 'shimmer', 'spotlight', 'tilt', 'chromatic'] as const).every((e) => effectSupported(e, 'desktop')))
     check('the editor targets desktop by default', new EditorStore().target === 'desktop')
   }
 
