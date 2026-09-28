@@ -4006,6 +4006,60 @@ export async function runSelfTest(): Promise<string> {
     check('never bigger than the usable screen', at('left', 9999, 9999).width === 1920 && at('center', 9999, 9999).height === 1053)
   }
 
+  // --- 90. checkbox, radio and select are drawn, not left to the OS -------
+  // A white OS square on a dark design (and a different one per platform)
+  // was one of the loudest "home made" tells. The native input stays for
+  // forms, keyboard and assistive tech, hidden; a themed box is drawn from
+  // its state by the shared stylesheet. Measured live, in the output.
+  {
+    installBehaviourRuntime()
+    const s90 = new EditorStore()
+    const root90 = withRoot(s90)
+    s90.addComponent('Checkbox', root90, 0, 0, { checked: true })
+    s90.addComponent('RadioGroup', root90, 0, 60)
+    s90.addComponent('Select', root90, 0, 120)
+    s90.addComponent('DataGrid', root90, 0, 200)
+    const host = document.createElement('div')
+    host.id = 'selftest-90'
+    host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:700px;z-index:99999'
+    document.body.appendChild(host)
+    // The test window is hidden, so transitions never advance: without this
+    // a colour reads as its pre-click value forever.
+    const still = document.createElement('style')
+    still.textContent = '#selftest-90 *{transition:none !important}'
+    document.head.appendChild(still)
+    const r90 = createRoot(host)
+    const theme = getTheme('midnight')
+    r90.render(renderNode({ doc: s90.doc, selected: new Set(), mode: 'preview', theme }, s90.doc.root!))
+    await new Promise((r) => setTimeout(r, 80))
+    const rgb = (hex: string) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`
+    const cbInput = host.querySelector<HTMLInputElement>('input[type=checkbox]')
+    const cbBox = cbInput?.nextElementSibling as HTMLElement | null
+    check('a checkbox hides the OS control and draws its own box', cbInput !== null && getComputedStyle(cbInput).opacity === '0' && cbBox?.hasAttribute('data-loom-box') === true,
+      cbInput ? `opacity=${getComputedStyle(cbInput).opacity} next=${cbBox?.outerHTML.slice(0, 40)}` : 'no input')
+    const boxBg = () => (cbBox ? getComputedStyle(cbBox).backgroundColor : 'none')
+    check('a checked box is filled with the accent', boxBg() === rgb(theme.accent), boxBg())
+    cbBox?.click()
+    await new Promise((r) => setTimeout(r, 30))
+    check('clicking the drawn box unchecks the real input', cbInput?.checked === false && boxBg() === rgb(theme.surface), `checked=${cbInput?.checked} bg=${boxBg()}`)
+    const radios = [...host.querySelectorAll<HTMLInputElement>('input[type=radio][data-loom-ctl]')]
+    const radioOn = radios.find((r) => r.checked)
+    check('a radio group draws its rings, the chosen one in the accent', radios.length >= 2 && radioOn !== undefined &&
+      getComputedStyle(radioOn.nextElementSibling as HTMLElement).backgroundColor === rgb(theme.accent), `radios=${radios.length}`)
+    const select = host.querySelector<HTMLSelectElement>('select')
+    const sst = select ? getComputedStyle(select) : null
+    check('a select draws the theme chevron, not the OS arrow', sst !== null && sst.appearance === 'none' && sst.backgroundImage.includes('data:image/svg+xml'), sst ? `${sst.appearance} ${sst.backgroundImage.slice(0, 40)}` : 'no select')
+    check('a dark theme asks the browser for dark native parts', select !== null && getComputedStyle(select).colorScheme === 'dark', select ? getComputedStyle(select).colorScheme : '')
+    const gridEl = host.querySelector<HTMLElement>('[data-loom-grid]')
+    const rowBox = gridEl?.querySelector<HTMLInputElement>('input[data-loom-select]')?.nextElementSibling as HTMLElement | null
+    rowBox?.click()
+    await new Promise((r) => setTimeout(r, 30))
+    check('clicking a grid row\'s drawn box selects the row', gridEl?.getAttribute('data-loom-selected') === '1', `selected=${gridEl?.getAttribute('data-loom-selected')}`)
+    r90.unmount()
+    host.remove()
+    still.remove()
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

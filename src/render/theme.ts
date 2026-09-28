@@ -33,6 +33,13 @@ export interface Theme {
   success: string
   warning: string
 
+  /**
+   * Whether the theme is dark or light, for the parts of a control the
+   * browser still draws (a select's option list, a date picker's popup and
+   * icon, scrollbars). Left unset they are drawn light on a dark design.
+   */
+  colorScheme: 'dark' | 'light'
+
   /* surfaces */
   bg: string
   surface: string
@@ -99,6 +106,7 @@ const BASE: Theme = {
   success: '#2fbf8f',
   warning: '#d9a13a',
 
+  colorScheme: 'dark',
   bg: '#0b0d13',
   surface: '#151a26',
   surfaceGlass: 'rgba(24, 29, 44, 0.66)',
@@ -158,6 +166,7 @@ const DAYLIGHT: Theme = {
   accent: '#2f5fe0',
   accentHover: '#1f4bc4',
   textOnAccent: '#ffffff',
+  colorScheme: 'light',
   bg: '#f6f7f9',
   surface: '#ffffff',
   surfaceGlass: 'rgba(255, 255, 255, 0.78)',

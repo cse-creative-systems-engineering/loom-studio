@@ -185,6 +185,34 @@ export function behaviourCss(): string {
     '[data-loom-b="press"][data-loom-pressed="1"]{filter:brightness(.9);transform:translateY(1px)}',
     '[data-loom-b="press"]:focus-visible,[data-loom-b="toggle"]:focus-visible,',
     '[data-loom-b="tab"]:focus-visible{outline:2px solid var(--loom-accent,#5b8cff);outline-offset:2px}',
+    // --- drawn checkbox / radio (see ControlBox in web.tsx) ---
+    // The native input stays for forms, keyboard and assistive tech, hidden
+    // in place (absolute with no offsets keeps its static position, so
+    // focusing it never scrolls the page); the box after it is drawn from
+    // its state.
+    '[data-loom-ctl]{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}',
+    '[data-loom-box]{flex:none;box-sizing:border-box;width:16px;height:16px;display:inline-grid;place-items:center;border:1.5px solid var(--loom-border-strong);background:var(--loom-surface);color:var(--loom-on-accent);transition:background-color 120ms ease,border-color 120ms ease,box-shadow 120ms ease}',
+    '[data-loom-box="check"]{border-radius:5px}',
+    '[data-loom-box="radio"]{border-radius:999px}',
+    '[data-loom-box] svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}',
+    '[data-loom-box] path{opacity:0;transition:opacity 120ms ease}',
+    ':checked+[data-loom-box],:indeterminate+[data-loom-box]{background:var(--loom-tick,var(--loom-accent));border-color:var(--loom-tick,var(--loom-accent))}',
+    ':checked:not(:indeterminate)+[data-loom-box] [data-loom-tick],:indeterminate+[data-loom-box] [data-loom-dash]{opacity:1}',
+    // A radio is a ring with a dot: the accent fill shows through a surface ring.
+    ':checked+[data-loom-box="radio"]{box-shadow:inset 0 0 0 3px var(--loom-surface)}',
+    'label:hover>:not(:checked):not(:disabled)+[data-loom-box]{border-color:var(--loom-muted)}',
+    ':focus-visible+[data-loom-box]{outline:2px solid var(--loom-accent);outline-offset:2px}',
+    ':disabled+[data-loom-box]{opacity:.45}',
+    // --- drawn select ---
+    // The OS arrow goes; the chevron is the theme's (a data URL in a custom
+    // property, set with the other theme variables). `!important` is narrow
+    // and deliberate: the select's inline `background` shorthand (its fill)
+    // would otherwise reset the chevron layer, and its inline padding would
+    // run text under it.
+    'select[data-loom-dropdown]{appearance:none;-webkit-appearance:none;background-image:var(--loom-chevron) !important;background-repeat:no-repeat !important;background-position:right 9px center !important;background-size:14px 14px !important;padding-right:30px !important}',
+    // --- native pickers: the browser's icon, in the design's ink ---
+    '::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer}',
+    '::-webkit-calendar-picker-indicator:hover{opacity:.9}',
     // --- switch / toggle button ---
     '[data-loom-b="toggle"] [data-loom-track]{background:var(--loom-off)}',
     '[data-loom-b="toggle"][data-loom-on="1"] [data-loom-track]{background:var(--loom-on)}',

@@ -1696,12 +1696,45 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
  * colours they need come from here, so there is exactly one source of truth
  * for both.
  */
+/** A select's chevron, as a data URL in the theme's muted ink. */
+function chevronUrl(ink: string): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='${ink}' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><path d='M4.5 6.5 8 10l3.5-3.5'/></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+}
+
+/**
+ * The drawn box beside a visually hidden native checkbox or radio.
+ *
+ * The OS-drawn control (a white square on a dark design, a different one on
+ * every platform) was one of the loudest "home made" tells. The native input
+ * stays, for forms, keyboard and assistive tech; it is hidden by the
+ * behaviour stylesheet (`data-loom-ctl`) and this box is drawn from its
+ * state with `:checked + [data-loom-box]`, so it is right in the canvas, the
+ * preview and an export with no script at all. MUST directly follow its
+ * input. Its look lives in the stylesheet, driven by theme variables.
+ */
+function ControlBox({ kind }: { kind: 'check' | 'radio' }) {
+  return (
+    <span data-loom-box={kind} aria-hidden="true">
+      {kind === 'check' ? (
+        <svg viewBox="0 0 16 16">
+          <path data-loom-tick="" d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+          <path data-loom-dash="" d="M4 8h8" />
+        </svg>
+      ) : null}
+    </span>
+  )
+}
+
 function themeVars(t: Theme): React.CSSProperties {
   return {
     '--loom-accent': t.accent,
     '--loom-on': t.accent,
     '--loom-off': t.borderStrong,
     '--loom-on-bg': `${t.accent}1f`,
+    '--loom-on-accent': t.textOnAccent,
+    '--loom-chevron': chevronUrl(t.textMuted),
+    colorScheme: t.colorScheme,
     '--loom-on-fg': t.accent,
     '--loom-surface': t.surface,
     '--loom-text': t.textPrimary,
@@ -3053,15 +3086,16 @@ function renderPreviewBody(
       // than a repaint that the browser undoes.
       const accent = str(p.tone) === 'inherit' ? t.accent : toneColor(t, str(p.tone))
       return (
-        <label key={key} style={style} {...behaviourAttrs({ role: 'check', on })}>
+        <label key={key} style={{ ...style, '--loom-tick': accent } as React.CSSProperties} {...behaviourAttrs({ role: 'check', on })}>
           <input
             type="checkbox"
+            data-loom-ctl=""
             defaultChecked={on}
             disabled={off}
             required={p.required === true}
             aria-label={str(p.ariaLabel) || undefined}
-            style={{ accentColor: accent, width: 16, height: 16 }}
           />
+          <ControlBox kind="check" />
           <span>{str(p.label)}</span>
         </label>
       )
@@ -3094,7 +3128,8 @@ function renderPreviewBody(
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: `${fs}px`, color: t.textPrimary }}
                 {...behaviourAttrs({ role: 'radio', group: node.id, index: i, on: str(p.value) === value })}
               >
-                <input type="radio" name={node.id} value={value} defaultChecked={str(p.value) === value} disabled={p.disabled === true || o.disabled === true} required={p.required === true} />
+                <input type="radio" data-loom-ctl="" name={node.id} value={value} defaultChecked={str(p.value) === value} disabled={p.disabled === true || o.disabled === true} required={p.required === true} />
+                <ControlBox kind="radio" />
                 <span>{str(o.label)}</span>
               </label>
             )
@@ -3163,6 +3198,7 @@ function renderPreviewBody(
       return (
         <select
           key={key}
+          data-loom-dropdown={multi ? undefined : ''}
           style={multi ? { ...style, height: 'auto' } : style}
           defaultValue={multi ? opts.filter((o) => o === str(p.value)) : str(p.value)}
           multiple={multi}
@@ -3534,7 +3570,8 @@ function renderPreviewBody(
               style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: `${fs}px`, color: t.textPrimary, cursor: 'pointer' }}
               {...behaviourAttrs({ role: 'check', group: node.id, index: items.indexOf(it) })}
             >
-              <input type="checkbox" disabled={p.disabled === true} />
+              <input type="checkbox" data-loom-ctl="" disabled={p.disabled === true} />
+              <ControlBox kind="check" />
               <span>{it}</span>
             </label>
           ))}
@@ -3875,12 +3912,15 @@ function renderPreviewBody(
                 <tr>
                   {selectable && (
                     <th scope="col" {...part('header')} style={{ width: '38px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, textAlign: 'left', padding: rowPad, borderBottom: line }}>
-                      <input
-                        type="checkbox"
-                        data-loom-select-all={node.id}
-                        aria-label="Select all rows"
-                        style={{ accentColor: t.accent }}
-                      />
+                      <label style={{ display: 'inline-flex', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          data-loom-ctl=""
+                          data-loom-select-all={node.id}
+                          aria-label="Select all rows"
+                        />
+                        <ControlBox kind="check" />
+                      </label>
                     </th>
                   )}
                   {cols.map((c, ci) => (
@@ -3930,12 +3970,15 @@ function renderPreviewBody(
                 >
                   {selectable && (
                     <td {...part('cell')} style={{ padding: rowPad, borderBottom: line, width: '38px' }}>
-                      <input
-                        type="checkbox"
-                        data-loom-select={node.id}
-                        aria-label={`Select row ${i + 1}`}
-                        style={{ accentColor: t.accent }}
-                      />
+                      <label style={{ display: 'inline-flex', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          data-loom-ctl=""
+                          data-loom-select={node.id}
+                          aria-label={`Select row ${i + 1}`}
+                        />
+                        <ControlBox kind="check" />
+                      </label>
                     </td>
                   )}
                   {cols.map((c, ci) => (
@@ -4841,6 +4884,7 @@ function renderPreviewBody(
               <span>Rows</span>
               <select
                 data-loom-pagesize-select=""
+                data-loom-dropdown=""
                 defaultValue={String(pageSize)}
                 aria-label="rows per page"
                 style={{

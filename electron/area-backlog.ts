@@ -55,8 +55,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "Calendar|div>span": ["background", "color", "fontSize", "fontWeight", "paddingY", "radius"],
   // Card
   "Card|div": ["color", "fontSize", "fontWeight", "letterSpacing", "lineHeight"],
-  // Checkbox
-  "Checkbox|input": ["accent"],
   // Checklist
   "Checklist|label data-loom-b": ["color", "fontSize", "gap"],
   // CodeBlock
@@ -96,8 +94,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "DataGrid|table>tbody>tr>td>div>button data-loom-menu-trigger": ["color", "paddingX", "paddingY"],
   "DataGrid|table>tbody>tr>td>div>div data-loom-menu-panel": ["background", "border", "borderWidth", "paddingX", "paddingY", "radius", "shadow"],
   "DataGrid|table>tbody>tr>td>div>div>div data-loom-b": ["color", "fontSize", "paddingX", "paddingY", "radius"],
-  "DataGrid|table>tbody>tr>td>input data-loom-select": ["accent"],
-  "DataGrid|table>thead>tr>th>input data-loom-select-all": ["accent"],
   // DataList
   "DataList|div": ["border", "borderWidth", "fontSize", "gap"],
   "DataList|div>span": ["color", "fontWeight"],
