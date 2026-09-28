@@ -97,8 +97,10 @@ async function handle(msg: Json) {
     case 'tools/call': {
       const r = await loom('call', { name: params.name, arguments: params.arguments ?? {} })
       if (r.error) return reply(id, { content: [{ type: 'text', text: r.error }], isError: true })
-      const out = r.result as { ok: boolean; result?: unknown; error?: string }
+      const out = r.result as { ok: boolean; result?: unknown; error?: string; content?: unknown[] }
       if (!out.ok) return reply(id, { content: [{ type: 'text', text: out.error ?? 'failed' }], isError: true })
+      // Loom's own tools may answer with MCP content directly (an image).
+      if (Array.isArray(out.content)) return reply(id, { content: out.content })
       return reply(id, { content: [{ type: 'text', text: JSON.stringify(out.result) }] })
     }
     default:

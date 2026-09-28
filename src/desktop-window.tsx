@@ -16,6 +16,7 @@ import { emptyDocument } from './state/store'
 import type { Document } from './model/types'
 import { pageFill } from './model/page'
 import { installBehaviourRuntime, installDocumentCss } from './render/behaviour-mount'
+import './render/output-base.css'
 import './desktop-window.css'
 import './model/toolbox'
 

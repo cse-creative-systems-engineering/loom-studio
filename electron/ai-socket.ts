@@ -53,7 +53,10 @@ export function socketDir(): string {
   return d
 }
 
-export function startAiSocket(editor: () => BrowserWindow | null): AiSocket {
+/** Tools answered here in main (they need the document drawn), not in the editor. */
+export type LocalTool = (name: string, args: Record<string, unknown>, doc: unknown) => Promise<unknown>
+
+export function startAiSocket(editor: () => BrowserWindow | null, local?: { names: Set<string>; run: LocalTool }): AiSocket {
   const dir = path.join(app.getPath('userData'), 'ai')
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   // Windows has named pipes, not socket files. Elsewhere a 0600 file in a
@@ -128,7 +131,20 @@ export function startAiSocket(editor: () => BrowserWindow | null): AiSocket {
           conn.write(JSON.stringify({ id, error: 'unknown method' }) + '\n')
           continue
         }
-        void ask(msg.method, msg.params).then((r) => {
+        const p = (msg.params ?? {}) as { name?: unknown; arguments?: unknown }
+        const localName = msg.method === 'call' && typeof p.name === 'string' && local?.names.has(p.name) ? p.name : null
+        const answer: Promise<{ result?: unknown; error?: string }> = localName
+          ? ask('doc', {}).then(async (d) => {
+              if (d.error) return d
+              try {
+                const args = p.arguments && typeof p.arguments === 'object' ? (p.arguments as Record<string, unknown>) : {}
+                return { result: await local!.run(localName, args, d.result) }
+              } catch (e) {
+                return { result: { ok: false, error: e instanceof Error ? e.message : String(e) } }
+              }
+            })
+          : ask(msg.method, msg.params)
+        void answer.then((r) => {
           if (!conn.destroyed) conn.write(JSON.stringify({ id, ...r }) + '\n')
         })
       }

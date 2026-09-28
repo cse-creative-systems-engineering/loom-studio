@@ -309,6 +309,96 @@ function runOnDesktop(payload: { doc: unknown; target: RunTarget }) {
   return bounds
 }
 
+/* ------------------------------------------------------------------ *
+ * The agents' eyes: an offscreen window that draws the design exactly as it
+ * ships (src/render-window.tsx), for `render` (a picture) and `check_layout`
+ * (measurements). Offscreen rendering paints without a visible window, and
+ * capturePage reads that paint.
+ * ------------------------------------------------------------------ */
+
+const SCREENS = { desktop: { w: 1280, h: 800, bp: 'lg' }, tablet: { w: 834, h: 1194, bp: 'md' }, phone: { w: 390, h: 844, bp: 'sm' } } as const
+let renderWin: BrowserWindow | null = null
+let renderReady: Promise<void> | null = null
+const renderWaiting = new Map<string, (r: Record<string, unknown>) => void>()
+
+function renderWindow(): Promise<BrowserWindow> {
+  if (renderWin && !renderWin.isDestroyed() && renderReady) return renderReady.then(() => renderWin!)
+  renderWin = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 800,
+    frame: false,
+    transparent: true,
+    webPreferences: { preload: path.join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, offscreen: true },
+  })
+  renderWin.webContents.setFrameRate(10)
+  const win = renderWin
+  win.on('closed', () => {
+    if (renderWin === win) {
+      renderWin = null
+      renderReady = null
+    }
+  })
+  renderReady = new Promise<void>((r) => win.webContents.once('did-finish-load', () => r()))
+  void win.loadFile(path.join(here, '../renderer/render.html'))
+  return renderReady.then(() => win)
+}
+
+async function renderJob(doc: unknown, screen: keyof typeof SCREENS, want: 'image' | 'measure', nodeId?: string): Promise<Record<string, unknown>> {
+  const win = await renderWindow()
+  const sc = SCREENS[screen]
+  win.setContentSize(sc.w, sc.h)
+  const id = crypto.randomUUID()
+  const reply = new Promise<Record<string, unknown>>((resolve) => {
+    const t = setTimeout(() => {
+      renderWaiting.delete(id)
+      resolve({ ok: false, error: 'the render did not finish in time' })
+    }, 20000)
+    renderWaiting.set(id, (r) => {
+      clearTimeout(t)
+      resolve(r)
+    })
+  })
+  win.webContents.send('render:job', { id, doc, width: sc.w, height: sc.h, viewport: sc.bp, want, nodeId })
+  const r = await reply
+  if (!r.ok || want === 'measure') return r
+  // The page may be taller than the screen: grow the window to take it all.
+  const clip = r.clip as { x: number; y: number; width: number; height: number }
+  if (clip.y + clip.height > sc.h) {
+    win.setContentSize(sc.w, Math.min(4000, clip.y + clip.height))
+    await new Promise((res) => setTimeout(res, 200))
+  }
+  win.webContents.invalidate()
+  await new Promise((res) => setTimeout(res, 150))
+  const img = await win.webContents.capturePage({ x: clip.x, y: clip.y, width: Math.min(clip.width, 4000), height: Math.min(clip.height, 4000) })
+  return { ok: true, png: img.toPNG().toString('base64'), size: img.getSize() }
+}
+
+/** `render` and `check_layout`, answered for the socket (MCP content). */
+async function runLocalTool(name: string, args: Record<string, unknown>, doc: unknown): Promise<unknown> {
+  const screen = args.viewport === 'tablet' || args.viewport === 'phone' ? args.viewport : 'desktop'
+  if (name === 'check_layout') {
+    const r = await renderJob(doc, screen, 'measure')
+    return r.ok ? { ok: true, result: r.result } : r
+  }
+  const nodeId = typeof args.node_id === 'string' && args.node_id ? args.node_id : undefined
+  const r = await renderJob(doc, screen, 'image', nodeId)
+  if (!r.ok) return r
+  const size = r.size as { width: number; height: number }
+  return {
+    ok: true,
+    content: [
+      { type: 'image', data: r.png, mimeType: 'image/png' },
+      { type: 'text', text: `The design at ${screen} (${SCREENS[screen].w}x${SCREENS[screen].h} screen)${nodeId ? `, cropped to ${nodeId}` : ''}; image ${size.width}x${size.height}px.` },
+    ],
+  }
+}
+
+/** For the probes: render the editor's document directly. */
+export function renderForProbe(doc: unknown, screen: 'desktop' | 'tablet' | 'phone', want: 'image' | 'measure', nodeId?: string) {
+  return renderJob(doc, screen, want, nodeId)
+}
+
 /**
  * The AI agents' way in (see ai-socket.ts). Started with the app; an agent
  * launched by Loom gets `mcpServerConfig()` so it can reach the live editor.
@@ -328,7 +418,16 @@ export function mcpServerConfig(): { command: string; args: string[]; env: Recor
 app.whenReady().then(() => {
   createWindow()
   try {
-    aiSocket = startAiSocket(() => editorWin)
+    aiSocket = startAiSocket(() => editorWin, { names: new Set(['render', 'check_layout']), run: runLocalTool })
+    ipcMain.handle('render:done', (e, id: string, result: Record<string, unknown>) => {
+      if (!renderWin || e.sender !== renderWin.webContents) return false
+      const done = renderWaiting.get(id)
+      if (done) {
+        renderWaiting.delete(id)
+        done(result ?? { ok: false, error: 'no result' })
+      }
+      return true
+    })
     aiSocket.writeConfig(mcpServerConfig()!)
   } catch (e) {
     // No AI this run; the editor itself must still open.

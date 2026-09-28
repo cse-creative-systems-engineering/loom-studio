@@ -25,6 +25,11 @@ export function installAiBridge(store: EditorStore): () => void {
   if (!api) return () => undefined
   const t = aiTurn(store)
   return api.onRequest((reqId, method, params) => {
+    if (method === 'doc') {
+      // For Loom's own render/measure tools, which draw the document in main.
+      void api.respond(reqId, { result: store.doc })
+      return
+    }
     if (method === 'tools') {
       void api.respond(reqId, { result: TOOLS })
       return

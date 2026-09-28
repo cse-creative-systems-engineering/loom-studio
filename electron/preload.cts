@@ -113,3 +113,13 @@ contextBridge.exposeInMainWorld('loomAi', {
     return () => ipcRenderer.removeListener('ai:event', h)
   },
 })
+
+/** The render window (offscreen): receives a job, reports when it is drawn. */
+contextBridge.exposeInMainWorld('loomRender', {
+  onJob: (cb: (job: unknown) => void) => {
+    const h = (_e: unknown, job: unknown) => cb(job)
+    ipcRenderer.on('render:job', h)
+    return () => ipcRenderer.removeListener('render:job', h)
+  },
+  done: (id: string, result: unknown) => ipcRenderer.invoke('render:done', id, result),
+})

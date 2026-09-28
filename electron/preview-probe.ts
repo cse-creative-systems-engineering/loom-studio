@@ -11,7 +11,7 @@
 import { app, BrowserWindow, screen } from 'electron'
 // Side effect: registers the REAL preview/save IPC handlers from main.ts,
 // so this probe drives production code, not a copy.
-import { setClosePromptForProbe, mcpServerConfig } from './main'
+import { setClosePromptForProbe, mcpServerConfig, renderForProbe } from './main'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 
@@ -162,6 +162,69 @@ async function run() {
     }
   }
 
+  // The agents' eyes: `render` returns a real image of the design as it
+  // ships; `check_layout` measures real problems on the real boxes.
+  {
+    const png = (b64: string) => { const b = Buffer.from(b64, 'base64'); return { sig: b.subarray(1, 4).toString(), w: b.readUInt32BE(16), h: b.readUInt32BE(20) } }
+    const clean = await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore;
+      s.loadDocument({ version: 1, meta: { name: 'eyes', targets: ['web'], created: 0, page: { background: 'theme' } }, root: null, nodes: {} });
+      s.addComponent('Panel', null, 0, 0, { anchor: 'fill', flow: true });
+      const r = s.doc.root; s.commit({ op: 'setFlow', id: r, flow: true }, 'flow');
+      const card = s.dropComponent('Card', r, 0, 0); s.addComponent('Heading', card, 0, 0, { text: 'Welcome back' });
+      return { doc: s.doc, card } })()`, true)
+    const img = await renderForProbe(clean.doc, 'desktop', 'image')
+    const p1 = img.ok ? png(img.png as string) : null
+    step('render returns a PNG of the whole desktop screen', !!p1 && p1.sig === 'PNG' && p1.w === 1280 && p1.h >= 800, JSON.stringify(p1 ?? img).slice(0, 120))
+    const crop = await renderForProbe(clean.doc, 'desktop', 'image', clean.card)
+    const p2 = crop.ok ? png(crop.png as string) : null
+    step('render can crop to one node', !!p2 && p2.w < 1280 && p2.w > 100, JSON.stringify(p2))
+    // Sized as the export sizes: a padded full-width button fits its card
+    // (content-box sizing drew it wider than the card on this surface).
+    const fit = await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore;
+      s.loadDocument({ version: 1, meta: { name: 'fit', targets: ['web'], created: 0 }, root: null, nodes: {} });
+      s.addComponent('Panel', null, 0, 0, { anchor: 'fill' }); const r = s.doc.root;
+      const card = s.addComponent('Card', r, 40, 40, { w: 300, padding: 0 }); s.commit({ op: 'setFlow', id: card, flow: true }, 'flow');
+      s.addComponent('Button', card, 0, 0, { label: 'Get started', fullWidth: true });
+      return s.doc })()`, true)
+    const fitReport = (await renderForProbe(fit, 'desktop', 'measure')).result as { issues: Array<{ detail: string }>; boxSizing: string } | undefined
+    step('the render window sizes boxes as the export does (border-box)', fitReport?.boxSizing === 'border-box' && fitReport.issues.length === 0, `${fitReport?.boxSizing} ${fitReport?.issues.map((i) => i.detail).join(' | ')}`)
+    const ok = await renderForProbe(clean.doc, 'desktop', 'measure')
+    const okIssues = (ok.result as { issues: Array<{ kind: string; detail: string }> } | undefined)?.issues ?? []
+    step('check_layout finds nothing wrong with a clean design', ok.ok === true && okIssues.length === 0, okIssues.map((i) => i.detail).join(' | ').slice(0, 200))
+    const broken = await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore;
+      s.loadDocument({ version: 1, meta: { name: 'broken', targets: ['web'], created: 0, page: { background: 'theme' } }, root: null, nodes: {} });
+      s.addComponent('Panel', null, 0, 0, { anchor: 'fill' }); const r = s.doc.root;
+      s.addComponent('Card', r, 1150, 40, { w: 300, h: 120 });
+      const a = s.addComponent('Button', r, 40, 300, { label: 'One' }); s.addComponent('Button', r, 60, 305, { label: 'Two' });
+      s.addComponent('Label', r, 40, 400, { text: 'Hard to read', color: '#1b1f2a' });
+      s.addComponent('IconButton', r, 40, 500, {});
+      s.addComponent('Link', r, 40, 600, { text: 'A link much too long for its narrow box', truncate: true, maxWidth: 80 });
+      return s.doc })()`, true)
+    const bad = await renderForProbe(broken, 'phone', 'measure')
+    const kinds = new Set(((bad.result as { issues: Array<{ kind: string }> } | undefined)?.issues ?? []).map((i) => i.kind))
+    step('check_layout finds a node off the screen and outside its container', kinds.has('offscreen') && kinds.has('overflows-parent'), [...kinds].join(','))
+    step('check_layout finds overlapping free nodes', kinds.has('overlap'))
+    step('check_layout finds low-contrast text', kinds.has('low-contrast'))
+    step('check_layout finds tap targets too small for a phone', kinds.has('small-target'))
+    step('check_layout finds text that is cut off', kinds.has('clipped-text'))
+    // And through MCP, as an agent calls them: an image, and the issues.
+    const cfg = mcpServerConfig()!
+    const child = spawn(cfg.command, cfg.args, { env: { ...process.env, ...cfg.env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    const replies: Array<Record<string, unknown>> = []
+    let buf = ''
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (c: string) => { buf += c; let nl: number; while ((nl = buf.indexOf('\n')) >= 0) { replies.push(JSON.parse(buf.slice(0, nl))); buf = buf.slice(nl + 1) } })
+    for (const m of [{ id: 1, method: 'tools/call', params: { name: 'render', arguments: { viewport: 'desktop' } } }, { id: 2, method: 'tools/call', params: { name: 'check_layout', arguments: { viewport: 'phone' } } }]) {
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n')
+      for (let i = 0; i < 300 && !replies.some((r) => r.id === m.id); i++) await new Promise((r) => setTimeout(r, 50))
+    }
+    child.stdin.end()
+    const rimg = (replies.find((r) => r.id === 1)?.result as { content?: Array<{ type: string; mimeType?: string; data?: string }> } | undefined)?.content ?? []
+    step('an agent gets render as an MCP image', rimg[0]?.type === 'image' && rimg[0]?.mimeType === 'image/png' && png(rimg[0].data!).sig === 'PNG', JSON.stringify(rimg.map((c) => c.type)))
+    const rchk = (replies.find((r) => r.id === 2)?.result as { content?: Array<{ text: string }> } | undefined)?.content?.[0]?.text ?? ''
+    step('an agent gets check_layout issues it can act on', /overlaps/.test(rchk) && /tap target/.test(rchk), rchk.slice(0, 120))
+  }
+
   // The Assistant, end to end with the scripted agent: type, send, watch it
   // build, undo the whole turn in one step, follow up, see an error, stop.
   {
@@ -247,6 +310,8 @@ async function run() {
       const inside = await dw.webContents.executeJavaScript(`({ text: document.body.innerText.slice(0, 200), bg: getComputedStyle(document.body).backgroundColor, stage: getComputedStyle(document.querySelector('.dw-stage')).backgroundColor })`, true)
       step('it draws the design and nothing behind it', /Assistant/.test(inside.text) && inside.bg === 'rgba(0, 0, 0, 0)' && inside.stage === 'rgba(0, 0, 0, 0)', JSON.stringify(inside).slice(0, 160))
       step('it has no frame and stays on top', !dw.isResizable() && dw.isAlwaysOnTop())
+      const sizing = await dw.webContents.executeJavaScript(`getComputedStyle(document.querySelector('.dw-stage')).boxSizing`, true)
+      step('it sizes boxes as the export does (border-box)', sizing === 'border-box', sizing)
       await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore; s.commit({ op: 'setProp', id: s.doc.root, key: 'anchor', value: 'right' }, 'dock right'); return true })()`, true)
       await new Promise((r) => setTimeout(r, 800))
       const b2 = dw.getBounds()

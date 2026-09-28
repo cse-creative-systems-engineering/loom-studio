@@ -16,6 +16,8 @@ export default defineConfig({
         preview: 'preview.html',
         // Run on desktop: the design as a real, frameless window.
         desktop: 'desktop.html',
+        // The agents' eyes: the design drawn as it ships, offscreen.
+        render: 'render.html',
       },
     },
   },

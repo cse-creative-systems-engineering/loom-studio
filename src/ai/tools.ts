@@ -124,6 +124,18 @@ export const TOOLS: ToolDef[] = [
     inputSchema: obj({ theme: { type: 'string', enum: [...THEME_NAMES] } }, ['theme']),
   },
   {
+    name: 'render',
+    description:
+      'LOOK at what you built: an image of the design exactly as it ships (no editor chrome), at a viewport. Use it after building or changing something, judge it like a demanding senior designer (hierarchy, spacing, alignment, balance, polish), and fix what you see. Optionally crop to one node.',
+    inputSchema: obj({ viewport: { type: 'string', enum: ['desktop', 'tablet', 'phone'], description: 'Screen size: desktop 1280x800 (default), tablet 834x1194, phone 390x844.' }, node_id: str('Crop the image to this node.') }),
+  },
+  {
+    name: 'check_layout',
+    description:
+      'MEASURE the design as it ships, at a viewport: every node\'s real box, and problems found: text cut off, a node outside its container or off the screen, free nodes overlapping, tap targets under 44px on a phone, low text contrast. Run it after changes and fix every issue it reports.',
+    inputSchema: obj({ viewport: { type: 'string', enum: ['desktop', 'tablet', 'phone'] } }),
+  },
+  {
     name: 'select',
     description: 'Select nodes in the editor so the user sees what you are talking about.',
     inputSchema: obj({ ids: { type: 'array', items: { type: 'string' } } }, ['ids']),
@@ -272,6 +284,9 @@ function tree(s: EditorStore, id: NodeId): unknown {
     ...(n.children.length ? { children: n.children.map((c) => tree(s, c)) } : {}),
   }
 }
+
+/** Answered by Loom's main process (they draw the document); never here. */
+export const MAIN_TOOLS = new Set(['render', 'check_layout'])
 
 const HANDLERS: Record<string, Handler> = {
   get_document: (s) => ({
