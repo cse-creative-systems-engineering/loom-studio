@@ -1061,7 +1061,7 @@ defineComponent({ name: 'SuccessCheck', category: 'Feedback', icon: '✓', descr
   // The check is a glyph by default and can be a name from the house set. The
   // colour is the tone, so a "done" mark can also be "this is not done yet".
   tone: { type: 'enum', options: ['success', 'accent', 'neutral'], default: 'success', group: 'Style' },
-  icon: { type: 'string', default: '✓', group: 'Content' },
+  icon: { type: 'string', default: 'check', group: 'Content' },
   showLabel: { type: 'boolean', default: true, group: 'Content' },
   ...stackAlign('center'),
 }})

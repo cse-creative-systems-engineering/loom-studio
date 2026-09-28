@@ -135,8 +135,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "Hero|div": ["color", "fontSize", "fontWeight"],
   // Icon
   "Icon|svg": ["stroke"],
-  // IconButton
-  "IconButton|span": ["fontSize", "lineHeight"],
   // Image
   "Image|span": ["color", "fontSize"],
   // InfoCallout
@@ -247,7 +245,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "Stepper|li>span": ["align", "background", "border", "borderWidth", "color", "fontSize", "fontWeight", "radius"],
   // SuccessCheck
   "SuccessCheck|span": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "radius"],
-  "SuccessCheck|span>span": ["color", "fontSize", "lineHeight"],
   // Switch
   "Switch|input": ["opacity"],
   "Switch|span data-loom-track": ["paddingX", "paddingY", "radius"],

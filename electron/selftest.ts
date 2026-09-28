@@ -2363,10 +2363,9 @@ export async function runSelfTest(): Promise<string> {
     check('the card shows the value', html.includes('$48.2k'))
     check('the card shows the comparison', html.includes('+12.4%'))
     check('the card says what the comparison is against', html.includes('vs last month'))
-    check('the card draws exactly one visual', (() => {
-      const svgs = (html.match(/<svg/g) ?? []).length
-      return svgs === 1
-    })(), `${(html.match(/<svg/g) ?? []).length} svgs`)
+    // A trend mark is an icon beside the delta, not the card's visual.
+    const visuals = (h: string) => (h.match(/<svg/g) ?? []).length - (h.match(/data-loom-trend/g) ?? []).length
+    check('the card draws exactly one visual', visuals(html) === 1, `${visuals(html)} visuals`)
 
     // Colour follows GOODNESS, not direction. This is the whole reason
     // `goodDirection` exists: a falling error rate is good news.
@@ -2392,9 +2391,9 @@ export async function runSelfTest(): Promise<string> {
     // The visual is a CHOICE, and "none" is a real answer.
     if (kpi) {
       s46.commit({ op: 'setProp', id: kpi, key: 'visual', value: 'none' }, 'Visual')
-      check('a card can carry no visual at all', (emitHtml(s46.doc).match(/<svg/g) ?? []).length === 0)
+      check('a card can carry no visual at all', visuals(emitHtml(s46.doc)) === 0)
       s46.commit({ op: 'setProp', id: kpi, key: 'visual', value: 'bars' }, 'Visual')
-      check('a card can carry bars instead', (emitHtml(s46.doc).match(/<svg/g) ?? []).length === 0 &&
+      check('a card can carry bars instead', visuals(emitHtml(s46.doc)) === 0 &&
         emitHtml(s46.doc).includes('border-radius:2px'))
       s46.undo()
     }
@@ -4058,6 +4057,51 @@ export async function runSelfTest(): Promise<string> {
     r90.unmount()
     host.remove()
     still.remove()
+  }
+
+  // --- 91. the output draws its icons; no font glyphs or emoji --------------
+  // ⌕ ▾ ⤴ ★ × 📢 came from whatever font the machine had: mixed sizes and
+  // baselines, emoji in colour, sometimes a missing-glyph box. Every
+  // component, as it lands, must draw its marks from the icon set. Keyboard
+  // notation (⌘ ↑ ↓ ↵) and a tree connector (└) are TEXT and stay.
+  {
+    const allowed = new Set(['⌘', '↑', '↓', '↵', '└'])
+    const glyphy = (ch: string) => {
+      const c = ch.codePointAt(0)!
+      return !allowed.has(ch) && ((c >= 0x2190 && c <= 0x2bff) || c >= 0x1f000 || ch === '×')
+    }
+    const offenders: string[] = []
+    for (const spec of allComponents()) {
+      const s91 = new EditorStore()
+      s91.addComponent(spec.name, withRoot(s91), 0, 0)
+      const html = renderToStaticMarkup(renderNode({ doc: s91.doc, selected: new Set(), mode: 'preview' }, s91.doc.root!))
+      const text = html.replace(/<[^>]*>/g, ' ')
+      const bad = [...new Set([...text].filter(glyphy))]
+      if (bad.length) offenders.push(`${spec.name}: ${bad.join('')}`)
+    }
+    check('no component draws an icon as a font glyph or emoji', offenders.length === 0, offenders.join(' | '))
+    // A suggestion list's browser indicator sat beside the ComboBox chevron.
+    const s91b = new EditorStore()
+    s91b.addComponent('ComboBox', withRoot(s91b), 0, 0)
+    const host91 = document.createElement('div')
+    document.body.appendChild(host91)
+    const r91 = createRoot(host91)
+    r91.render(renderNode({ doc: s91b.doc, selected: new Set(), mode: 'preview' }, s91b.doc.root!))
+    await new Promise((r) => setTimeout(r, 40))
+    const listInput = host91.querySelector('input[list]')
+    // getComputedStyle cannot read this vendor pseudo-element, so the check is
+    // that a live rule targets THIS input's indicator and removes it.
+    const hides = (el: Element) => [...document.styleSheets].some((sh) => [...sh.cssRules].some((r) => {
+      if (!(r instanceof CSSStyleRule) || r.style.display !== 'none') return false
+      return r.selectorText.split(',').some((sel) => {
+        const m = /^(.*)::-webkit-calendar-picker-indicator$/.exec(sel.trim())
+        return m !== null && el.matches(m[1] || '*')
+      })
+    }))
+    const indicator = listInput ? (hides(listInput) ? 'none' : 'shown') : 'missing'
+    r91.unmount()
+    host91.remove()
+    check('a ComboBox shows one chevron, not the browser\'s list arrow too', indicator === 'none', indicator)
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

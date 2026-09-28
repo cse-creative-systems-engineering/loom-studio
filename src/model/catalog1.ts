@@ -606,7 +606,7 @@ defineComponent({
   description: 'Announcement banner.',
   props: {
     text: str('Announcement', 'Content', { bindable: true }),
-    icon: str('📢'),
+    icon: str('megaphone'),
     ...insetProps(),
     ...flowProps(),
     ...surfaceProps(),
@@ -625,7 +625,7 @@ defineComponent({
   icon: '◉',
   description: 'Icon-only button.',
   props: {
-    icon: str('★'),
+    icon: str('star'),
     ...pressProps(['primary', 'secondary', 'ghost', 'danger'], 'secondary'),
     ...boxProps(),
     // The derived name ("trash") is right most of the time and wrong the rest;
@@ -798,7 +798,7 @@ defineComponent({
     placeholder: str('Search…'),
     // The leading glyph. Empty draws no icon at all, which is a real choice for
     // a compact toolbar.
-    icon: str('⌕'),
+    icon: str('search'),
     ...omit(controlProps(), 'required'),
     ...boxProps(),
     width: num(220, 'Layout', 80, 800),

@@ -213,6 +213,9 @@ export function behaviourCss(): string {
     // --- native pickers: the browser's icon, in the design's ink ---
     '::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer}',
     '::-webkit-calendar-picker-indicator:hover{opacity:.9}',
+    // A text input with a suggestion list gets the same browser indicator,
+    // beside the control's own chevron: two arrows. The chevron stays.
+    'input[list]::-webkit-calendar-picker-indicator{display:none !important}',
     // --- switch / toggle button ---
     '[data-loom-b="toggle"] [data-loom-track]{background:var(--loom-off)}',
     '[data-loom-b="toggle"][data-loom-on="1"] [data-loom-track]{background:var(--loom-on)}',
