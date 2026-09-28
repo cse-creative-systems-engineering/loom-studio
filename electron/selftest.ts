@@ -1014,8 +1014,9 @@ export async function runSelfTest(): Promise<string> {
     check('every component instantiates free (absolute)', nonFree.length === 0, nonFree.map((c) => c.name).join(','))
     check('the flow exceptions are real and few', [...FLOW_BY_NATURE].every((n) => instantiate(n).flow === true) && FLOW_BY_NATURE.size <= 4)
     const panel = getComponent('Panel')
-    check('Panel defaults to a portable solid surface', panel?.props.surface?.default === 'solid')
-    check('Panel glass defaults off (web-only effect)', panel?.props.glass?.default === false)
+    // Glass is the default material (desktop output is Chromium, 2026-09-28).
+    check('Panel defaults to the glass surface', panel?.props.surface?.default === 'glass')
+    check('Panel glass is not gated off desktop', panel !== undefined && unsupportedProps(panel, 'desktop').length === 0)
     // Desktop output renders in Chromium (decided 2026-09-28), so it admits
     // every web capability: glass and atmosphere are not web-only.
     check('desktop renders in Chromium: it can express everything the web can',
@@ -4166,6 +4167,46 @@ export async function runSelfTest(): Promise<string> {
     scene.commit({ op: 'setPage', page: { background: 'theme' } }, 'Page')
     check('a plain page exports no aurora', !emitHtml(scene.doc).includes('loom-wander'))
     app.loadDocument(before)
+  }
+
+  // --- 94. surfaces are glass; depth is light, not a 1px box ---------------
+  // Every surface was the same opaque fill inside the same 1px border, card in
+  // panel in panel. Surfaces are now one material: translucent, blurring what
+  // is behind, lit along the top edge. A surface ON a surface is the raised
+  // kind: lighter, and it does not blur a second time.
+  {
+    const s94 = new EditorStore()
+    // The root is a Panel on the page: top-level glass. The card sits on it.
+    const panel94 = withRoot(s94)
+    s94.addComponent('Card', panel94, 0, 0)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const r94 = createRoot(host)
+    const theme = getTheme('midnight')
+    // The panel itself, drawn as a root; the card is its first child.
+    r94.render(renderNode({ doc: s94.doc, selected: new Set(), mode: 'preview', theme }, panel94))
+    await new Promise((r) => setTimeout(r, 60))
+    const panelEl = host.firstElementChild as HTMLElement | null
+    const cardEl = panelEl?.firstElementChild as HTMLElement | null
+    const pst = panelEl ? getComputedStyle(panelEl) : null
+    const alpha = (c: string) => { const m = /rgba\([^)]*,\s*([\d.]+)\)/.exec(c); return m ? Number(m[1]) : 1 }
+    check('a Panel lands as glass: translucent and blurring what is behind', pst !== null && pst.backdropFilter.includes('blur') && alpha(pst.backgroundColor) < 1,
+      pst ? `${pst.backdropFilter} ${pst.backgroundColor}` : 'no panel')
+    check('glass is lit along its top edge', pst !== null && pst.boxShadow.includes('inset'))
+    const cst = cardEl ? getComputedStyle(cardEl) : null
+    check('a card on a panel is the raised glass: lighter, no second blur', cst !== null && cst.backdropFilter === 'none' && cst.backgroundImage.includes('gradient'),
+      cst ? `${cst.backdropFilter} ${cst.backgroundImage.slice(0, 40)}` : 'no card')
+    r94.unmount()
+    host.remove()
+    // Every surface component, dropped on a page, is glass.
+    const flat: string[] = []
+    for (const type of ['Card', 'Tabs', 'Modal', 'Drawer', 'Toolbar', 'HeaderBar', 'SettingsSection', 'KpiCard', 'DataCard', 'Menu', 'ConfirmDialog']) {
+      const st = new EditorStore()
+      st.addComponent(type, withRoot(st), 0, 0)
+      const html = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview', theme }, st.doc.root!))
+      if (!html.includes('backdrop-filter:blur')) flat.push(type)
+    }
+    check('every surface component is glass', flat.length === 0, flat.join(', '))
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

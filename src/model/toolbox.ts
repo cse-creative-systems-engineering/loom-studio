@@ -81,16 +81,16 @@ defineComponent({
     surface: {
       type: 'enum',
       options: ['solid', 'glass', 'gradient'],
-      // Desktop-first: the default surface must be portable to a native
-      // widget tree. Glass stays available as an explicit web-only choice.
-      default: 'solid',
+      // Glass is the default material (desktop output is Chromium, decided
+      // 2026-09-28): over an aurora page it carries the colour through, over
+      // a plain page it reads as a quiet, lit surface. Solid stays a choice.
+      default: 'glass',
       group: 'Style',
     },
     glass: {
       type: 'boolean',
       default: false,
       group: 'Style',
-      requires: ['css-backdrop-filter'],
     },
     // A container is only announced as a group when it is NAMED: `role=group`
     // with no accessible name is noise in a screen reader.

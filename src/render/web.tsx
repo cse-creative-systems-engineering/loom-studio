@@ -421,7 +421,15 @@ function applyCommonStyle(
     s.border = `${bw >= 0 ? bw : 1}px solid ${bd || t.border}`
   }
   const shadow = str(p.shadow)
-  if (shadow && shadow !== 'none') s.boxShadow = t[`shadow${shadow.charAt(0).toUpperCase()}${shadow.slice(1)}` as keyof Theme] as string
+  if (shadow && shadow !== 'none') {
+    const chosen = t[`shadow${shadow.charAt(0).toUpperCase()}${shadow.slice(1)}` as keyof Theme] as string
+    // On glass the default elevation IS the material's own shadow, and any
+    // other elevation keeps the lit top edge: replacing the whole shadow
+    // turned every glass panel back into a flat box.
+    const glass = nodeType === 'Panel' ? p.glass === true || p.surface === 'glass' : GLASS_SURFACES.has(nodeType)
+    if (!glass) s.boxShadow = chosen
+    else if (shadow !== 'md') s.boxShadow = `${t.glassHighlight}, ${chosen}`
+  }
 
   // --- spacing: `padding` is the shorthand, X/Y are the override ---
   const pad = num(p.padding, UNSET)
@@ -539,7 +547,43 @@ function applyCommonStyle(
   else if (str(p.overflow) === 'hidden') s.overflow = 'hidden'
 }
 
-function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties {
+/**
+ * Components whose body is a SURFACE, drawn in the theme's glass material.
+ * Panel only when its `surface` is glass (the default); the rest always.
+ */
+const GLASS_SURFACES = new Set([
+  'Card', 'Tabs', 'Modal', 'Drawer', 'Toolbar', 'StatusBar', 'HeaderBar', 'FooterBar',
+  'SettingsSection', 'SidebarPanel', 'KpiCard', 'DataCard', 'Menu', 'CommandBar', 'ConfirmDialog',
+])
+
+function isGlass(node: Node): boolean {
+  if (node.type === 'Panel') return node.props.glass === true || node.props.surface === 'glass'
+  return GLASS_SURFACES.has(node.type)
+}
+
+/** True when a glass surface encloses `id`: its own glass is then the raised kind. */
+function onGlass(doc: Document, id: NodeId): boolean {
+  for (let p = parentOf(doc, id); p; p = parentOf(doc, p)) {
+    const n = doc.nodes[p]
+    if (n && isGlass(n)) return true
+  }
+  return false
+}
+
+/**
+ * Dress `s` in the theme's glass. `raised` is a surface on a surface: the
+ * lighter fill, no second blur (the outer glass is the backdrop root, so a
+ * nested blur would only blur its siblings) and no second drop shadow.
+ * `edge: false` leaves the border to the caller (a bar keeps its one rule).
+ */
+function glassSurface(s: React.CSSProperties, t: Theme, raised: boolean, opts: { edge?: boolean; shadow?: boolean } = {}): void {
+  s.background = raised ? t.glassFillRaised : t.glassFill
+  if (!raised) s.backdropFilter = `blur(${t.glassBlur}px) saturate(160%)`
+  if (opts.edge !== false) s.border = `1px solid ${t.glassEdge}`
+  s.boxShadow = raised || opts.shadow === false ? t.glassHighlight : `${t.glassHighlight}, ${t.glassShadow}`
+}
+
+function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): React.CSSProperties {
   const p = node.props
   const spec = getComponent(node.type)
   if (!spec) throw new Error(`unknown component: ${node.type}`)
@@ -572,14 +616,12 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.display = 'flex'
       s.flexDirection = p.direction === 'row' ? 'row' : 'column'
       s.gap = px(p.gap, t.space3)
-      s.background = glass
-        ? t.surfaceGlass
-        : p.surface === 'gradient'
-          ? `linear-gradient(140deg, ${t.surface}, ${t.bg})`
-          : t.surface
-      s.border = `1px solid ${t.border}`
-      s.backdropFilter = glass ? 'blur(18px) saturate(140%)' : undefined
-      s.boxShadow = t.shadowMd
+      if (glass) glassSurface(s, t, raised)
+      else {
+        s.background = p.surface === 'gradient' ? `linear-gradient(140deg, ${t.surface}, ${t.bg})` : t.surface
+        s.border = `1px solid ${t.border}`
+        s.boxShadow = t.shadowMd
+      }
       // The generic pass treats `shadow: 'none'` as "not set", because for most
       // components no shadow IS the default. A panel defaults to `md`, so
       // 'none' has to be said out loud here or the elevation could never be
@@ -727,14 +769,14 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'Card': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space3)
       s.padding = px(p.padding, t.space4); s.borderRadius = px(p.radius, t.radiusLg)
-      s.background = t.surface; s.border = `1px solid ${t.border}`
-      s.boxShadow = p.elevation === 'none' ? undefined : p.elevation === 'sm' ? t.shadowSm : p.elevation === 'lg' ? t.shadowLg : t.shadowMd
+      glassSurface(s, t, raised, { shadow: p.elevation !== 'none' })
+      if (!raised && p.elevation === 'lg') s.boxShadow = `${t.glassHighlight}, ${t.shadowLg}`
       break
     }
     case 'Tabs': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space2)
       s.padding = `${t.space3}px`; s.borderRadius = `${t.radiusLg}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`
+      glassSurface(s, t, raised)
       break
     }
     case 'TabPanel': {
@@ -765,14 +807,19 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const [mpad, mgap] = mSizes[str(p.size)] ?? mSizes.md
       s.gap = `${mgap}px`
       s.width = px(p.width, 480); s.padding = `${mpad}px`
-      s.borderRadius = `${t.radiusLg}px`; s.background = t.surface
-      s.border = `1px solid ${t.borderStrong}`; s.boxShadow = t.shadowLg
+      s.borderRadius = `${t.radiusLg}px`
+      glassSurface(s, t, raised)
+      // A dialog sits over its own scrim so it can be READ: translucent over a
+      // darkened page it went muddy grey. It keeps the lit edge and depth, on an
+      // opaque fill.
+      s.background = t.surface
+      if (!raised) s.boxShadow = `${t.glassHighlight}, ${t.shadowLg}`
       break
     }
     case 'Drawer': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = `${t.space3}px`
       s.width = px(p.width, 320); s.padding = `${t.space4}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`
+      glassSurface(s, t, raised)
       break
     }
     case 'Section': {
@@ -825,8 +872,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const [tpy, tpxv, tfs] = tSizes[str(p.size)] ?? tSizes.md
       s.gap = px(p.gap, t.space2); s.padding = `${tpy}px ${tpxv}px`
       s.fontSize = `${tfs}px`
-      s.borderRadius = `${t.radiusMd}px`; s.background = t.surface
-      s.border = `1px solid ${t.border}`
+      s.borderRadius = `${t.radiusMd}px`
+      glassSurface(s, t, raised, { shadow: false })
       break
     }
     case 'StatusBar': {
@@ -836,8 +883,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       // A status bar reports a condition, so `tone` colours it and `neutral`
       // stays the quiet default it has always been.
       s.color = p.tone === 'neutral' ? t.textSecondary : toneColor(t, str(p.tone))
-      s.background = t.surface
-      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.border}`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.glassEdge}`
       break
     }
     case 'Hero': {
@@ -851,16 +898,17 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'HeaderBar': {
       s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'
       s.gap = px(p.gap, t.space3); s.height = px(p.height, 56)
-      s.padding = `0 ${t.space4}px`; s.background = t.surface
-      s.borderBottom = p.divider === false ? 'none' : `1px solid ${t.border}`
+      s.padding = `0 ${t.space4}px`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderBottom = p.divider === false ? 'none' : `1px solid ${t.glassEdge}`
       break
     }
     case 'FooterBar': {
       s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'
       s.height = px(p.height, 48); s.padding = `0 ${t.space4}px`
       s.fontSize = `${t.textXs}px`; s.color = t.textMuted
-      s.background = t.surface
-      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.border}`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.glassEdge}`
       break
     }
     case 'SettingsSection': {
@@ -869,8 +917,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.gap = px(p.gap, t.space2)
       s.padding = `${t.space4}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.border = `1px solid ${p.danger === true ? t.danger : t.border}`
-      s.background = t.surface
+      glassSurface(s, t, raised)
+      if (p.danger === true) s.border = `1px solid ${t.danger}`
       s.width = px(p.width, 640)
       break
     }
@@ -906,7 +954,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'SidebarPanel': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space2)
       s.width = px(p.width, 240); s.padding = `${t.space4}px`
-      s.background = t.surface; s.borderRight = `1px solid ${t.border}`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderRight = `1px solid ${t.glassEdge}`
       break
     }
     // --- conversation ---------------------------------------------------
@@ -1292,8 +1341,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.gap = `${t.space2}px`
       s.padding = size === 'sm' ? `${t.space3}px` : size === 'lg' ? `${t.space5}px` : `${t.space4}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.border = `1px solid ${t.border}`
-      s.background = t.surface
+      glassSurface(s, t, raised)
       s.width = px(p.width, 220)
       break
     }
@@ -1403,7 +1451,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const size = str(p.size) || 'md'
       s.padding = size === 'sm' ? `${t.space3}px` : size === 'lg' ? `${t.space5}px` : `${t.space4}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`; s.boxShadow = t.shadowSm
+      glassSurface(s, t, raised)
       s.fontSize = `${size === 'sm' ? t.textSm : size === 'lg' ? t.textLg : t.textMd}px`
       break
     }
@@ -1453,8 +1501,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     }
     case 'Menu': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, 2)
-      s.padding = `${t.space2}px`; s.background = t.surface
-      s.border = `1px solid ${t.border}`; s.borderRadius = `${t.radiusMd}px`
+      s.padding = `${t.space2}px`; s.borderRadius = `${t.radiusMd}px`
+      glassSurface(s, t, raised)
       // A context menu is as wide as its longest row; a designer who knows the
       // width sets it, and the rest keep hugging their content.
       const w = num(p.width, -1)
@@ -1465,8 +1513,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'CommandBar': {
       s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'
       s.gap = px(p.gap, 8); s.padding = `${t.space2}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`
       s.borderRadius = `${t.radiusMd}px`
+      glassSurface(s, t, raised, { shadow: false })
       break
     }
     case 'TabBar': {
@@ -1638,8 +1686,10 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const size = str(p.size) || 'md'
       s.padding = size === 'sm' ? `${t.space4}px` : size === 'lg' ? `${t.space6}px` : `${t.space5}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.background = t.surface; s.border = `1px solid ${t.borderStrong}`
-      s.boxShadow = t.shadowLg; s.width = px(p.width, 400)
+      glassSurface(s, t, raised)
+      s.background = t.surface // over a scrim: opaque, as Modal
+      if (!raised) s.boxShadow = `${t.glassHighlight}, ${t.shadowLg}`
+      s.width = px(p.width, 400)
       s.fontSize = `${size === 'sm' ? t.textSm : t.textMd}px`
       break
     }
@@ -1765,7 +1815,7 @@ function renderPreviewNode(
   // Where a control sits among its siblings is what makes a group work: the
   // Nth TabPanel belongs to the Nth tab.
   const parentId = parentOf(ctx.doc, node.id)
-  const style = styleFor(node, flowChild, t)
+  const style = styleFor(node, flowChild, t, onGlass(ctx.doc, node.id))
   // Theme colours reach the behaviour stylesheet as custom properties, so the
   // rules that draw a pressed/toggled/active state can reference them without
   // the renderer hard-coding a second copy of the theme. Inherited, so one
@@ -5388,7 +5438,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     return renderPreviewNode(node, flowChild, children, key, t, ctx)
   }
 
-  const authored = styleFor(node, flowChild, t)
+  const authored = styleFor(node, flowChild, t, onGlass(ctx.doc, id))
 
   // The atmosphere layer: grain / glass / aurora / spotlight / shimmer / glow
   // / tilt / chromatic, declared in render/effects.tsx and gated by target

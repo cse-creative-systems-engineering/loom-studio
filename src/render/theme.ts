@@ -57,6 +57,21 @@ export interface Theme {
   border: string
   borderStrong: string
 
+  /**
+   * Glass: the material every surface (panel, card, dialog, bar, menu) is
+   * made of. A translucent fill, a blur of what is behind it, a hairline
+   * edge, a light top highlight and a soft layered shadow; depth comes from
+   * light and shadow, not from a 1px box. `glassFillRaised` is the same
+   * material one level up, for a surface that sits ON another surface: it
+   * is lighter (elevation reads as light) and does not blur again.
+   */
+  glassFill: string
+  glassFillRaised: string
+  glassEdge: string
+  glassHighlight: string
+  glassShadow: string
+  glassBlur: number
+
   /* type scale — a real ratio, not ad-hoc values */
   fontFamily: string
   fontMono: string
@@ -130,6 +145,13 @@ const BASE: Theme = {
   // behind `ui-sans-serif` it never won, and the design fell to SF, Segoe or
   // DejaVu depending on the machine it was opened on.
   fontFamily: "'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif",
+
+  glassFill: 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)), rgba(15,18,28,0.56)',
+  glassFillRaised: 'linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.035))',
+  glassEdge: 'rgba(255,255,255,0.09)',
+  glassHighlight: 'inset 0 1px 0 rgba(255,255,255,0.08)',
+  glassShadow: '0 24px 60px -24px rgba(0,0,0,0.65), 0 2px 8px -2px rgba(0,0,0,0.35)',
+  glassBlur: 28,
   fontMono: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace",
 
   // ~1.2 ratio on a 15px base.
@@ -192,6 +214,11 @@ const DAYLIGHT: Theme = {
   shadowMd: '0 6px 18px -8px rgba(16,20,28,0.14)',
   shadowLg: '0 20px 44px -18px rgba(16,20,28,0.20)',
   shadowGlow: '0 6px 20px -10px rgba(47, 95, 224, 0.45)',
+  glassFill: 'linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0.2)), rgba(255,255,255,0.42)',
+  glassFillRaised: 'rgba(255,255,255,0.72)',
+  glassEdge: 'rgba(255,255,255,0.8)',
+  glassHighlight: 'inset 0 1px 0 rgba(255,255,255,0.95)',
+  glassShadow: '0 0 0 1px rgba(16,20,28,0.05), 0 24px 48px -24px rgba(16,20,28,0.22), 0 2px 6px -2px rgba(16,20,28,0.08)',
 }
 
 const CONTRAST: Theme = {
@@ -211,6 +238,12 @@ const CONTRAST: Theme = {
   border: 'rgba(255, 255, 255, 0.22)',
   borderStrong: 'rgba(255, 255, 255, 0.38)',
   shadowGlow: '0 6px 24px -8px rgba(126, 166, 255, 0.7)',
+  // Contrast keeps its glass nearly opaque: legibility first.
+  glassFill: 'rgba(10,12,18,0.88)',
+  glassFillRaised: 'rgba(255,255,255,0.06)',
+  glassEdge: 'rgba(255,255,255,0.38)',
+  glassHighlight: 'inset 0 1px 0 rgba(255,255,255,0.12)',
+  glassBlur: 20,
 }
 
 const THEMES: Record<ThemeName, Theme> = {
