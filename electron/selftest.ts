@@ -3396,6 +3396,64 @@ export async function runSelfTest(): Promise<string> {
     check('a migrated file saves and reloads clean', d !== null && validate(serialize(d)).issues.length === 0, d ? validate(serialize(d)).issues.map((i) => i.message).join(' | ') : 'no doc')
   }
 
+  // --- 60. a selected Button looks like the Button, not a browser button ---
+  // Regression: selecting a Button swapped its label for a bare <button>, which
+  // drew the browser's grey box and border inside the designed one.
+  {
+    const s60 = new EditorStore()
+    s60.addComponent('Button', s60.doc.root, 20, 20)
+    const id = s60.selection[0]
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const r60 = createRoot(host)
+    for (const selected of [false, true]) {
+      r60.render(renderNode({ doc: s60.doc, selected: new Set(selected ? [id] : []), onPointerDownNode: () => undefined }, s60.doc.root!))
+      await new Promise((r) => setTimeout(r, 60))
+      const inner = host.querySelector(`[data-loom-id="${id}"] button`) as HTMLElement | null
+      const cs = inner ? getComputedStyle(inner) : null
+      const bare = cs !== null && (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' || cs.borderTopStyle !== 'none' || cs.paddingLeft !== '0px')
+      check(`a ${selected ? 'selected' : 'resting'} Button draws no browser button inside itself`, !bare, cs ? `bg=${cs.backgroundColor} border=${cs.borderTopStyle} pad=${cs.paddingLeft}` : 'no inner button')
+      const outer = host.querySelector(`[data-loom-id="${id}"]`) as HTMLElement | null
+      check(`a ${selected ? 'selected' : 'resting'} Button keeps its label colour`, !!outer && (!inner || getComputedStyle(inner).color === getComputedStyle(outer).color))
+    }
+    r60.unmount()
+    host.remove()
+  }
+
+  // --- 61. preview happens IN the canvas, and comes back -----------------
+  // The live preview used to be a separate window; now Preview swaps the
+  // design canvas for the running artifact in place. Driven through the real
+  // mounted app: the switch, the panels that step aside, and Esc.
+  {
+    const click = (label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === label)?.click()
+    const shown = (q: string) => {
+      const el = document.querySelector<HTMLElement>(q)
+      return el !== null && !el.closest('[hidden]') && el.getBoundingClientRect().width > 0
+    }
+    const wait = () => new Promise((r) => setTimeout(r, 120))
+    // The app's own store, given something to run; put back afterwards.
+    const app = window.__loomStore
+    const before = app.doc
+    const scene = new EditorStore()
+    scene.addComponent('Heading', scene.doc.root!, 20, 20, { text: 'Preview probe' })
+    app.loadDocument(scene.doc)
+    await wait()
+    check('design mode shows the toolbox, the canvas and the inspector', shown('.toolbox') && shown('.surface') && shown('.inspector') && !shown('.preview-stage'))
+    click('Preview')
+    await wait()
+    const stage = document.querySelector<HTMLElement>('.canvas.previewing .preview-stage')
+    check('Preview puts the running artifact where the design was', stage !== null && shown('.canvas.previewing .preview-stage') && !shown('.surface'))
+    check('the preview is the output, with no editor hooks', stage !== null && stage.querySelectorAll('[data-loom-id]').length === 0 && (stage.textContent ?? '').includes('Preview probe'), stage ? `text=${(stage.textContent ?? '').slice(0, 40)} hooks=${stage.querySelectorAll('[data-loom-id]').length}` : 'no stage')
+    check('the toolbox and inspector step aside in Preview', !shown('.toolbox') && !shown('.inspector'))
+    const wrap = document.querySelector<HTMLElement>('.canvas-wrap')?.getBoundingClientRect()
+    check('in Preview the canvas takes the full width', wrap !== undefined && Math.abs(wrap.width - window.innerWidth) <= 1, `canvas=${wrap?.width} window=${window.innerWidth}`)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await wait()
+    check('Esc returns to the design', shown('.surface') && shown('.toolbox') && !shown('.preview-stage'))
+    app.loadDocument(before)
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

@@ -407,7 +407,10 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
     ok('inspector lists all eight effect toggles',
       ['Glass', 'Aurora', 'Grain', 'Spotlight', 'Shimmer', 'Glow', 'Tilt', 'Chromatic']
         .every((n) => off.includes(n)))
-    ok('inspector shows the empty-state hint when nothing is on', off.includes('atmosphere layer'))
+    // What each effect does is its tooltip (the compact panel has no room for
+    // a line of prose under every switch, or for a paragraph above them).
+    ok('every effect switch explains itself in its tooltip',
+      (off.match(/class="eff-row" title="[^"]{8,}"/g) ?? []).length === 8, (off.match(/class="eff-row"[^>]*>/g) ?? []).slice(0, 2).join(' '))
     ok('inspector hides parameters when nothing is on', !off.includes('Saturation'))
 
     const on = r(h(EffectsPanel, { effects: ne({ ...DE, glass: true }), onChange: () => {}, onCommit: () => {} }))

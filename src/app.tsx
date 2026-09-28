@@ -1161,7 +1161,13 @@ function Canvas({
       {mode === 'preview' && (
         <div className="canvas previewing">
           {/* The artifact, running: same viewport, same zoom, real behaviour. */}
-          <div className={`stage ${CONTAINER_CLASS}`} style={{ zoom, width: viewportWidth, maxWidth: '100%' }} data-viewport={viewport}>
+          {/* It is a SCREEN: the page's own background, edge to edge at the
+              viewport's width, so where the artifact sits on it is visible. */}
+          <div
+            className={`stage ${CONTAINER_CLASS}`}
+            style={{ zoom, width: viewportWidth, maxWidth: '100%', minHeight: `calc((100vh - 122px) / ${zoom})`, background: getTheme(s.doc.meta.theme).bg, color: getTheme(s.doc.meta.theme).textPrimary }}
+            data-viewport={viewport}
+          >
             <PreviewStage s={s} />
           </div>
         </div>
@@ -1345,10 +1351,8 @@ function Inspector({
         <section>
           <h3>Display</h3>
           <div className="field">
-            <label>
-              Opacity
-              <span className="dim"> — {Math.round((node.opacity ?? 1) * 100)}%</span>
-            </label>
+            <label>Opacity</label>
+            <div className="range-row">
             <input
               type="range"
               min={0}
@@ -1362,19 +1366,18 @@ function Inspector({
               onMouseUp={() => s.seal('Opacity')}
               aria-label="Opacity percent"
             />
+            <span className="range-value">{Math.round((node.opacity ?? 1) * 100)}%</span>
+            </div>
           </div>
           <div className="field">
-            <label>Visible in output</label>
+            <label title="Visible in output">Visible</label>
             <Toggle
               checked={node.visible !== false}
               onChange={(v) => s.commit({ op: 'setVisible', id: node.id, visible: v }, v ? 'Show' : 'Hide')}
             />
           </div>
           <div className="field">
-            <label>
-              Locked
-              <span className="dim"> — no drag, resize, or delete</span>
-            </label>
+            <label title="Locked: no drag, resize, or delete">Locked</label>
             <Toggle
               checked={node.locked === true}
               onChange={(v) => s.commit({ op: 'setLocked', id: node.id, locked: v }, v ? 'Lock' : 'Unlock')}
@@ -1385,10 +1388,7 @@ function Inspector({
           <section>
             <h3>Layout</h3>
             <div className="field">
-              <label>
-                Flow layout
-                <span className="dim"> — off: children position freely (absolute); on: this container arranges them</span>
-              </label>
+              <label title="Off: children position freely. On: this container arranges them in order.">Flow layout</label>
               <Toggle
                 checked={node.flow}
                 onChange={(v) => s.commit({ op: 'setFlow', id: node.id, flow: v }, v ? 'Flow on' : 'Flow off')}
@@ -1611,7 +1611,7 @@ function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: Fi
           {modified && <span className="mod-dot" aria-label="Changed from default" title="Changed from default" />}
           {label}
           {ps.bindable && <span className="bind" title="Can be bound to a data source">◈</span>}
-          {badge && <span className="gate-badge">{badge} only</span>}
+          {badge && <span className="gate-badge" title={`${badge} only`}>{badge} only</span>}
         </label>
         {modified && onReset && (
           <button

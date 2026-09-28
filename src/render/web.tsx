@@ -5311,6 +5311,9 @@ function authorInner(node: Node, t: Theme): React.ReactNode {
           tabIndex={-1}
           disabled={p.disabled === true || p.loading === true}
           aria-busy={p.loading === true ? 'true' : undefined}
+          // The outer div IS the designed button; this one only carries the
+          // semantics, so it must draw nothing of its own.
+          style={{ all: 'unset', display: 'contents' }}
         >
           {icon ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>

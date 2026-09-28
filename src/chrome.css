@@ -229,3 +229,12 @@
 /* The artifact on its own, no editor chrome at all: what ships. */
 .canvas.previewing .stage { position: relative; }
 .canvas.previewing .preview-stage { position: relative; min-height: 200px; }
+
+/* The screen the artifact runs on: a page with an edge, filling the height,
+   so the artifact's own position on it reads as a layout, not as drift. */
+.canvas.previewing { padding: 20px 20px 64px; }
+.canvas.previewing .stage {
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--line-2), 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+}
