@@ -90,8 +90,8 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'place',
-    description: 'Position and/or size a free (non-flow) node, in px relative to its parent. Omitted values stay as they are.',
-    inputSchema: obj({ id: str('Node id.'), x: num('x'), y: num('y'), w: num('width'), h: num('height') }, ['id']),
+    description: 'Position and/or size a node, in px relative to its parent. Omitted values stay as they are. w or h "auto" removes a fixed size, so the node is as big as its content (or, in a flow parent, as the layout makes it).',
+    inputSchema: obj({ id: str('Node id.'), x: num('x'), y: num('y'), w: { type: ['number', 'string'], description: 'width in px, or "auto"' }, h: { type: ['number', 'string'], description: 'height in px, or "auto"' } }, ['id']),
   },
   {
     name: 'dock',
@@ -230,13 +230,25 @@ function describeType(ps: PropSpec): string {
   return ps.type
 }
 
-/** The props that differ from their defaults: what makes this node this node. */
+/**
+ * The props that differ from their defaults: what makes this node this node.
+ * Geometry the dock overrides is reported as what it IS: a docked node's x/y
+ * do nothing, and a dimension it spans is its parent's (an agent that read
+ * "w: 360" on a fill-docked page concluded the dock had not worked).
+ */
 function ownProps(n: Node): Record<string, PropValue> {
   const spec = getComponent(n.type)
   const out: Record<string, PropValue> = {}
+  const anchor = typeof n.props.anchor === 'string' ? n.props.anchor : 'none'
+  const docked = anchor !== 'none'
+  const spansW = anchor === 'top' || anchor === 'bottom' || anchor === 'fill'
+  const spansH = anchor === 'left' || anchor === 'right' || anchor === 'fill'
   for (const [k, v] of Object.entries(n.props)) {
     if (k === 'x' || k === 'y' || k === 'w' || k === 'h') {
-      if (v !== undefined) out[k] = v
+      if (v === undefined) continue
+      if (docked && (k === 'x' || k === 'y')) continue
+      if ((k === 'w' && spansW) || (k === 'h' && spansH)) out[k] = 'spans its parent (docked)'
+      else out[k] = v
       continue
     }
     const ps = spec?.props[k]
@@ -329,6 +341,13 @@ const HANDLERS: Record<string, Handler> = {
     const x = intoFlow ? 0 : finite(a.x) ?? 0
     const y = intoFlow ? 0 : finite(a.y) ?? 0
     const made = instantiateFor(type, ok, x, y, id, intoFlow)
+    // A container that becomes the document's root IS the page: it fills the
+    // screen unless the agent placed or sized it (or it docks itself, like a
+    // sidebar). A 360x240 "page" in a 1280x800 screen was never what was meant.
+    const spec = getComponent(type)!
+    if (parent === null && spec.container && made.props.anchor === 'none' && !['x', 'y', 'w', 'h'].some((k) => finite(a[k]) !== undefined || (ok as Record<string, unknown>)[k] !== undefined)) {
+      made.props.anchor = 'fill'
+    }
     if (!t.write({ op: 'insert', parent, node: made }, `Add ${type}`)) throw new Error(`could not add ${type} there`)
     return { id, ...(rejected.length ? { rejected } : {}) }
   },
@@ -372,6 +391,11 @@ const HANDLERS: Record<string, Handler> = {
     const w = finite(a.w)
     const h = finite(a.h)
     if (x !== undefined || y !== undefined) t.write({ op: 'move', id, x: Math.round(x ?? (Number(n.props.x) || 0)), y: Math.round(y ?? (Number(n.props.y) || 0)) }, 'Move')
+    // "auto": no fixed size on that axis (the prop is removed; the op's
+    // inverse restores the old number).
+    for (const k of ['w', 'h'] as const) {
+      if (a[k] === 'auto') t.write({ op: 'setProp', id, key: k, value: undefined as unknown as PropValue }, `Auto ${k === 'w' ? 'width' : 'height'}`)
+    }
     if (w !== undefined || h !== undefined) {
       const cur = s.doc.nodes[id]!
       t.write({ op: 'resize', id, w: Math.max(1, Math.round(w ?? (Number(cur.props.w) || 100))), h: Math.max(1, Math.round(h ?? (Number(cur.props.h) || 40))) }, 'Resize')

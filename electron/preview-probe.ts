@@ -21,6 +21,9 @@ import fs from 'node:fs'
 // probe's own is refused, which is how this probe went red after the IPC
 // guard landed. Set before `whenReady`, when main.ts reads it.
 process.env.LOOM_DEMO = '1'
+// The Assistant's scripted stand-in agent (electron/test-agent.cjs): the
+// whole send -> agent -> MCP -> editor path, with no model and no cost.
+process.env.LOOM_AI_TEST_AGENT = require('node:path').join(__dirname, '..', '..', 'electron', 'test-agent.cjs')
 
 interface Step {
   name: string
@@ -157,6 +160,67 @@ async function run() {
       const fr = forged[0]?.result as { isError?: boolean; content?: Array<{ text: string }> } | undefined
       step('a wrong token is refused before reaching the editor', fr?.isError === true && /bad token/.test(fr?.content?.[0]?.text ?? ''))
     }
+  }
+
+  // The Assistant, end to end with the scripted agent: type, send, watch it
+  // build, undo the whole turn in one step, follow up, see an error, stop.
+  {
+    await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore;
+      s.loadDocument({ version: 1, meta: { name: 'assist', targets: ['web'], created: 0 }, root: null, nodes: {} });
+      s.addComponent('Panel', null, 0, 0, { w: 1280, h: 800 }); s.select([]); return true })()`, true)
+    const ask = async (text: string) => {
+      await win.webContents.executeJavaScript(`(() => {
+        const ta = document.querySelector('.assistant .as-input');
+        const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        set.call(ta, ${JSON.stringify(text)}); ta.dispatchEvent(new Event('input', { bubbles: true }));
+        return true })()`, true)
+      await new Promise((r) => setTimeout(r, 150))
+      await win.webContents.executeJavaScript(`document.querySelector('.assistant .as-send')?.click()`, true)
+    }
+    const idle = async (ms = 15000) => {
+      for (let i = 0; i < ms / 200; i++) {
+        await new Promise((r) => setTimeout(r, 200))
+        const busy = await win.webContents.executeJavaScript(`Boolean(document.querySelector('.assistant .as-send.stop'))`, true)
+        if (!busy) return true
+      }
+      return false
+    }
+    for (let i = 0; i < 40; i++) {
+      const ok = await win.webContents.executeJavaScript(`!document.querySelector('.assistant .as-input')?.disabled`, true)
+      if (ok) break
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    const h0 = await win.webContents.executeJavaScript(`window.__loomStore.history.length`, true)
+    await ask('card: Quarterly plan')
+    await idle()
+    const after = await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore; const cards = Object.values(s.doc.nodes).filter((n) => n.type === 'Card'); return { cards: cards.map((c) => c.props.title), hist: s.history.length, label: s.history[s.history.length - 1]?.label, thread: document.querySelector('.assistant .as-thread')?.innerText ?? '' } })()`, true)
+    step('the assistant builds on the canvas from a message', after.cards.includes('Quarterly plan'), JSON.stringify(after.cards))
+    step('its whole turn is one undo step, named for the message', after.hist === h0 + 1 && /^AI: card: Quarterly plan/.test(after.label), `${h0} -> ${after.hist} "${after.label}"`)
+    step('the conversation shows the reply and the steps', /Added a card titled/.test(after.thread) && /add Card/.test(after.thread), after.thread.slice(0, 120))
+    // Messages stack, never overlap (a reply was absolutely positioned over
+    // the thread by a class-name collision with the panel itself).
+    const stacked = await win.webContents.executeJavaScript(`(() => { const r = [...document.querySelectorAll('.as-thread > *')].map((e) => e.getBoundingClientRect()); return r.every((b, i) => i === 0 || b.top >= r[i - 1].bottom - 1) })()`, true)
+    step('the thread stacks its messages without overlap', stacked === true)
+    await ask('card: Second')
+    await idle()
+    const follow = await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore; return Object.values(s.doc.nodes).filter((n) => n.type === 'Button').map((b) => b.props.label) })()`, true)
+    step('a follow-up continues the same conversation', follow.includes('Follow-up'), JSON.stringify(follow))
+    await win.webContents.executeJavaScript(`window.__loomStore.undo(); true`, true)
+    const undone = await win.webContents.executeJavaScript(`Object.values(window.__loomStore.doc.nodes).filter((n) => n.type === 'Card').map((c) => c.props.title)`, true)
+    step('undo takes back the whole last turn', JSON.stringify(undone) === JSON.stringify(['Quarterly plan']), JSON.stringify(undone))
+    await ask('fail please')
+    await idle()
+    const err = await win.webContents.executeJavaScript(`document.querySelector('.assistant .as-error')?.textContent ?? ''`, true)
+    step('an agent error is shown in the conversation', /could not add/i.test(err), err)
+    const n0 = await win.webContents.executeJavaScript(`Object.keys(window.__loomStore.doc.nodes).length`, true)
+    await ask('slow card: never')
+    await new Promise((r) => setTimeout(r, 900))
+    await win.webContents.executeJavaScript(`document.querySelector('.assistant .as-send.stop')?.click()`, true)
+    const stopped = await idle(5000)
+    await new Promise((r) => setTimeout(r, 4500))
+    const n1 = await win.webContents.executeJavaScript(`Object.keys(window.__loomStore.doc.nodes).length`, true)
+    const stopText = await win.webContents.executeJavaScript(`[...document.querySelectorAll('.assistant .as-error')].pop()?.textContent ?? ''`, true)
+    step('Stop ends a turn before it builds anything', stopped && n1 === n0 && /Stopped/.test(stopText), `stopped=${stopped} nodes ${n0}->${n1} "${stopText}"`)
   }
 
   // Run on desktop: a sidebar docked left in the design runs docked to the

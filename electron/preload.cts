@@ -102,4 +102,14 @@ contextBridge.exposeInMainWorld('loomAi', {
     return () => ipcRenderer.removeListener('ai:request', h)
   },
   respond: (reqId: string, reply: unknown) => ipcRenderer.invoke('ai:response', reqId, reply),
+  /** The Assistant: which agents can run, send a message, stop, keys. */
+  providers: () => ipcRenderer.invoke('ai:providers'),
+  send: (req: unknown) => ipcRenderer.invoke('ai:send', req),
+  cancel: () => ipcRenderer.invoke('ai:cancel'),
+  saveKey: (provider: string, key: string | null) => ipcRenderer.invoke('ai:save-key', provider, key),
+  onEvent: (cb: (runId: string, event: unknown) => void) => {
+    const h = (_e: unknown, runId: string, event: unknown) => cb(runId, event)
+    ipcRenderer.on('ai:event', h)
+    return () => ipcRenderer.removeListener('ai:event', h)
+  },
 })

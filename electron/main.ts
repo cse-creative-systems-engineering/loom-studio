@@ -9,6 +9,9 @@
 import { app, BrowserWindow, dialog, ipcMain, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { desktopBounds, type RunTarget } from '../src/model/desktop-run'
 import { startAiSocket, type AiSocket } from './ai-socket'
+import { detectProviders, providerKeyEnv, saveKey, type ProviderInfo } from './ai-providers'
+import { runAgent, type AgentEvent } from './ai-runner'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { autosaveFileName, isExternalUrlAllowed } from './guards'
@@ -333,6 +336,59 @@ app.whenReady().then(() => {
     aiSocket = null
   }
   app.on('will-quit', () => aiSocket?.close())
+
+  /* ---------------- the Assistant: providers and agent turns ---------------- */
+
+  ipcMain.handle('ai:providers', async (e) => {
+    if (!fromEditor(e)) return []
+    const list: Array<ProviderInfo | Record<string, unknown>> = await detectProviders()
+    // The probes' scripted agent (never offered in normal use).
+    if (process.env.LOOM_AI_TEST_AGENT) list.unshift({ id: 'test', label: 'Test agent', command: process.execPath, found: 'test', signedIn: true, apiKey: null, models: [{ id: 'test', label: 'Scripted' }], ready: true })
+    return list
+  })
+  ipcMain.handle('ai:save-key', (e, provider: string, key: string | null) => {
+    if (!fromEditor(e)) return { ok: false, error: 'forbidden' }
+    if (provider !== 'claude' && provider !== 'codex') return { ok: false, error: 'unknown provider' }
+    return saveKey(provider, typeof key === 'string' ? key : null)
+  })
+  let current: { id: string; cancel: () => void } | null = null
+  ipcMain.handle('ai:send', async (e, req: { provider: string; model: string; prompt: string; sessionId: string | null }) => {
+    if (!fromEditor(e)) return { error: 'forbidden' }
+    if (current) return { error: 'The assistant is still working on the last message.' }
+    const cfg = mcpServerConfig()
+    if (!cfg || !aiSocket) return { error: 'The AI connection is not available in this run of Loom.' }
+    if (typeof req?.prompt !== 'string' || !req.prompt.trim()) return { error: 'Say what to build or change.' }
+    const runId = crypto.randomUUID()
+    const send = (ev: AgentEvent) => {
+      if (ev.kind === 'done' && current?.id === runId) current = null
+      editorWin?.webContents.send('ai:event', runId, ev)
+    }
+    if (req.provider === 'test' && process.env.LOOM_AI_TEST_AGENT) {
+      const handle = runAgent(
+        { provider: 'claude', command: process.execPath, model: '', prompt: req.prompt, sessionId: req.sessionId, mcp: cfg, mcpConfigPath: aiSocket.configPath, env: { ELECTRON_RUN_AS_NODE: '1', LOOM_TEST_AGENT_SCRIPT: process.env.LOOM_AI_TEST_AGENT } },
+        send,
+        [process.env.LOOM_AI_TEST_AGENT],
+      )
+      current = { id: runId, cancel: handle.cancel }
+      return { runId }
+    }
+    if (req.provider !== 'claude' && req.provider !== 'codex') return { error: 'unknown provider' }
+    const info = (await detectProviders()).find((p) => p.id === req.provider)
+    if (!info?.command || !info.ready) return { error: info?.hint ?? 'That assistant is not available.' }
+    const model = typeof req.model === 'string' && /^[A-Za-z0-9._:-]{0,80}$/.test(req.model) ? req.model : ''
+    const handle = runAgent(
+      { provider: req.provider, command: info.command, model, prompt: req.prompt, sessionId: typeof req.sessionId === 'string' ? req.sessionId : null, mcp: cfg, mcpConfigPath: aiSocket.configPath, env: providerKeyEnv(req.provider) },
+      send,
+    )
+    current = { id: runId, cancel: handle.cancel }
+    return { runId }
+  })
+  ipcMain.handle('ai:cancel', (e) => {
+    if (!fromEditor(e)) return false
+    current?.cancel()
+    current = null
+    return true
+  })
 
   ipcMain.handle('desktop:run', (e, payload: { doc: unknown; target: RunTarget }) => {
     if (!fromEditor(e)) return null

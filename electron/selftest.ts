@@ -3961,6 +3961,8 @@ export async function runSelfTest(): Promise<string> {
     check('every tool has a schema and a description', TOOLS.length >= 14 && TOOLS.every((t) => t.description.length > 20 && (t.inputSchema as { type?: string }).type === 'object'))
     const root = val(run('add_component', { type: 'Panel', parent_id: null, props: { title: 'Home' } })).id as string
     check('an empty document gets its root from the agent', st.doc.root === root && st.doc.nodes[root]?.props.title === 'Home')
+    check('a container that becomes the root fills the page', st.doc.nodes[root]?.props.anchor === 'fill')
+    check('get_document reports a docked dimension as spanning, not a stale number', JSON.stringify(val(run('get_document'))).includes('spans its parent'))
     const bad = run('add_component', { type: 'Buton', parent_id: root })
     check('an unknown component is refused, pointing at the catalogue', !bad.ok && /list_components/.test(bad.ok ? '' : bad.error))
     const card = val(run('add_component', { type: 'Card', parent_id: root, x: 40, y: 50, props: { padding: '20', nonsense: 1, radius: 9999 } }))
@@ -4004,8 +4006,37 @@ export async function runSelfTest(): Promise<string> {
     check('an agent turn is one undo step', st.history.length === hist + 1 && st.history[st.history.length - 1]?.label === 'AI: add a footer', `${hist} -> ${st.history.length}`)
     st.undo()
     check('undoing the turn removes everything it added', Object.keys(st.doc.nodes).length === nodes, `${nodes} vs ${Object.keys(st.doc.nodes).length}`)
+    run('place', { id: cardId, w: 300, h: 200 })
+    run('place', { id: cardId, h: 'auto' })
+    check('place can hand a size back to the content ("auto")', st.doc.nodes[cardId]?.props.h === undefined && st.doc.nodes[cardId]?.props.w === 300, JSON.stringify({ w: st.doc.nodes[cardId]?.props.w, h: st.doc.nodes[cardId]?.props.h }))
     const rm = val(run('remove', { ids: [cardId] }))
     check('remove deletes', rm.removed === 1 && !st.doc.nodes[cardId])
+  }
+
+  // --- 72. the Assistant sits bottom-centre of the canvas -----------------
+  // Shane: "at the very bottom of the center of the design screen, instead of
+  // the current controls, we could put the composer for the AI agent".
+  {
+    const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms))
+    const comp = document.querySelector<HTMLElement>('.canvas-wrap .assistant .as-composer')
+    const wrap = document.querySelector<HTMLElement>('.canvas-wrap')!.getBoundingClientRect()
+    const c = comp?.getBoundingClientRect()
+    check('the Assistant composer is bottom-centre of the canvas', !!c && Math.abs(c.left + c.width / 2 - (wrap.left + wrap.width / 2)) <= 2 && wrap.bottom - c.bottom <= 20 && wrap.bottom - c.bottom >= 0, c ? `centre ${(c.left + c.width / 2).toFixed(0)} vs ${(wrap.left + wrap.width / 2).toFixed(0)}, gap ${(wrap.bottom - c.bottom).toFixed(0)}` : 'missing')
+    const dock = document.querySelector<HTMLElement>('.canvas-wrap .dock')?.getBoundingClientRect()
+    check('the view controls moved to the top-right of the canvas', !!dock && dock.top - wrap.top <= 16 && wrap.right - dock.right <= 20, dock ? `${dock.top - wrap.top} / ${wrap.right - dock.right}` : 'missing')
+    const input = document.querySelector<HTMLTextAreaElement>('.assistant .as-input')
+    check('typing in the composer does not trigger editor shortcuts', !!input && (() => {
+      const app = window.__loomStore
+      const before = app.history.length
+      input.focus()
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
+      return app.history.length === before
+    })())
+    ;[...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === 'Preview')?.click()
+    await wait(200)
+    check('the Assistant steps aside in Preview', document.querySelector('.assistant') === null)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await wait()
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
