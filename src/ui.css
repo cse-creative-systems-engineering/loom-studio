@@ -9,6 +9,10 @@
   --panel-2: #1a1f2e;
   --line: rgba(255, 255, 255, 0.07);
   --line-2: rgba(255, 255, 255, 0.12);
+  /* Where a value is typed: a recessed fill, no outline at rest. An edge on
+     every field was most of the panel's visual noise. */
+  --well: rgba(255, 255, 255, 0.045);
+  --well-hover: rgba(255, 255, 255, 0.07);
   --ink: #e6e9ef;
   --ink-2: #9aa4b8;
   --ink-3: #6b7488;
@@ -21,7 +25,9 @@
   --danger: #e2564d;
   --radius: 10px;
   --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.85);
-  --font: ui-sans-serif, -apple-system, 'Inter', 'Segoe UI', system-ui, sans-serif;
+  /* Bundled, so every machine draws the same Studio. The canvas does NOT use
+     it: a design is drawn in its theme's type, which is what exports ship. */
+  --font: 'Inter Variable', 'Inter', system-ui, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
   /* Type scale — six ad-hoc sizes within 3px was drift, not a scale. */
   --text-xs: 10.5px;
@@ -88,9 +94,9 @@ input, select { font-family: inherit; font-size: 12px; }
   margin: 8px 8px 6px;
   padding: 5px 9px;
   font-size: 11.5px;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--ink);
   outline: none;
 }
@@ -479,10 +485,11 @@ input, select { font-family: inherit; font-size: 12px; }
 .props-search {
   flex: 1 1 100%;
   min-width: 0;
-  padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--ink);
   outline: none;
 }
@@ -492,18 +499,18 @@ input, select { font-family: inherit; font-size: 12px; }
 .props-more {
   flex: 1 1 100%;
   text-align: left;
-  padding: 6px 9px;
+  padding: 2px 0;
   font-size: var(--text-xs);
-  color: var(--ink-2);
+  color: var(--ink-3);
   background: transparent;
-  border: 1px solid var(--line-2);
-  border-radius: 7px;
+  border: 0;
+  border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
 }
 
 .props-more:hover { color: var(--ink); }
-.props-more.on { color: var(--accent); border-color: rgba(91, 140, 255, 0.5); }
+.props-more.on { color: var(--accent); }
 .props-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .props-empty { color: var(--ink-3); font-size: var(--text-sm); margin: 14px 0; }
@@ -520,9 +527,9 @@ input, select { font-family: inherit; font-size: 12px; }
   width: 100%;
   height: 24px;
   padding: 0 7px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--ink);
   outline: none;
 }
@@ -541,9 +548,9 @@ input, select { font-family: inherit; font-size: 12px; }
   width: 100%;
   height: 24px;
   padding: 0 22px 0 7px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--ink);
   outline: none;
   cursor: pointer;
@@ -637,24 +644,25 @@ input, select { font-family: inherit; font-size: 12px; }
 .num input { flex: 1; }
 
 .toggle {
-  width: 34px; height: 19px;
+  width: 28px; height: 16px;
   padding: 2px;
-  background: rgba(0, 0, 0, 0.42);
-  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.1);
+  border: 0;
   border-radius: 999px;
   display: flex;
   transition: background 140ms ease, border-color 140ms ease;
 }
 
 .toggle .knob {
-  width: 13px; height: 13px;
+  width: 12px; height: 12px;
   border-radius: 50%;
-  background: var(--ink-3);
+  background: #c9cfdb;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
   transition: transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1), background 140ms ease;
 }
 
-.toggle.on { background: rgba(91, 140, 255, 0.35); border-color: rgba(91, 140, 255, 0.7); }
-.toggle.on .knob { transform: translateX(15px); background: var(--accent); }
+.toggle.on { background: var(--accent); }
+.toggle.on .knob { transform: translateX(12px); background: #fff; }
 
 .empty { padding: 28px 18px; color: var(--ink-2); }
 .empty .dim { color: var(--ink-3); font-size: 11.5px; line-height: 1.5; }
@@ -1132,3 +1140,10 @@ input, select { font-family: inherit; font-size: 12px; }
   border-radius: 50%;
   background: #d9a13a;
 }
+
+/* Wells brighten under the pointer and take the accent edge on focus. */
+.field input[type='text']:hover:not(:focus),
+.select-wrap select:hover:not(:focus),
+.num input:hover:not(:focus),
+.search:hover:not(:focus),
+.props-search:hover:not(:focus) { background: var(--well-hover); border-color: transparent; }

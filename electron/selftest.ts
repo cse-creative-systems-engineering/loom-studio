@@ -31,6 +31,7 @@ import { auditAreas } from './area-audit'
 import { KNOWN_UNREACHABLE } from './area-backlog'
 import { installBehaviourRuntime } from '../src/render/behaviour-mount'
 import { STARTERS } from '../src/model/starters'
+import { hasOwnGlyph } from '../src/tool-icons'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
@@ -3452,6 +3453,62 @@ export async function runSelfTest(): Promise<string> {
     await wait()
     check('Esc returns to the design', shown('.surface') && shown('.toolbox') && !shown('.preview-stage'))
     app.loadDocument(before)
+  }
+
+  // --- 62. the Studio has its own typeface, and the canvas does not ------
+  // The chrome was falling back to whatever the OS had (Noto Sans here). Inter
+  // is bundled for the TOOL. The design must not pick it up: exports do not
+  // ship the font, so a canvas in Inter would not be what gets exported.
+  {
+    await document.fonts.load('12px "Inter Variable"')
+    await document.fonts.ready
+    const face = [...document.fonts].find((f) => f.family.replace(/"/g, '') === 'Inter Variable' && f.status === 'loaded')
+    check('the Studio typeface is bundled and loaded', face !== undefined, [...document.fonts].map((f) => `${f.family}:${f.status}`).slice(0, 4).join(' '))
+    // Live proof it draws: the same string is a different width in Inter than
+    // in the fallback it would otherwise land on.
+    const probe = (family: string) => {
+      const el = document.createElement('span')
+      el.textContent = 'Wide glyphs: Mmwq 0123 Loom Studio'
+      el.style.cssText = `position:absolute;visibility:hidden;font-size:40px;font-family:${family}`
+      document.body.appendChild(el)
+      const w = el.getBoundingClientRect().width
+      el.remove()
+      return w
+    }
+    const inter = probe('"Inter Variable", monospace')
+    const fallback = probe('monospace')
+    check('Inter actually draws the text', Math.abs(inter - fallback) > 20, `inter=${inter.toFixed(0)} fallback=${fallback.toFixed(0)}`)
+    const chrome = getComputedStyle(document.querySelector('.titlebar') ?? document.body).fontFamily
+    check('the chrome is set in Inter', /^"?Inter Variable"?,/.test(chrome), chrome)
+    const s62 = new EditorStore()
+    s62.addComponent('Label', s62.doc.root!, 10, 10, { text: 'Canvas type' })
+    const host = document.createElement('div')
+    host.className = 'surface'
+    document.body.appendChild(host)
+    const r62 = createRoot(host)
+    r62.render(renderNode({ doc: s62.doc, selected: new Set(), onPointerDownNode: () => undefined }, s62.doc.root!))
+    await new Promise((r) => setTimeout(r, 60))
+    const label = [...host.querySelectorAll<HTMLElement>('[data-loom-type="Label"]')][0]
+    const canvasFont = label ? getComputedStyle(label).fontFamily : 'missing'
+    check('the canvas keeps the export\'s type, not the Studio\'s', label !== undefined && !canvasFont.includes('Inter Variable'), canvasFont)
+    r62.unmount()
+    host.remove()
+    // And what a component inherits: the real surface and preview stage carry
+    // the theme's font, as the exported <body> does.
+    const surf = document.querySelector<HTMLElement>('.loom .surface')
+    check('the real canvas inherits the theme font, not the Studio font', surf !== null && !getComputedStyle(surf).fontFamily.includes('Inter Variable'), surf ? getComputedStyle(surf).fontFamily : 'no surface')
+  }
+
+  // --- 63. every tool has its own drawing ---------------------------------
+  // The toolbox used Unicode characters from the OS font: mixed sizes and
+  // baselines, some missing entirely. Every component now has a glyph drawn
+  // on the icon grid, and the real toolbox shows those, not characters.
+  {
+    const missing = allComponents().filter((c) => !hasOwnGlyph(c.name)).map((c) => c.name)
+    check('every component has a drawing of its own', missing.length === 0, missing.join(', '))
+    const tools = [...document.querySelectorAll<HTMLElement>('.toolbox .tool .tool-icon')]
+    const bare = tools.filter((t) => t.querySelector('svg') === null || (t.textContent ?? '').trim() !== '')
+    check('the real toolbox draws every tool icon as a glyph, not a character', tools.length > 50 && bare.length === 0, `tools=${tools.length} bare=${bare.length}`)
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

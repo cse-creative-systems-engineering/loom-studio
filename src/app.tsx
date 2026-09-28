@@ -19,6 +19,7 @@ import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { STARTERS, getStarter } from './model/starters'
 import { iconMarkup } from './render/icons'
+import { starterGlyph, toolGlyph } from './tool-icons'
 import { PreviewStage } from './preview'
 import { StatesPanel } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
@@ -30,6 +31,9 @@ import { VIEWPORTS, nodeBreakpoints } from './render/responsive'
 import { installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import { ContextMenu, type MenuState } from './context-menu'
 import { THEME_NAMES, getTheme } from './render/theme'
+// The Studio's own typeface, bundled (73KB latin, OFL). Optical sizing keeps
+// 11px labels open and 14px titles tight. The TOOL only: see --font.
+import '@fontsource-variable/inter/opsz.css'
 import './ui.css'
 import './chrome.css'
 
@@ -293,6 +297,26 @@ export function App() {
       </div>
       {menu && <ContextMenu s={s} state={menu} onClose={() => setMenu(null)} />}
     </div>
+  )
+}
+
+/** A tool's own drawing (toolbox, layers, inspector header). */
+function Glyph({ markup, size = 14 }: { markup: string; size?: number }) {
+  return (
+    <svg
+      className="ico glyph"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      // Compile-time constants from tool-icons.ts, never user input.
+      dangerouslySetInnerHTML={{ __html: markup }}
+    />
   )
 }
 
@@ -639,7 +663,7 @@ function Toolbox({
                     title={st.description}
                     onPointerDown={(e) => startDrag(e, STARTER_PREFIX + st.id)}
                   >
-                    <span className="tool-icon">{st.icon}</span>
+                    <span className="tool-icon"><Glyph markup={starterGlyph(st.id)} /></span>
                     <span className="tool-name">{st.label}</span>
                   </button>
                 ))}
@@ -662,7 +686,7 @@ function Toolbox({
                         title={tooltipText(c, s.target)}
                         onPointerDown={(e) => startDrag(e, c.name)}
                       >
-                        <span className="tool-icon">{c.icon}</span>
+                        <span className="tool-icon"><Glyph markup={toolGlyph(c.name, c.category)} /></span>
                         <span className="tool-name">{c.name}</span>
                         {gated.length > 0 && <span className="tool-gate" aria-label="not portable" />}
                       </button>
@@ -747,7 +771,7 @@ function LayerRow({ s, id, depth }: { s: EditorStore; id: NodeId; depth: number 
         }}
         title={`${node.type}${detail ? ` — ${detail}` : ''}`}
       >
-        <span className="tool-icon">{spec?.icon ?? '?'}</span>
+        <span className="tool-icon"><Glyph markup={toolGlyph(node.type, spec?.category)} size={13} /></span>
         <span className="tool-name">
           {node.type}
           {detail && <span className="layer-detail"> · {detail}</span>}
@@ -1165,7 +1189,7 @@ function Canvas({
               viewport's width, so where the artifact sits on it is visible. */}
           <div
             className={`stage ${CONTAINER_CLASS}`}
-            style={{ zoom, width: viewportWidth, maxWidth: '100%', minHeight: `calc((100vh - 122px) / ${zoom})`, background: getTheme(s.doc.meta.theme).bg, color: getTheme(s.doc.meta.theme).textPrimary }}
+            style={{ zoom, width: viewportWidth, maxWidth: '100%', minHeight: `calc((100vh - 122px) / ${zoom})`, background: getTheme(s.doc.meta.theme).bg, color: getTheme(s.doc.meta.theme).textPrimary, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
             data-viewport={viewport}
           >
             <PreviewStage s={s} />
@@ -1179,7 +1203,8 @@ function Canvas({
           data-zoom={Math.round(zoom * 100)}
           data-viewport={viewport}
           onPointerDown={() => s.select([])}
-          style={{ zoom, width: viewportWidth, maxWidth: '100%' }}
+          // The design's type, not the Studio's: what the export's body sets.
+          style={{ zoom, width: viewportWidth, maxWidth: '100%', fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
         >
           {s.doc.root !== null && (
             renderNode(
@@ -1337,7 +1362,7 @@ function Inspector({
   return (
     <aside className="inspector">
       <div className="insp-head">
-        <span className="insp-icon">{spec.icon}</span>
+        <span className="insp-icon"><Glyph markup={toolGlyph(spec.name, spec.category)} size={16} /></span>
         <div>
           <div className="insp-name">{spec.name}</div>
           <div className="insp-path">
