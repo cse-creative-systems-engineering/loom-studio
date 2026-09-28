@@ -228,7 +228,9 @@
 
 /* The artifact on its own, no editor chrome at all: what ships. */
 .canvas.previewing .stage { position: relative; }
-.canvas.previewing .preview-stage { position: relative; min-height: 200px; }
+/* The page fills the screen, as <body> does in an export: something docked
+   top-to-bottom is as tall as the screen, not as tall as its content. */
+.canvas.previewing .preview-stage { position: relative; height: var(--screen-h, 800px); }
 
 /* The screen the artifact runs on: a page with an edge, filling the height,
    so the artifact's own position on it reads as a layout, not as drift. */

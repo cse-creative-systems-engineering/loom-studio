@@ -1005,6 +1005,7 @@ function Canvas({
   // widest case) and narrows on demand, which is the only honest direction for
   // a tool whose base layout IS the desktop layout.
   const viewportWidth = VIEWPORTS.find((v) => v.id === viewport)?.width ?? 1280
+  const viewportHeight = VIEWPORTS.find((v) => v.id === viewport)?.height ?? 800
   // Snap guides (doc-unit coordinates) + live drag readout, both transient.
   const [guides, setGuides] = React.useState<{ x: number | null; y: number | null }>({ x: null, y: null })
   const [readout, setReadout] = React.useState<{ x: number; y: number; cx: number; cy: number } | null>(null)
@@ -1205,16 +1206,22 @@ function Canvas({
     return () => ro.disconnect()
   }, [gutter, onRoom])
 
-  // The artboard is as tall as its root reaches (never shorter than 460px):
-  // the root is positioned absolutely, so a tall page used to spill out of
-  // the bottom of a 460px board.
+  // Design and Preview draw the same screen: the viewport's height, or as
+  // far down as the root reaches if that is further (the root is positioned
+  // absolutely, so it cannot stretch the screen by itself). Measured on
+  // whichever surface is showing.
   const surfaceRef = React.useRef<HTMLDivElement | null>(null)
+  const stageRef = React.useRef<HTMLDivElement | null>(null)
   const [reach, setReach] = React.useState(0)
   React.useLayoutEffect(() => {
-    const el = surfaceRef.current?.querySelector<HTMLElement>(':scope > [data-loom-id]')
+    const el =
+      mode === 'preview'
+        ? stageRef.current?.querySelector<HTMLElement>('.preview-stage > *')
+        : surfaceRef.current?.querySelector<HTMLElement>(':scope > [data-loom-id]')
     const next = el ? el.offsetTop + el.offsetHeight : 0
     if (next !== reach) setReach(next)
   })
+  const screenHeight = Math.max(viewportHeight, reach)
 
   return (
     <main className="canvas-wrap" ref={wrapRef}>
@@ -1225,7 +1232,8 @@ function Canvas({
               viewport's width, so where the artifact sits on it is visible. */}
           <div
             className={`stage ${CONTAINER_CLASS}`}
-            style={{ zoom, width: viewportWidth, minHeight: `calc((100vh - 122px) / ${zoom})`, background: getTheme(s.doc.meta.theme).bg, color: getTheme(s.doc.meta.theme).textPrimary, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
+            ref={stageRef}
+            style={{ zoom, width: viewportWidth, height: screenHeight, ['--screen-h' as string]: `${screenHeight}px`, background: getTheme(s.doc.meta.theme).bg, color: getTheme(s.doc.meta.theme).textPrimary, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
             data-viewport={viewport}
           >
             <PreviewStage s={s} />
@@ -1250,7 +1258,7 @@ function Canvas({
           // Exactly the viewport's width, never squeezed to the canvas: the
           // zoom fits it instead, so positions match the preview.
           ref={surfaceRef}
-          style={{ zoom, width: viewportWidth, minHeight: Math.max(460, reach), fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
+          style={{ zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
         >
           {s.doc.root !== null && (
             renderNode(

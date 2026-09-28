@@ -154,10 +154,14 @@ export function responsiveCss(doc: Document): string {
  * CONTAINER widths, not window widths: the artboard is the thing being
  * measured.
  */
-export const VIEWPORTS: ReadonlyArray<{ id: Breakpoint; label: string; width: number }> = [
-  { id: 'sm', label: 'Phone', width: 390 },
-  { id: 'md', label: 'Tablet', width: 834 },
-  { id: 'lg', label: 'Desktop', width: 1280 },
+export const VIEWPORTS: ReadonlyArray<{ id: Breakpoint; label: string; width: number; height: number }> = [
+  // A viewport is a SCREEN, so it has a height too. Design and Preview both
+  // draw exactly this screen (growing only when the content is taller);
+  // with no height each had its own floor (460px, 200px) and anything docked
+  // top-to-bottom, like a sidebar, changed height between them.
+  { id: 'sm', label: 'Phone', width: 390, height: 844 },
+  { id: 'md', label: 'Tablet', width: 834, height: 1194 },
+  { id: 'lg', label: 'Desktop', width: 1280, height: 800 },
 ]
 
 /**

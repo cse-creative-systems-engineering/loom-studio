@@ -3565,6 +3565,36 @@ export async function runSelfTest(): Promise<string> {
       const width = (el.getBoundingClientRect().width - 2 * el.clientLeft * z) / z
       check(`the ${label} canvas is ${px}px wide`, Math.abs(width - px) <= 2, `${width.toFixed(1)}px at zoom ${z}`)
     }
+    // Shane: "the height of a component shrinks from design to preview, look
+    // at the chat sidebar". A docked sidebar is as tall as the screen it is
+    // docked to; the design board had a 460px floor and the preview page a
+    // 200px one, so it went 460 -> 200. Both are now the viewport's screen.
+    const mode = (m: string) => [...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === m)?.click()
+    for (const where of ['on its own', 'inside a Panel'] as const) {
+      const sc = new EditorStore()
+      if (where === 'inside a Panel') sc.dropComponent('Panel', null, 0, 0)
+      const side = sc.addStarter('chat-sidebar', sc.doc.root, 40, 40)!
+      const top = sc.doc.root!
+      app.loadDocument(sc.doc)
+      await wait()
+      const dz = zoomOf(document.querySelector<HTMLElement>('.surface')!)
+      const dSide = document.querySelector<HTMLElement>(`[data-loom-id="${side}"]`)!.getBoundingClientRect().height / dz
+      const dTop = document.querySelector<HTMLElement>(`[data-loom-id="${top}"]`)!.getBoundingClientRect().height / dz
+      mode('Preview')
+      await wait(250)
+      const st = document.querySelector<HTMLElement>('.canvas.previewing .stage')!
+      const pz = zoomOf(st)
+      const pTopEl = st.querySelector<HTMLElement>('.preview-stage > *')!
+      const pSideEl = where === 'on its own' ? pTopEl : [...pTopEl.querySelectorAll<HTMLElement>('[aria-label="Assistant"]')].find((e) => e.getBoundingClientRect().width > 200)!
+      const pSide = pSideEl.getBoundingClientRect().height / pz
+      const pTop = pTopEl.getBoundingClientRect().height / pz
+      mode('Design')
+      await wait()
+      check(`a docked sidebar ${where} is as tall in Preview as in Design`, Math.abs(dSide - pSide) <= 2, `design ${dSide.toFixed(0)} / preview ${pSide.toFixed(0)}`)
+      check(`its top-level node ${where} is as tall in Preview as in Design`, Math.abs(dTop - pTop) <= 2, `design ${dTop.toFixed(0)} / preview ${pTop.toFixed(0)}`)
+      if (where === 'on its own') check('docked to the screen, it is the screen\'s height', Math.abs(dSide - 800) <= 2, dSide.toFixed(0))
+    }
+
     // A root taller than the board's minimum stays inside it.
     const tall = new EditorStore()
     tall.addComponent('Panel', null, 0, 0, { w: 900, h: 1100 })

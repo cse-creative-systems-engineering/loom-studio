@@ -219,7 +219,6 @@ input, select { font-family: inherit; font-size: 12px; }
      min-width: a floor of 720px made the 390px phone a 720px phone. */
   box-sizing: content-box;
   flex: none;
-  min-height: 460px;
   border-radius: 12px;
   background-color: #12151d;
   background-image:
@@ -283,13 +282,6 @@ input, select { font-family: inherit; font-size: 12px; }
     0 24px 60px -24px rgba(0, 0, 0, 0.9);
 }
 
-/* The root fills the surface while authoring. It renders chromeless (see
-   renderNode's root branch) — this rule only guarantees size/positioning. */
-.surface > [data-loom-type='Panel'] {
-  min-height: 460px;
-  position: relative;
-  border-radius: 12px;
-}
 
 /* Empty workspace: no root exists yet, so the canvas says so instead of
    looking like a broken/immovable panel. This is the "drop your first
