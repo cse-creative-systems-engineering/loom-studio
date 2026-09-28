@@ -1,7 +1,7 @@
 import React from 'react'
 import { EditorStore, emptyDocument } from './state/store'
 import type { Breakpoint, Document, InteractionState, Node, NodeId, PropValue } from './model/types'
-import { ancestry, parentOf } from './model/ops'
+import { ancestry, descendants, parentOf } from './model/ops'
 import { snapMove as snapTo, artboardAnchors, type SnapBox } from './model/snap'
 import {
   componentsByCategory,
@@ -1092,18 +1092,110 @@ function Canvas({
       setGuides({ x: snapped.gx, y: snapped.gy })
       setReadout({ x: snapped.x, y: snapped.y, cx: ev.clientX, cy: ev.clientY })
       s.poke({ op: 'move', id: d.id, x: snapped.x, y: snapped.y })
+      // Show where a release would put it: the container it would join.
+      markDropHost(ev.shiftKey ? null : hostUnder(ev.clientX, ev.clientY, d.id))
     }
-    const onUp = () => {
+    const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       const d = dragRef.current
       dragRef.current = null
       setGuides({ x: null, y: null })
       setReadout(null)
-      if (d?.moved) s.seal('Move')
+      markDropHost(null)
+      if (!d?.moved) return
+      // Released over a container: it goes IN, keeping its place on screen.
+      // Holding Shift keeps it where it was in the tree, floating above.
+      const host = ev.shiftKey ? null : hostUnder(ev.clientX, ev.clientY, d.id)
+      if (host && host !== parentOf(s.doc, d.id)) {
+        const was = document.querySelector<HTMLElement>(`.surface [data-loom-id="${d.id}"]`)?.getBoundingClientRect()
+        const into = moveInto(d.id, host)
+        // Measure where it actually landed and take out any difference (a
+        // fieldset's legend, a header, a border the estimate cannot know),
+        // then seal: the whole drag is still one undo step.
+        requestAnimationFrame(() => {
+          const now = document.querySelector<HTMLElement>(`.surface [data-loom-id="${d.id}"]`)?.getBoundingClientRect()
+          const n = s.doc.nodes[d.id]
+          if (into && was && now && n && s.doc.nodes[host]?.flow !== true) {
+            const dx = Math.round(zoomed(was.left - now.left, zoom))
+            const dy = Math.round(zoomed(was.top - now.top, zoom))
+            if (dx !== 0 || dy !== 0) s.poke({ op: 'move', id: d.id, x: (Number(n.props.x) || 0) + dx, y: (Number(n.props.y) || 0) + dy })
+          }
+          s.seal(into ? `Move into ${s.doc.nodes[host]?.type ?? 'container'}` : 'Move')
+        })
+        return
+      }
+      s.seal('Move')
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+  }
+
+  /**
+   * The container a dragged node would join if released here: the deepest
+   * one under the pointer that is not the node itself or inside it, and that
+   * accepts it (a Tabs only takes tabs). Null over empty canvas.
+   */
+  const hostUnder = (x: number, y: number, dragged: NodeId): NodeId | null => {
+    const node = s.doc.nodes[dragged]
+    if (!node) return null
+    const own = new Set([dragged, ...descendants(s.doc, dragged)])
+    const draggedEl = document.querySelector(`.surface [data-loom-id="${dragged}"]`)
+    for (const el of document.elementsFromPoint(x, y)) {
+      // The node itself is under the pointer; look through it. (Its DOM
+      // ancestors are its CURRENT parents, wherever the pointer now is.)
+      if (draggedEl?.contains(el)) continue
+      const c = (el as HTMLElement).closest?.('.surface [data-loom-container="true"]') as HTMLElement | null
+      const id = c?.dataset.loomId
+      if (!id || own.has(id)) continue
+      const host = s.doc.nodes[id]
+      if (!host) continue
+      if (getComponent(host.type)?.childTypes && !acceptsChild(host.type, node.type)) {
+        // A tab set takes tabs, not buttons: a button dropped on it belongs in
+        // the tab you are looking at (the first shown section that takes it).
+        const shown = host.children.find((cid) => {
+          const kid = s.doc.nodes[cid]
+          const kel = document.querySelector<HTMLElement>(`.surface [data-loom-id="${cid}"]`)
+          return !!kid && !own.has(cid) && getComponent(kid.type)?.container === true && acceptsChild(kid.type, node.type) && !!kel && kel.getClientRects().length > 0
+        })
+        if (shown) return shown
+        continue
+      }
+      return id
+    }
+    return null
+  }
+
+  /** Mark the would-be container on the canvas (editor chrome, never output). */
+  const markDropHost = (id: NodeId | null) => {
+    for (const el of document.querySelectorAll('[data-drop-host]')) el.removeAttribute('data-drop-host')
+    if (id) document.querySelector(`.surface [data-loom-id="${id}"]`)?.setAttribute('data-drop-host', 'true')
+  }
+
+  /**
+   * Re-parent a free node into `host` without it jumping: its new x/y are
+   * where it already is, measured from the host's inner edge. In a flow host
+   * it joins the end of the flow. Poked, so the caller seals ONE undo step
+   * for the whole drag.
+   */
+  const moveInto = (id: NodeId, host: NodeId): boolean => {
+    const el = document.querySelector<HTMLElement>(`.surface [data-loom-id="${id}"]`)
+    const hostEl = document.querySelector<HTMLElement>(`.surface [data-loom-id="${host}"]`)
+    const before = parentOf(s.doc, id)
+    if (!el || !hostEl) return false
+    const r = el.getBoundingClientRect()
+    const hr = hostEl.getBoundingClientRect()
+    s.poke({ op: 'reparent', id, parent: host, index: s.doc.nodes[host]?.children.length ?? 0 })
+    if (parentOf(s.doc, id) === before) return false
+    if (s.doc.nodes[host]?.flow !== true) {
+      s.poke({
+        op: 'move',
+        id,
+        x: Math.round(zoomed(r.left - hr.left, zoom) - hostEl.clientLeft),
+        y: Math.round(zoomed(r.top - hr.top, zoom) - hostEl.clientTop),
+      })
+    }
+    return true
   }
 
   /** Corner-handle resize. Same transient contract as move: poke, then seal. */

@@ -71,17 +71,19 @@ async function waitFor(fn, timeoutMs, label) {
     await sleep(500)
   }
 }
-async function drag(ws, x0, y0, x1, y1, stepsN = 12) {
+// `held` = modifier keys held while moving and on release (8 = Shift),
+// the way a person presses Shift partway through a drag.
+async function drag(ws, x0, y0, x1, y1, stepsN = 12, held = 0) {
   await rpc(ws, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: x0, y: y0, button: 'left', clickCount: 1 })
   await sleep(150)
   for (let i = 1; i <= stepsN; i++) {
     const x = x0 + ((x1 - x0) * i) / stepsN
     const y = y0 + ((y1 - y0) * i) / stepsN
-    await rpc(ws, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left' })
+    await rpc(ws, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', modifiers: held })
     await sleep(30)
   }
   await sleep(150)
-  await rpc(ws, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: x1, y: y1, button: 'left', clickCount: 1 })
+  await rpc(ws, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: x1, y: y1, button: 'left', clickCount: 1, modifiers: held })
   await sleep(600)
 }
 
@@ -205,6 +207,84 @@ try {
   )
   step('hover outlines only the element under the pointer',
     outlined.length === 1 && outlined[0] === 'Gauge', JSON.stringify(outlined))
+
+  // Dropping onto a container puts the node INSIDE it (Shane: "moving items
+  // into group boxes just sits them over it"); Shift on release keeps it
+  // outside, floating above. Real pointer, fresh scene.
+  const sc = await evaluate(
+    ews,
+    `(() => { const s = window.__loomStore;
+      s.loadDocument({ version: 1, meta: { name: 'into', targets: ['web'], created: 0 }, root: null, nodes: {} });
+      s.addComponent('Panel', null, 0, 0, { w: 1280, h: 800 });
+      const root = s.doc.root;
+      const box = s.dropComponent('GroupBox', root, 500, 120);
+      const a = s.dropComponent('Button', root, 80, 80);
+      const b = s.dropComponent('Button', root, 80, 400);
+      s.select([]);
+      return { root, box, a, b }; })()`,
+  )
+  await sleep(600)
+  const box = async (id) =>
+    evaluate(ews, '(() => { const r = document.querySelector(\'.surface [data-loom-id="' + id + '"]\').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 } })()')
+  const parent = async (id) =>
+    evaluate(ews, '(() => { const d = window.__loomStore.doc; return Object.keys(d.nodes).find((k) => d.nodes[k].children.includes("' + id + '")) })()')
+  const hist = async () => evaluate(ews, 'window.__loomStore.history.length')
+
+  const gb = await box(sc.box)
+  const a0 = await box(sc.a)
+  const hBefore = await hist()
+  const tx = gb.x + gb.w * 0.4, ty = gb.y + gb.h * 0.55
+  await drag(ews, a0.cx, a0.cy, tx, ty)
+  const a1 = await box(sc.a)
+  step('dropped on a GroupBox, it goes inside it', (await parent(sc.a)) === sc.box, `parent ${await parent(sc.a)}`)
+  step('and stays where it was dropped', Math.abs(a1.cx - tx) <= 4 && Math.abs(a1.cy - ty) <= 4, `centre (${a1.cx.toFixed(0)},${a1.cy.toFixed(0)}) vs drop (${tx.toFixed(0)},${ty.toFixed(0)})`)
+  step('moving in is one undo step', (await hist()) === hBefore + 1, `${hBefore} -> ${await hist()}`)
+
+  const b0 = await box(sc.b)
+  await drag(ews, b0.cx, b0.cy, gb.x + gb.w * 0.6, gb.y + gb.h * 0.3, 12, 8)
+  step('with Shift held on release, it stays outside, above', (await parent(sc.b)) === sc.root, `parent ${await parent(sc.b)}`)
+
+  const a2 = await box(sc.a)
+  await drag(ews, a2.cx, a2.cy, gb.x - 200, gb.y + gb.h + 120)
+  step('dragged back out onto the page, it leaves the GroupBox', (await parent(sc.a)) === sc.root, `parent ${await parent(sc.a)}`)
+
+  // Every container, not just GroupBox: drop a Button on each and check it
+  // lands inside (containers that only take one kind of child, like Tabs,
+  // are skipped: a Button is not a tab).
+  const kinds = await evaluate(
+    ews,
+    `(() => { const seen = new Set(); return [...document.querySelectorAll('.toolbox .tool .tool-name')].map((e) => e.textContent.trim()).filter((n) => !/ /.test(n) && !seen.has(n) && seen.add(n)) })()`,
+  )
+  const refused = []
+  let tried = 0
+  for (const kind of kinds) {
+    const made = await evaluate(
+      ews,
+      `(() => { const s = window.__loomStore;
+        s.loadDocument({ version: 1, meta: { name: 'k', targets: ['web', 'desktop'], created: 0 }, root: null, nodes: {} });
+        s.addComponent('Panel', null, 0, 0, { w: 1280, h: 800 });
+        const root = s.doc.root;
+        const c = s.dropComponent(${JSON.stringify(kind)}, root, 420, 140);
+        // A tab set or an accordion takes only its own sections; the Button
+        // belongs INSIDE one of those, so give it one to land in.
+        const inner = { Tabs: 'TabPanel', Accordion: 'AccordionItem' }[${JSON.stringify(kind)}];
+        const into = inner ? s.addComponent(inner, c, 0, 0) : c;
+        const b = s.dropComponent('Button', root, 40, 40);
+        s.select([]);
+        return { c, b, root, into }; })()`,
+    )
+    await sleep(250)
+    const isHost = await evaluate(ews, `document.querySelector('.surface [data-loom-id="${made.c}"]')?.dataset.loomContainer === 'true'`)
+    if (!isHost) continue
+    const hostBox = await box(made.c)
+    const b0 = await box(made.b)
+    const tx = hostBox.x + Math.min(40, hostBox.w / 2), ty = hostBox.y + hostBox.h - Math.min(20, hostBox.h / 2)
+    await drag(ews, b0.cx, b0.cy, tx, ty, 8)
+    tried++
+    const p = await parent(made.b)
+    if (p !== made.into) refused.push(`${kind} (in ${p === made.root ? 'the page' : p})`)
+  }
+  step(`a drop goes inside every container (${tried} tried)`, tried > 20 && refused.length === 0, refused.join(', '))
 
   ews.close()
 } catch (e) {
