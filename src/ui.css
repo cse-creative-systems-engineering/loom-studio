@@ -323,6 +323,15 @@ input, select { font-family: inherit; font-size: 12px; }
   cursor: grabbing;
 }
 
+/* An empty container: a faint dashed edge so a split, a button group or an
+   accordion that paints nothing is still there to see, find and drop into.
+   Design-time only (the attribute is never rendered into the output), and
+   deliberately weaker than hover and selection so both still win. */
+.surface [data-loom-vacant='true'] {
+  outline: 1px dashed rgba(150, 162, 190, 0.38);
+  outline-offset: -1px;
+}
+
 /* Hover: a faint selection-hue outline on the INNERMOST element under the
    pointer only. Plain :hover also matches every ancestor, which drew the
    element, its card and its panel at once. */

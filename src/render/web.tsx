@@ -5411,6 +5411,11 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     'data-selected': ctx.selected.has(id) ? 'true' : 'false',
     // Marks a drop target, so a component can be dropped INTO a container.
     'data-loom-container': isContainer ? 'true' : 'false',
+    // An empty container that paints no surface of its own (a split, a
+    // button group, an accordion) is invisible once dropped, so the canvas
+    // outlines it until something is inside, as a form designer does.
+    // Authoring only: the output never carries this.
+    'data-loom-vacant': isContainer && node.children.length === 0 ? 'true' : 'false',
     'data-loom-hidden': node.visible === false ? 'true' : 'false',
     'data-loom-locked': node.locked === true ? 'true' : 'false',
     ...(ctx.forceState?.id === id ? { [FORCE_ATTR]: ctx.forceState.state } : {}),

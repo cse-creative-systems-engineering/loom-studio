@@ -4104,6 +4104,30 @@ export async function runSelfTest(): Promise<string> {
     check('a ComboBox shows one chevron, not the browser\'s list arrow too', indicator === 'none', indicator)
   }
 
+  // --- 92. an empty container is visible on the canvas ---------------------
+  // A split, a button group or an accordion paints no surface of its own, so
+  // once dropped it was invisible: nothing to see, find or drop into. The
+  // real canvas outlines an empty container; the outline goes the moment it
+  // has a child, and never reaches the output.
+  {
+    const app = window.__loomStore
+    const before = app.doc
+    const scene = new EditorStore()
+    const root92 = withRoot(scene)
+    const split = scene.addComponent('SplitH', root92, 20, 20, { w: 360, h: 220 })!
+    const group = scene.addComponent('ButtonGroup', root92, 20, 280, { w: 240, h: 48 })!
+    scene.addComponent('Button', group, 0, 0)
+    app.loadDocument(scene.doc)
+    await new Promise((r) => setTimeout(r, 120))
+    const at = (id: string) => document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${id}"]`)
+    const edge = (id: string) => { const el = at(id); return el ? getComputedStyle(el).outlineStyle : 'missing' }
+    const why = (id: string) => { const el = at(id); return el ? `vacant=${el.getAttribute('data-loom-vacant')} inline=${el.style.outline}` : 'missing' }
+    check('an empty container is outlined on the canvas', edge(split) === 'dashed', `${edge(split)} ${why(split)}`)
+    check('a container with something in it is not', edge(group) === 'none', edge(group))
+    check('the outline never reaches the output', !emitHtml(scene.doc).includes('data-loom-vacant'))
+    app.loadDocument(before)
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {
