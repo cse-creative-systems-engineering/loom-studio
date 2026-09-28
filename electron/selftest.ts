@@ -2752,6 +2752,49 @@ export async function runSelfTest(): Promise<string> {
     check('every preset produces real rules', STATE_PRESETS.length >= 4 && presetProblems.length === 0, presetProblems.join(', '))
   }
 
+  // --- 53. a node id is data, never stylesheet text ------------------------
+  // Generated rules address nodes by id, and the file loader accepts any
+  // string as an id. The colour grammar closed values; this closes selectors.
+  {
+    const evil = 'x"],*{color:red}</style><script>alert(1)</script><style>[a="'
+    const file = {
+      version: 1,
+      meta: { name: 'ids', targets: ['web'], created: 0 },
+      root: 'r',
+      nodes: {
+        r: { id: 'r', type: 'Panel', props: {}, children: [evil], flow: false, visible: true, locked: false, opacity: 1 },
+        [evil]: {
+          id: evil, type: 'Button', props: { label: 'Hostile' }, children: [], flow: false, visible: true, locked: false, opacity: 1,
+          states: { hover: { background: '#123456' } }, responsive: { sm: { opacity: 0.5 } },
+        },
+      },
+    }
+    const loaded = validate(JSON.stringify(file))
+    const doc53 = loaded.doc
+    const css53 = doc53 ? documentCss(doc53) : ''
+    check('a hostile node id cannot close a generated rule or the style element',
+      doc53 !== null && !css53.includes('</style') && !css53.includes('*{color:red}') && !emitHtml(doc53).includes('<script>alert(1)'),
+      css53.slice(0, 160))
+    // The escaped selector must still MATCH the node, or the fix just
+    // switched the feature off for unusual ids.
+    let matched = 'no doc'
+    if (doc53) {
+      const style = document.createElement('style')
+      style.textContent = documentCss(doc53)
+      document.head.appendChild(style)
+      const host = document.createElement('div')
+      host.className = 'loom-container'
+      host.style.cssText = 'position:absolute;left:-10000px;top:0;width:390px;height:400px'
+      host.innerHTML = renderToStaticMarkup(renderNode({ doc: doc53, selected: new Set(), mode: 'preview' }, 'r'))
+      document.body.appendChild(host)
+      const btn = host.querySelector('button')
+      matched = btn ? getComputedStyle(btn).opacity : 'missing'
+      host.remove()
+      style.remove()
+    }
+    check('an unusual node id is still addressed by its rules', matched === '0.5', matched)
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

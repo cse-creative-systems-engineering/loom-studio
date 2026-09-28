@@ -41,7 +41,24 @@ export const OUTPUT_HOOK = 'data-loom-node'
  * by its editor id, the preview and exports by the output hook.
  */
 export function nodeSelector(id: string): string {
-  return `:is([data-loom-id="${id}"],[${OUTPUT_HOOK}="${id}"])`
+  const q = cssString(id)
+  return `:is([data-loom-id=${q}],[${OUTPUT_HOOK}=${q}])`
+}
+
+/**
+ * Any string as a quoted CSS string that can carry nothing but itself.
+ *
+ * Node ids come from files, and a file can name a node anything, so an id
+ * written into a stylesheet raw could close its rule, or the `<style>` element
+ * of an HTML export, and inject whatever followed. Every character outside
+ * `[A-Za-z0-9_-]` becomes a CSS hex escape, which the selector engine decodes
+ * back to the same character, so the rule still matches the real attribute.
+ */
+export function cssString(value: string): string {
+  const body = Array.from(value, (ch) =>
+    /^[A-Za-z0-9_-]$/.test(ch) ? ch : `\\${(ch.codePointAt(0) as number).toString(16)} `,
+  ).join('')
+  return `"${body}"`
 }
 
 /** The name of the container every responsive document establishes. */
