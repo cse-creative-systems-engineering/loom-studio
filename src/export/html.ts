@@ -27,6 +27,8 @@ import { documentCss } from '../render/document-css'
 import { resolveTheme } from '../render/theme'
 import type { Document } from '../model/types'
 import { fontFaceCss } from '../render/fonts'
+import { AuroraBackdrop, auroraCss } from '../render/aurora'
+import { createElement } from 'react'
 
 /** `My App / v2.0!` -> `my-app-v2-0.html`. Mirrors `persist.filenameFor`. */
 export function exportFilenameFor(name: string): string {
@@ -62,6 +64,8 @@ export function emitHtml(doc: Document): string {
       ? ''
       : renderToStaticMarkup(renderNode({ doc, selected: new Set(), mode: 'preview', theme }, doc.root))
   const title = escapeHtml(doc.meta.name || 'Untitled')
+  // The aurora page travels with the export, after the design (see AuroraBackdrop).
+  const aurora = doc.meta.page?.background === 'aurora' ? renderToStaticMarkup(createElement(AuroraBackdrop, { theme })) : ''
   // Page fill applies ONLY to a root the user left untouched: unsized and at
   // the origin. Such a root is the canvas, so on a real page it must BE the
   // page. The moment the user sizes or moves it, it is a designed element and
@@ -90,8 +94,9 @@ export function emitHtml(doc: Document): string {
 html,body{margin:0;padding:0}
 /* The output typeface, embedded: the page looks the same on every machine. */
 ${fontFaceCss()}
+${doc.meta.page?.background === 'aurora' ? auroraCss() : ''}
 body{${pageBg ? `background:${pageBg};` : ''}color:${theme.textPrimary};font-family:${theme.fontFamily}}
-.loom-export{position:relative;min-height:100vh;width:100%}
+.loom-export{position:relative;isolation:isolate;min-height:100vh;width:100%}
 ${pageFill}
 /* Built-in control behaviour: the same state rules the editor preview uses. */
 ${behaviourCss()}
@@ -100,7 +105,7 @@ ${documentCss(doc, theme)}
 </style>
 </head>
 <body>
-<div class="loom-export loom-container">${body}</div>
+<div class="loom-export loom-container">${body}${aurora}</div>
 <!-- Built-in control behaviour. Inline and dependency-free on purpose: an
      exported document must work by opening the file, with no network. -->
 <script>${behaviourRuntime()}</script>

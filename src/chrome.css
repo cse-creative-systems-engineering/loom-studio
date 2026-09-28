@@ -493,3 +493,8 @@
 .tb-run:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); }
 .tb-run:disabled { opacity: 0.4; cursor: default; }
 .tb-run.on { color: #fff; background: #d6433b; border-color: transparent; }
+
+/* Page background: four choices on their own row, sharing it evenly. */
+.field.stack { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
+.field.stack > :nth-child(n + 2) { grid-column: 1; }
+.page-seg button { flex: 1; min-width: 0; }

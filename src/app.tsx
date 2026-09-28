@@ -17,6 +17,7 @@ import { tooltipText } from './model/tooltip'
 import { inspectorView, propLabel } from './model/inspector-view'
 import { GROUP_ORDER } from './model/prop-groups'
 import { pageFill, MAX_PAGE_BLUR } from './model/page'
+import { AuroraBackdrop } from './render/aurora'
 import type { RunTarget } from './model/desktop-run'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
@@ -1397,6 +1398,7 @@ function Canvas({
   // What is behind the UI (Page, in the inspector with nothing selected).
   const fill = pageFill(s.doc.meta.page, getTheme(s.doc.meta.theme).bg)
   const blur = s.doc.meta.page?.blur ?? 0
+  const aurora = s.doc.meta.page?.background === 'aurora'
 
   return (
     <main className="canvas-wrap" ref={wrapRef}>
@@ -1420,10 +1422,12 @@ function Canvas({
               backdropFilter: blur ? `blur(${blur}px)` : undefined,
               color: getTheme(s.doc.meta.theme).textPrimary,
               fontFamily: getTheme(s.doc.meta.theme).fontFamily,
+              isolation: 'isolate',
             }}
             data-viewport={viewport}
           >
             <PreviewStage s={s} />
+            {aurora && <AuroraBackdrop theme={getTheme(s.doc.meta.theme)} />}
           </div>
         </div>
       )}
@@ -1445,7 +1449,7 @@ function Canvas({
           // Exactly the viewport's width, never squeezed to the canvas: the
           // zoom fits it instead, so positions match the preview.
           ref={surfaceRef}
-          style={{ zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily, ...(fill ? { backgroundColor: fill } : {}) }}
+          style={{ zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily, isolation: 'isolate', ...(fill ? { backgroundColor: fill } : {}) }}
         >
           {s.doc.root !== null && (
             renderNode(
@@ -1469,6 +1473,7 @@ function Canvas({
               </div>
             </div>
           )}
+          {aurora && <AuroraBackdrop theme={getTheme(s.doc.meta.theme)} />}
           {guides.x !== null && <div className="snap-guide-v" style={{ left: guides.x }} aria-hidden="true" />}
           {guides.y !== null && <div className="snap-guide-h" style={{ top: guides.y }} aria-hidden="true" />}
           {slot &&
@@ -2003,10 +2008,10 @@ function PagePanel({ s }: { s: EditorStore }) {
   return (
     <section className="page-panel">
       <h3>Page</h3>
-      <div className="field">
+      <div className="field stack">
         <label title="What is drawn behind the UI">Background</label>
         <div className="seg page-seg" role="group" aria-label="Page background">
-          {(['none', 'theme', 'color'] as const).map((m) => (
+          {(['none', 'theme', 'aurora', 'color'] as const).map((m) => (
             <button
               key={m}
               type="button"
@@ -2016,7 +2021,7 @@ function PagePanel({ s }: { s: EditorStore }) {
                 set(m === 'none' ? (page?.blur ? { background: 'none', blur: page.blur } : null) : { background: m, color: m === 'color' ? joinColour(hex, alpha) : page?.color, blur: page?.blur }, `Page: ${m}`)
               }
             >
-              {m === 'none' ? 'None' : m === 'theme' ? 'Theme' : 'Colour'}
+              {m === 'none' ? 'None' : m === 'theme' ? 'Theme' : m === 'aurora' ? 'Aurora' : 'Colour'}
             </button>
           ))}
         </div>
@@ -2046,7 +2051,9 @@ function PagePanel({ s }: { s: EditorStore }) {
             ? blurNative
               ? 'See-through. Blur softens what shows behind it, including your desktop in the popped-out preview.'
               : 'See-through. Your desktop shows behind it in the popped-out preview; blurring the desktop needs Windows or macOS.'
-            : 'Painted behind the whole UI, in exports too.'}
+            : mode === 'aurora'
+              ? "The theme's colours drift slowly behind the UI. Glass surfaces show them through. Still for anyone who asks their system for less motion."
+              : 'Painted behind the whole UI, in exports too.'}
       </p>
     </section>
   )

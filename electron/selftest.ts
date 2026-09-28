@@ -4133,6 +4133,41 @@ export async function runSelfTest(): Promise<string> {
     app.loadDocument(before)
   }
 
+  // --- 93. the aurora page: colour wandering behind the UI -----------------
+  // Glass is only as good as what is behind it. The aurora page draws the
+  // theme's colours as large soft blobs on long, unrelated paths, behind the
+  // design, on the real canvas and in the export alike; still for anyone who
+  // asks for less motion.
+  {
+    check('a page can be aurora', cleanPage({ background: 'aurora' })?.background === 'aurora')
+    const app = window.__loomStore
+    const before = app.doc
+    const scene = new EditorStore()
+    const root93 = withRoot(scene)
+    const label = scene.addComponent('Heading', root93, 40, 40, { text: 'Over the aurora' })!
+    scene.commit({ op: 'setPage', page: { background: 'aurora' } }, 'Page')
+    app.loadDocument(scene.doc)
+    await new Promise((r) => setTimeout(r, 150))
+    const layer = document.querySelector<HTMLElement>('.loom .surface [data-loom-aurora]')
+    const blobs = layer ? [...layer.querySelectorAll<HTMLElement>('[data-loom-blob]')] : []
+    const anims = blobs.map((b) => getComputedStyle(b))
+    check('the canvas draws the aurora behind the design', layer !== null && blobs.length >= 4, `blobs=${blobs.length}`)
+    check('every blob wanders, on its own clock', anims.length >= 4 && anims.every((a) => a.animationName.startsWith('loom-wander-')) &&
+      new Set(anims.map((a) => a.animationDuration)).size === anims.length, anims.map((a) => `${a.animationName}/${a.animationDuration}`).join(' '))
+    const headEl = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${label}"]`)
+    const hb = headEl?.getBoundingClientRect()
+    const hit = hb ? document.elementFromPoint(hb.left + hb.width / 2, hb.top + hb.height / 2) : null
+    check('the design paints above the aurora', headEl !== null && hit !== null && (hit === headEl || headEl.contains(hit)), hit ? hit.tagName : 'nothing')
+    const still = [...document.styleSheets].some((sh) => [...sh.cssRules].some((r) =>
+      r instanceof CSSMediaRule && r.conditionText.includes('prefers-reduced-motion') && r.cssText.includes('data-loom-blob')))
+    check('the aurora holds still for reduced motion', still)
+    const html93 = emitHtml(scene.doc)
+    check('the export carries the aurora and its motion', html93.includes('data-loom-aurora') && html93.includes('@keyframes loom-wander-1'))
+    scene.commit({ op: 'setPage', page: { background: 'theme' } }, 'Page')
+    check('a plain page exports no aurora', !emitHtml(scene.doc).includes('loom-wander'))
+    app.loadDocument(before)
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

@@ -40,6 +40,16 @@ export interface Theme {
    */
   colorScheme: 'dark' | 'light'
 
+  /**
+   * The aurora page's colours (render/aurora.tsx): four hues that drift
+   * behind the UI, how strongly they show, and how they meet the page. On a
+   * dark page `screen` makes them light; on a light page they are pastel and
+   * simply laid over it.
+   */
+  aurora: string[]
+  auroraOpacity: number
+  auroraBlend: 'screen' | 'normal'
+
   /* surfaces */
   bg: string
   surface: string
@@ -107,6 +117,9 @@ const BASE: Theme = {
   warning: '#d9a13a',
 
   colorScheme: 'dark',
+  aurora: ['#4f46e5', '#7c3aed', '#0891b2', '#be185d'],
+  auroraOpacity: 0.55,
+  auroraBlend: 'screen',
   bg: '#0b0d13',
   surface: '#151a26',
   surfaceGlass: 'rgba(24, 29, 44, 0.66)',
@@ -167,6 +180,9 @@ const DAYLIGHT: Theme = {
   accentHover: '#1f4bc4',
   textOnAccent: '#ffffff',
   colorScheme: 'light',
+  aurora: ['#c7d2fe', '#ddd6fe', '#bae6fd', '#fbcfe8'],
+  auroraOpacity: 0.85,
+  auroraBlend: 'normal',
   bg: '#f6f7f9',
   surface: '#ffffff',
   surfaceGlass: 'rgba(255, 255, 255, 0.78)',
@@ -187,6 +203,8 @@ const CONTRAST: Theme = {
   accent: '#7ea6ff',
   accentHover: '#9dbcff',
   textOnAccent: '#0a0f1c',
+  // Contrast keeps its colour quieter: the text above it comes first.
+  auroraOpacity: 0.32,
   bg: '#000000',
   surface: '#0d1017',
   surfaceGlass: 'rgba(18, 22, 32, 0.9)',
