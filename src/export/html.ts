@@ -26,6 +26,7 @@ import { behaviourCss, behaviourRuntime } from '../render/behaviour'
 import { documentCss } from '../render/document-css'
 import { resolveTheme } from '../render/theme'
 import type { Document } from '../model/types'
+import { fontFaceCss } from '../render/fonts'
 
 /** `My App / v2.0!` -> `my-app-v2-0.html`. Mirrors `persist.filenameFor`. */
 export function exportFilenameFor(name: string): string {
@@ -87,6 +88,8 @@ export function emitHtml(doc: Document): string {
 <style>
 *,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;padding:0}
+/* The output typeface, embedded: the page looks the same on every machine. */
+${fontFaceCss()}
 body{${pageBg ? `background:${pageBg};` : ''}color:${theme.textPrimary};font-family:${theme.fontFamily}}
 .loom-export{position:relative;min-height:100vh;width:100%}
 ${pageFill}
