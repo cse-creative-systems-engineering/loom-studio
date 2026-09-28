@@ -151,6 +151,23 @@ function snapshot(s: EditorStore) {
 export async function runSelfTest(): Promise<string> {
   const s = new EditorStore()
 
+  // --- 0. the canvas has the output's state stylesheet from the start ---
+  // FIRST, before anything opens a preview: the sheet used to arrive only
+  // with the docked preview, so until then a Switch drew its knob with no
+  // track (in the canvas, the toolbox cards and the specimen board alike).
+  {
+    const host0 = document.createElement('div')
+    document.body.appendChild(host0)
+    const r0 = createRoot(host0)
+    r0.render(React.createElement(ToolThumb, { tool: { type: 'Switch' }, theme: 'midnight' }))
+    await new Promise((r) => setTimeout(r, 60))
+    const track = host0.querySelector<HTMLElement>('[data-loom-track]')
+    const bg = track ? getComputedStyle(track).backgroundColor : 'missing'
+    r0.unmount()
+    host0.remove()
+    check('a Switch draws its track before any preview has opened', bg !== 'missing' && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent', bg)
+  }
+
   // --- 1. drop a component with declared defaults applied ---
   const btn = s.addComponent('Button', withRoot(s), 40, 60)
   check('drop returns an id', Boolean(btn), String(btn))
@@ -2346,10 +2363,9 @@ export async function runSelfTest(): Promise<string> {
     check('the card shows the value', html.includes('$48.2k'))
     check('the card shows the comparison', html.includes('+12.4%'))
     check('the card says what the comparison is against', html.includes('vs last month'))
-    check('the card draws exactly one visual', (() => {
-      const svgs = (html.match(/<svg/g) ?? []).length
-      return svgs === 1
-    })(), `${(html.match(/<svg/g) ?? []).length} svgs`)
+    // A trend mark is an icon beside the delta, not the card's visual.
+    const visuals = (h: string) => (h.match(/<svg/g) ?? []).length - (h.match(/data-loom-trend/g) ?? []).length
+    check('the card draws exactly one visual', visuals(html) === 1, `${visuals(html)} visuals`)
 
     // Colour follows GOODNESS, not direction. This is the whole reason
     // `goodDirection` exists: a falling error rate is good news.
@@ -2375,9 +2391,9 @@ export async function runSelfTest(): Promise<string> {
     // The visual is a CHOICE, and "none" is a real answer.
     if (kpi) {
       s46.commit({ op: 'setProp', id: kpi, key: 'visual', value: 'none' }, 'Visual')
-      check('a card can carry no visual at all', (emitHtml(s46.doc).match(/<svg/g) ?? []).length === 0)
+      check('a card can carry no visual at all', visuals(emitHtml(s46.doc)) === 0)
       s46.commit({ op: 'setProp', id: kpi, key: 'visual', value: 'bars' }, 'Visual')
-      check('a card can carry bars instead', (emitHtml(s46.doc).match(/<svg/g) ?? []).length === 0 &&
+      check('a card can carry bars instead', visuals(emitHtml(s46.doc)) === 0 &&
         emitHtml(s46.doc).includes('border-radius:2px'))
       s46.undo()
     }
@@ -3987,6 +4003,129 @@ export async function runSelfTest(): Promise<string> {
     check('centre and fill', eq(at('center'), { x: 780, y: 354, width: 360, height: 400 }) && eq(at('fill'), work))
     check('undocked keeps its own place, on the screen', eq(at('none', 360, 400, 100, 50), { x: 100, y: 77, width: 360, height: 400 }) && at('none', 360, 400, 5000, 5000).x === 1560)
     check('never bigger than the usable screen', at('left', 9999, 9999).width === 1920 && at('center', 9999, 9999).height === 1053)
+  }
+
+  // --- 90. checkbox, radio and select are drawn, not left to the OS -------
+  // A white OS square on a dark design (and a different one per platform)
+  // was one of the loudest "home made" tells. The native input stays for
+  // forms, keyboard and assistive tech, hidden; a themed box is drawn from
+  // its state by the shared stylesheet. Measured live, in the output.
+  {
+    installBehaviourRuntime()
+    const s90 = new EditorStore()
+    const root90 = withRoot(s90)
+    s90.addComponent('Checkbox', root90, 0, 0, { checked: true })
+    s90.addComponent('RadioGroup', root90, 0, 60)
+    s90.addComponent('Select', root90, 0, 120)
+    s90.addComponent('DataGrid', root90, 0, 200)
+    const host = document.createElement('div')
+    host.id = 'selftest-90'
+    host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:700px;z-index:99999'
+    document.body.appendChild(host)
+    // The test window is hidden, so transitions never advance: without this
+    // a colour reads as its pre-click value forever.
+    const still = document.createElement('style')
+    still.textContent = '#selftest-90 *{transition:none !important}'
+    document.head.appendChild(still)
+    const r90 = createRoot(host)
+    const theme = getTheme('midnight')
+    r90.render(renderNode({ doc: s90.doc, selected: new Set(), mode: 'preview', theme }, s90.doc.root!))
+    await new Promise((r) => setTimeout(r, 80))
+    const rgb = (hex: string) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`
+    const cbInput = host.querySelector<HTMLInputElement>('input[type=checkbox]')
+    const cbBox = cbInput?.nextElementSibling as HTMLElement | null
+    check('a checkbox hides the OS control and draws its own box', cbInput !== null && getComputedStyle(cbInput).opacity === '0' && cbBox?.hasAttribute('data-loom-box') === true,
+      cbInput ? `opacity=${getComputedStyle(cbInput).opacity} next=${cbBox?.outerHTML.slice(0, 40)}` : 'no input')
+    const boxBg = () => (cbBox ? getComputedStyle(cbBox).backgroundColor : 'none')
+    check('a checked box is filled with the accent', boxBg() === rgb(theme.accent), boxBg())
+    cbBox?.click()
+    await new Promise((r) => setTimeout(r, 30))
+    check('clicking the drawn box unchecks the real input', cbInput?.checked === false && boxBg() === rgb(theme.surface), `checked=${cbInput?.checked} bg=${boxBg()}`)
+    const radios = [...host.querySelectorAll<HTMLInputElement>('input[type=radio][data-loom-ctl]')]
+    const radioOn = radios.find((r) => r.checked)
+    check('a radio group draws its rings, the chosen one in the accent', radios.length >= 2 && radioOn !== undefined &&
+      getComputedStyle(radioOn.nextElementSibling as HTMLElement).backgroundColor === rgb(theme.accent), `radios=${radios.length}`)
+    const select = host.querySelector<HTMLSelectElement>('select')
+    const sst = select ? getComputedStyle(select) : null
+    check('a select draws the theme chevron, not the OS arrow', sst !== null && sst.appearance === 'none' && sst.backgroundImage.includes('data:image/svg+xml'), sst ? `${sst.appearance} ${sst.backgroundImage.slice(0, 40)}` : 'no select')
+    check('a dark theme asks the browser for dark native parts', select !== null && getComputedStyle(select).colorScheme === 'dark', select ? getComputedStyle(select).colorScheme : '')
+    const gridEl = host.querySelector<HTMLElement>('[data-loom-grid]')
+    const rowBox = gridEl?.querySelector<HTMLInputElement>('input[data-loom-select]')?.nextElementSibling as HTMLElement | null
+    rowBox?.click()
+    await new Promise((r) => setTimeout(r, 30))
+    check('clicking a grid row\'s drawn box selects the row', gridEl?.getAttribute('data-loom-selected') === '1', `selected=${gridEl?.getAttribute('data-loom-selected')}`)
+    r90.unmount()
+    host.remove()
+    still.remove()
+  }
+
+  // --- 91. the output draws its icons; no font glyphs or emoji --------------
+  // ⌕ ▾ ⤴ ★ × 📢 came from whatever font the machine had: mixed sizes and
+  // baselines, emoji in colour, sometimes a missing-glyph box. Every
+  // component, as it lands, must draw its marks from the icon set. Keyboard
+  // notation (⌘ ↑ ↓ ↵) and a tree connector (└) are TEXT and stay.
+  {
+    const allowed = new Set(['⌘', '↑', '↓', '↵', '└'])
+    const glyphy = (ch: string) => {
+      const c = ch.codePointAt(0)!
+      return !allowed.has(ch) && ((c >= 0x2190 && c <= 0x2bff) || c >= 0x1f000 || ch === '×')
+    }
+    const offenders: string[] = []
+    for (const spec of allComponents()) {
+      const s91 = new EditorStore()
+      s91.addComponent(spec.name, withRoot(s91), 0, 0)
+      const html = renderToStaticMarkup(renderNode({ doc: s91.doc, selected: new Set(), mode: 'preview' }, s91.doc.root!))
+      const text = html.replace(/<[^>]*>/g, ' ')
+      const bad = [...new Set([...text].filter(glyphy))]
+      if (bad.length) offenders.push(`${spec.name}: ${bad.join('')}`)
+    }
+    check('no component draws an icon as a font glyph or emoji', offenders.length === 0, offenders.join(' | '))
+    // A suggestion list's browser indicator sat beside the ComboBox chevron.
+    const s91b = new EditorStore()
+    s91b.addComponent('ComboBox', withRoot(s91b), 0, 0)
+    const host91 = document.createElement('div')
+    document.body.appendChild(host91)
+    const r91 = createRoot(host91)
+    r91.render(renderNode({ doc: s91b.doc, selected: new Set(), mode: 'preview' }, s91b.doc.root!))
+    await new Promise((r) => setTimeout(r, 40))
+    const listInput = host91.querySelector('input[list]')
+    // getComputedStyle cannot read this vendor pseudo-element, so the check is
+    // that a live rule targets THIS input's indicator and removes it.
+    const hides = (el: Element) => [...document.styleSheets].some((sh) => [...sh.cssRules].some((r) => {
+      if (!(r instanceof CSSStyleRule) || r.style.display !== 'none') return false
+      return r.selectorText.split(',').some((sel) => {
+        const m = /^(.*)::-webkit-calendar-picker-indicator$/.exec(sel.trim())
+        return m !== null && el.matches(m[1] || '*')
+      })
+    }))
+    const indicator = listInput ? (hides(listInput) ? 'none' : 'shown') : 'missing'
+    r91.unmount()
+    host91.remove()
+    check('a ComboBox shows one chevron, not the browser\'s list arrow too', indicator === 'none', indicator)
+  }
+
+  // --- 92. an empty container is visible on the canvas ---------------------
+  // A split, a button group or an accordion paints no surface of its own, so
+  // once dropped it was invisible: nothing to see, find or drop into. The
+  // real canvas outlines an empty container; the outline goes the moment it
+  // has a child, and never reaches the output.
+  {
+    const app = window.__loomStore
+    const before = app.doc
+    const scene = new EditorStore()
+    const root92 = withRoot(scene)
+    const split = scene.addComponent('SplitH', root92, 20, 20, { w: 360, h: 220 })!
+    const group = scene.addComponent('ButtonGroup', root92, 20, 280, { w: 240, h: 48 })!
+    scene.addComponent('Button', group, 0, 0)
+    app.loadDocument(scene.doc)
+    await new Promise((r) => setTimeout(r, 120))
+    const at = (id: string) => document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${id}"]`)
+    const edge = (id: string) => { const el = at(id); return el ? getComputedStyle(el).outlineStyle : 'missing' }
+    const why = (id: string) => { const el = at(id); return el ? `vacant=${el.getAttribute('data-loom-vacant')} inline=${el.style.outline}` : 'missing' }
+    check('an empty container is outlined on the canvas', edge(split) === 'dashed', `${edge(split)} ${why(split)}`)
+    check('a container with something in it is not', edge(group) === 'none', edge(group))
+    check('the outline never reaches the output', !emitHtml(scene.doc).includes('data-loom-vacant'))
+    app.loadDocument(before)
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

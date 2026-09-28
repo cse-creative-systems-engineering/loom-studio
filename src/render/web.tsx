@@ -1696,12 +1696,45 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
  * colours they need come from here, so there is exactly one source of truth
  * for both.
  */
+/** A select's chevron, as a data URL in the theme's muted ink. */
+function chevronUrl(ink: string): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='${ink}' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><path d='M4.5 6.5 8 10l3.5-3.5'/></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+}
+
+/**
+ * The drawn box beside a visually hidden native checkbox or radio.
+ *
+ * The OS-drawn control (a white square on a dark design, a different one on
+ * every platform) was one of the loudest "home made" tells. The native input
+ * stays, for forms, keyboard and assistive tech; it is hidden by the
+ * behaviour stylesheet (`data-loom-ctl`) and this box is drawn from its
+ * state with `:checked + [data-loom-box]`, so it is right in the canvas, the
+ * preview and an export with no script at all. MUST directly follow its
+ * input. Its look lives in the stylesheet, driven by theme variables.
+ */
+function ControlBox({ kind }: { kind: 'check' | 'radio' }) {
+  return (
+    <span data-loom-box={kind} aria-hidden="true">
+      {kind === 'check' ? (
+        <svg viewBox="0 0 16 16">
+          <path data-loom-tick="" d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+          <path data-loom-dash="" d="M4 8h8" />
+        </svg>
+      ) : null}
+    </span>
+  )
+}
+
 function themeVars(t: Theme): React.CSSProperties {
   return {
     '--loom-accent': t.accent,
     '--loom-on': t.accent,
     '--loom-off': t.borderStrong,
     '--loom-on-bg': `${t.accent}1f`,
+    '--loom-on-accent': t.textOnAccent,
+    '--loom-chevron': chevronUrl(t.textMuted),
+    colorScheme: t.colorScheme,
     '--loom-on-fg': t.accent,
     '--loom-surface': t.surface,
     '--loom-text': t.textPrimary,
@@ -1974,7 +2007,7 @@ function renderPreviewBody(
                   aria-label={status}
                   style={{ color: status === 'read' ? t.accent : t.textMuted }}
                 >
-                  {status === 'sending' ? '○' : status === 'sent' ? '✓' : '✓✓'}
+                  <IconGlyph value={status === 'sending' ? 'circle' : status === 'sent' ? 'check' : 'check-double'} size={12} />
                 </span>
               ) : null}
             </span>
@@ -2352,7 +2385,7 @@ function renderPreviewBody(
           <div data-loom-summary role="button" tabIndex={0} aria-expanded={open} style={summaryStyle}>
             <span>{str(p.title)}</span>
             {icon === 'none' ? null : (
-              <span data-loom-caret style={{ color: t.textMuted }}>{icon === 'plus' ? '+' : '▸'}</span>
+              <span data-loom-caret style={{ color: t.textMuted }}><IconGlyph value={icon === 'plus' ? 'plus' : 'chevron-right'} size={14} /></span>
             )}
           </div>
           <div data-loom-body style={{ padding: `0 ${t.space3}px ${t.space3}px` }}>{children}</div>
@@ -2395,9 +2428,9 @@ function renderPreviewBody(
                 data-loom-b="press"
                 data-loom-close={node.id}
                 aria-label="close"
-                style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: `${t.textLg}px`, lineHeight: 1 }}
+                style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', display: 'inline-flex', padding: '2px', lineHeight: 1 }}
               >
-                ×
+                <IconGlyph value="x" size={16} />
               </button>
             ) : null}
           </div>
@@ -2805,7 +2838,7 @@ function renderPreviewBody(
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: `${t.space2}px`, padding: `${t.space3}px ${t.space4}px`, borderBottom: `1px solid ${t.border}` }}>
-              <span aria-hidden="true" style={{ color: t.textMuted }}>⌕</span>
+              <span aria-hidden="true" style={{ color: t.textMuted }}><IconGlyph value="search" size={16} /></span>
               <input
                 type="text"
                 data-loom-palette-input
@@ -3013,7 +3046,7 @@ function renderPreviewBody(
           role={live ? (str(p.tone) === 'danger' ? 'alert' : 'status') : undefined}
           aria-live={live ? 'polite' : undefined}
         >
-          {icon ? <span aria-hidden="true">{icon}</span> : null}
+          {icon ? <span aria-hidden="true" style={{ display: 'inline-flex' }}><IconGlyph value={icon} size={16} /></span> : null}
           <span>{str(p.text)}</span>
           {children}
         </div>
@@ -3053,15 +3086,16 @@ function renderPreviewBody(
       // than a repaint that the browser undoes.
       const accent = str(p.tone) === 'inherit' ? t.accent : toneColor(t, str(p.tone))
       return (
-        <label key={key} style={style} {...behaviourAttrs({ role: 'check', on })}>
+        <label key={key} style={{ ...style, '--loom-tick': accent } as React.CSSProperties} {...behaviourAttrs({ role: 'check', on })}>
           <input
             type="checkbox"
+            data-loom-ctl=""
             defaultChecked={on}
             disabled={off}
             required={p.required === true}
             aria-label={str(p.ariaLabel) || undefined}
-            style={{ accentColor: accent, width: 16, height: 16 }}
           />
+          <ControlBox kind="check" />
           <span>{str(p.label)}</span>
         </label>
       )
@@ -3094,7 +3128,8 @@ function renderPreviewBody(
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: `${fs}px`, color: t.textPrimary }}
                 {...behaviourAttrs({ role: 'radio', group: node.id, index: i, on: str(p.value) === value })}
               >
-                <input type="radio" name={node.id} value={value} defaultChecked={str(p.value) === value} disabled={p.disabled === true || o.disabled === true} required={p.required === true} />
+                <input type="radio" data-loom-ctl="" name={node.id} value={value} defaultChecked={str(p.value) === value} disabled={p.disabled === true || o.disabled === true} required={p.required === true} />
+                <ControlBox kind="radio" />
                 <span>{str(o.label)}</span>
               </label>
             )
@@ -3163,6 +3198,7 @@ function renderPreviewBody(
       return (
         <select
           key={key}
+          data-loom-dropdown={multi ? undefined : ''}
           style={multi ? { ...style, height: 'auto' } : style}
           defaultValue={multi ? opts.filter((o) => o === str(p.value)) : str(p.value)}
           multiple={multi}
@@ -3192,7 +3228,7 @@ function renderPreviewBody(
             style={{ background: 'transparent', border: 'none', outline: 'none', color: t.textPrimary, fontSize: `${fs}px`, width: '140px' }}
           />
           <datalist id={`${node.id}-dl`}>{opts.map((o) => <option key={o} value={o} />)}</datalist>
-          <span aria-hidden="true" style={{ color: t.textMuted }}>▾</span>
+          <span aria-hidden="true" style={{ color: t.textMuted }}><IconGlyph value="chevron-down" size={14} /></span>
         </div>
       )
     }
@@ -3218,7 +3254,7 @@ function renderPreviewBody(
       const fs = str(p.size) === 'sm' ? t.textXs : str(p.size) === 'lg' ? t.textMd : t.textSm
       return (
         <label key={key} style={style}>
-          {str(p.icon) ? <span aria-hidden="true">{str(p.icon)}</span> : null}
+          {str(p.icon) ? <span aria-hidden="true" style={{ display: 'inline-flex' }}><IconGlyph value={str(p.icon)} size={14} /></span> : null}
           <input
             type="search"
             placeholder={str(p.placeholder)}
@@ -3335,7 +3371,7 @@ function renderPreviewBody(
             disabled={off}
             style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
           />
-          <span aria-hidden="true">⤴</span>
+          <span aria-hidden="true"><IconGlyph value="upload" size={18} /></span>
           <span>{str(p.label)}</span>
           {str(p.hint) ? <span style={{ fontSize: `${t.textXs}px`, color: t.textMuted }}>{str(p.hint)}</span> : null}
           {str(p.accept) ? <span style={{ fontSize: `${t.textXs}px`, color: t.textMuted }}>{str(p.accept)}</span> : null}
@@ -3373,7 +3409,7 @@ function renderPreviewBody(
             style={{ background: 'transparent', border: 'none', color: 'inherit', font: 'inherit', cursor: off ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', padding: 0 }}
           >
             <span>{str(p.label)}</span>
-            <span aria-hidden="true">▾</span>
+            <span aria-hidden="true"><IconGlyph value="chevron-down" size={14} /></span>
           </button>
           <div role="menu" data-loom-menu-panel={menuId} data-loom-open={open ? '1' : '0'} style={{ display: open ? 'flex' : 'none', flexDirection: 'column', gap: '2px', marginTop: '6px', padding: '4px', borderRadius: `${t.radiusMd}px`, background: t.surface, border: `1px solid ${t.border}`, boxShadow: t.shadowMd }}>
             {items.map((it) => (
@@ -3409,7 +3445,7 @@ function renderPreviewBody(
               data-loom-lit={i < v ? '1' : '0'}
               style={{ display: 'inline-block', color: i < v ? tone : t.textMuted }}
             >
-              ★
+              <StarShape />
             </span>
           ))}
           {p.showValue !== false ? (
@@ -3508,11 +3544,11 @@ function renderPreviewBody(
           data-loom-value-step={String(stepBy)}
         >
           {buttons ? (
-            <button type="button" {...stepRole} data-loom-nav="prev" disabled={off} aria-label="decrease" style={{ background: 'transparent', border: 'none', color: t.textSecondary, cursor: off ? 'not-allowed' : 'pointer' }}>−</button>
+            <button type="button" {...stepRole} data-loom-nav="prev" disabled={off} aria-label="decrease" style={{ background: 'transparent', border: 'none', color: t.textSecondary, cursor: off ? 'not-allowed' : 'pointer', display: 'inline-flex' }}><IconGlyph value="minus" size={14} /></button>
           ) : null}
           <span data-loom-spin style={{ fontFamily: t.fontMono }}>{start}</span>
           {buttons ? (
-            <button type="button" {...stepRole} data-loom-nav="next" disabled={off} aria-label="increase" style={{ background: 'transparent', border: 'none', color: t.textSecondary, cursor: off ? 'not-allowed' : 'pointer' }}>+</button>
+            <button type="button" {...stepRole} data-loom-nav="next" disabled={off} aria-label="increase" style={{ background: 'transparent', border: 'none', color: t.textSecondary, cursor: off ? 'not-allowed' : 'pointer', display: 'inline-flex' }}><IconGlyph value="plus" size={14} /></button>
           ) : null}
         </div>
       )
@@ -3534,7 +3570,8 @@ function renderPreviewBody(
               style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: `${fs}px`, color: t.textPrimary, cursor: 'pointer' }}
               {...behaviourAttrs({ role: 'check', group: node.id, index: items.indexOf(it) })}
             >
-              <input type="checkbox" disabled={p.disabled === true} />
+              <input type="checkbox" data-loom-ctl="" disabled={p.disabled === true} />
+              <ControlBox kind="check" />
               <span>{it}</span>
             </label>
           ))}
@@ -3763,7 +3800,7 @@ function renderPreviewBody(
       )
     }
     case 'Tag':
-      return <span key={key} style={style}>{str(p.text)}{p.removable === true ? <span aria-hidden="true"> ×</span> : null}</span>
+      return <span key={key} style={style}>{str(p.text)}{p.removable === true ? <span aria-hidden="true" style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: '4px' }}><IconGlyph value="x" size={12} /></span> : null}</span>
     case 'Kbd': {
       // A chord is a LIST of keys, not a string: "Ctrl,K" is two caps with a
       // gap between them, and a single item stays a single cap.
@@ -3845,7 +3882,7 @@ function renderPreviewBody(
         >
           {searching && (
             <div style={{ display: 'flex', alignItems: 'center', gap: `${t.space2}px`, padding: `${t.space2}px ${t.space3}px`, borderBottom: line }}>
-              <span aria-hidden="true" style={{ color: t.textMuted }}>⌕</span>
+              <span aria-hidden="true" style={{ color: t.textMuted, display: 'inline-flex' }}><IconGlyph value="search" size={14} /></span>
               <input
                 type="search"
                 data-loom-filter={node.id}
@@ -3875,12 +3912,15 @@ function renderPreviewBody(
                 <tr>
                   {selectable && (
                     <th scope="col" {...part('header')} style={{ width: '38px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, textAlign: 'left', padding: rowPad, borderBottom: line }}>
-                      <input
-                        type="checkbox"
-                        data-loom-select-all={node.id}
-                        aria-label="Select all rows"
-                        style={{ accentColor: t.accent }}
-                      />
+                      <label style={{ display: 'inline-flex', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          data-loom-ctl=""
+                          data-loom-select-all={node.id}
+                          aria-label="Select all rows"
+                        />
+                        <ControlBox kind="check" />
+                      </label>
                     </th>
                   )}
                   {cols.map((c, ci) => (
@@ -3930,12 +3970,15 @@ function renderPreviewBody(
                 >
                   {selectable && (
                     <td {...part('cell')} style={{ padding: rowPad, borderBottom: line, width: '38px' }}>
-                      <input
-                        type="checkbox"
-                        data-loom-select={node.id}
-                        aria-label={`Select row ${i + 1}`}
-                        style={{ accentColor: t.accent }}
-                      />
+                      <label style={{ display: 'inline-flex', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          data-loom-ctl=""
+                          data-loom-select={node.id}
+                          aria-label={`Select row ${i + 1}`}
+                        />
+                        <ControlBox kind="check" />
+                      </label>
                     </td>
                   )}
                   {cols.map((c, ci) => (
@@ -3968,9 +4011,9 @@ function renderPreviewBody(
                           type="button"
                           aria-label={`Row actions for row ${i + 1}`}
                           data-loom-menu-trigger={rowMenu(i)}
-                          style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', padding: '2px 6px' }}
+                          style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', padding: '2px 6px', display: 'inline-flex' }}
                         >
-                          ⋯
+                          <IconGlyph value="more" size={16} />
                         </button>
                         <div
                           role="menu"
@@ -4008,7 +4051,7 @@ function renderPreviewBody(
       const risingIsGood = str(p.goodDirection) !== 'down'
       const good = tone === 'flat' ? null : (tone === 'up') === risingIsGood
       const deltaToneColour = good === null ? t.textMuted : good ? t.success : t.danger
-      const arrow = tone === 'up' ? '▲' : tone === 'down' ? '▼' : '■'
+      const arrow = <TrendMark trend={tone} />
       const deltaStyle = str(p.trendStyle) || 'plain'
       // A value that does not PARSE as a number is shown exactly as typed:
       // "$48.2k" is shorthand a designer chose, not something to reformat.
@@ -4031,11 +4074,11 @@ function renderPreviewBody(
               </span>
             ) : deltaStyle === 'badge' ? (
               <span {...part('delta')} style={{ alignSelf: 'flex-start', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour, background: `${deltaToneColour}1e`, border: `1px solid ${deltaToneColour}44`, borderRadius: `${t.radiusFull}px`, padding: '1px 8px' }}>
-                {tone !== 'flat' ? <span aria-hidden="true">{arrow} </span> : null}{delta}
+                {tone !== 'flat' ? arrow : null}{delta}
               </span>
             ) : (
               <span {...part('delta')} style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
-                {deltaStyle === 'arrow' ? <span aria-hidden="true">{arrow} </span> : null}{delta}
+                {deltaStyle === 'arrow' ? arrow : null}{delta}
               </span>
             )
           ) : null}
@@ -4052,7 +4095,7 @@ function renderPreviewBody(
       const risingIsGood = str(p.goodDirection) !== 'down'
       const good = trend === 'flat' ? null : (trend === 'up') === risingIsGood
       const tone = good === null ? t.textMuted : good ? t.success : t.danger
-      const arrow = trend === 'up' ? '▲' : trend === 'down' ? '▼' : '■'
+      const arrow = <TrendMark trend={trend} />
       const points = numericList(p.points, p.pointsSep)
       const valueSize = size === 'sm' ? t.textXl : size === 'lg' ? t.textXxl : t.textXl
       const visual = str(p.visual) || 'sparkline'
@@ -4078,7 +4121,7 @@ function renderPreviewBody(
               {...part('delta')}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: `${t.textSm}px`, fontWeight: t.weightSemibold, color: tone }}
             >
-              <span aria-hidden="true">{arrow}</span>
+              {arrow}
               <span>{str(p.delta)}</span>
               {str(p.deltaLabel) ? (
                 <span {...part('caption')} style={{ fontWeight: t.weightNormal, color: t.textMuted, fontSize: `${t.textXs}px` }}>{str(p.deltaLabel)}</span>
@@ -4501,7 +4544,7 @@ function renderPreviewBody(
                   {...behaviourAttrs({ role: 'expand', group: node.id, index: i })}
                   style={{ color: t.textMuted, cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}
                 >
-                  {depth > 0 ? '└' : '▾'}
+                  {depth > 0 ? '└' : <IconGlyph value="chevron-down" size={12} />}
                 </span>
                 <span style={{ minWidth: 0, ...(truncate ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } : {}) }}>{leaf}</span>
               </div>
@@ -4841,6 +4884,7 @@ function renderPreviewBody(
               <span>Rows</span>
               <select
                 data-loom-pagesize-select=""
+                data-loom-dropdown=""
                 defaultValue={String(pageSize)}
                 aria-label="rows per page"
                 style={{
@@ -4907,7 +4951,7 @@ function renderPreviewBody(
                     border: `1px solid ${state === 'todo' ? t.borderStrong : t.accent}`,
                   }}
                 >
-                  {state === 'done' ? '✓' : p.showNumbers === false ? '' : n}
+                  {state === 'done' ? <IconGlyph value="check" size={12} /> : p.showNumbers === false ? '' : n}
                 </span>
                 <span style={{ fontSize: `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`, color: state === 'todo' ? t.textMuted : t.textPrimary, fontWeight: state === 'now' ? t.weightSemibold : t.weightNormal, textAlign: vertical ? 'left' : 'center' }}>
                   {st}
@@ -5071,7 +5115,7 @@ function renderPreviewBody(
             )}
             <strong style={{ fontSize: size === 'sm' ? `${t.textXs}px` : `${t.textSm}px`, color: ink }}>{str(p.title)}</strong>
             {p.dismissible === true ? (
-              <button type="button" aria-label="dismiss" style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: bodyInk, cursor: 'pointer', padding: 0, lineHeight: 1 }}>×</button>
+              <button type="button" aria-label="dismiss" style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: bodyInk, cursor: 'pointer', padding: 0, lineHeight: 1, display: 'inline-flex' }}><IconGlyph value="x" size={14} /></button>
             ) : null}
           </div>
           <div style={{ fontSize: size === 'sm' ? `${t.textXs}px` : `${t.textSm}px`, color: bodyInk }}>{str(p.body)}</div>
@@ -5117,7 +5161,7 @@ function renderPreviewBody(
           {feedbackIcon(p, toneName, size === 'sm' ? 14 : 16, tone)}
           <span style={{ flex: 1, minWidth: 0 }}>{str(p.message)}</span>
           {p.dismissible === true ? (
-            <button type="button" data-loom-dismiss="" aria-label="dismiss" style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', padding: 0, lineHeight: 1 }}>×</button>
+            <button type="button" data-loom-dismiss="" aria-label="dismiss" style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', padding: 0, lineHeight: 1, display: 'inline-flex' }}><IconGlyph value="x" size={14} /></button>
           ) : null}
         </div>
       )
@@ -5221,7 +5265,7 @@ function renderPreviewBody(
       return (
         <div key={key} style={style}>
           <span style={{ width: `${size}px`, height: `${size}px`, borderRadius: '999px', background: `${tone}1a`, border: `1px solid ${tone}66`, color: tone, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: `${Math.round(size * 0.5)}px`, fontWeight: t.weightBold, flexShrink: 0 }}>
-            <IconGlyph value={str(p.icon) || '✓'} size={Math.round(size * 0.5)} color={tone} />
+            <IconGlyph value={str(p.icon) || 'check'} size={Math.round(size * 0.5)} />
           </span>
           {p.showLabel !== false && str(p.label) ? <span style={{ fontWeight: t.weightSemibold, color: t.textPrimary }}>{str(p.label)}</span> : null}
         </div>
@@ -5367,6 +5411,11 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     'data-selected': ctx.selected.has(id) ? 'true' : 'false',
     // Marks a drop target, so a component can be dropped INTO a container.
     'data-loom-container': isContainer ? 'true' : 'false',
+    // An empty container that paints no surface of its own (a split, a
+    // button group, an accordion) is invisible once dropped, so the canvas
+    // outlines it until something is inside, as a form designer does.
+    // Authoring only: the output never carries this.
+    'data-loom-vacant': isContainer && node.children.length === 0 ? 'true' : 'false',
     'data-loom-hidden': node.visible === false ? 'true' : 'false',
     'data-loom-locked': node.locked === true ? 'true' : 'false',
     ...(ctx.forceState?.id === id ? { [FORCE_ATTR]: ctx.forceState.state } : {}),
@@ -5568,6 +5617,23 @@ function iconTone(tone: PropValue | undefined, t: Theme): string | undefined {
  * a name is used — which is the only way "never mix icon styles" is achievable
  * when the icon is a property rather than a drawn asset.
  */
+/**
+ * A trend's direction as a drawn mark (it was ▲ ▼ ■ from whatever font the
+ * machine had). Decorative: the delta beside it carries the meaning.
+ */
+function TrendMark({ trend }: { trend: string }) {
+  return (
+    <span data-loom-trend="" aria-hidden="true" style={{ display: 'inline-flex', verticalAlign: '-0.15em', marginRight: '3px' }}>
+      <IconGlyph value={trend === 'up' ? 'trending' : trend === 'down' ? 'trending-down' : 'minus'} size={13} />
+    </span>
+  )
+}
+
+/** A filled star from the icon set, sized by the font (a Rating's `size`). */
+function StarShape() {
+  return <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" style={{ display: 'block' }} dangerouslySetInnerHTML={{ __html: iconMarkup('star') ?? '' }} />
+}
+
 function IconGlyph({
   value,
   size = 16,

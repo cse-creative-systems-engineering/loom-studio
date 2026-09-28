@@ -32,7 +32,7 @@ import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
 import { Toggle } from './ui-primitives'
 import { VIEWPORTS, fitZoom, nodeBreakpoints } from './render/responsive'
-import { installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
+import { installBehaviourStyles, installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import { ContextMenu, type MenuState } from './context-menu'
 import { THEME_NAMES, getTheme } from './render/theme'
 // The Studio's own typeface, bundled (73KB latin, OFL). Optical sizing keeps
@@ -1089,6 +1089,14 @@ function Canvas({
   React.useEffect(() => {
     installDocumentCss(s.doc)
   }, [s.doc])
+  // The canvas draws the OUTPUT, so it needs the output's state stylesheet
+  // (switch tracks, ticks, which tab panel shows) from the first frame. It
+  // used to arrive only when the docked preview first opened, so the same
+  // design looked different before and after one visit to Preview. Styles
+  // only: the canvas is edited, not operated, so the runtime stays out.
+  React.useEffect(() => {
+    installBehaviourStyles()
+  }, [])
 
   const onContextMenuNode = (id: NodeId, e: React.MouseEvent) => {
     e.preventDefault()
