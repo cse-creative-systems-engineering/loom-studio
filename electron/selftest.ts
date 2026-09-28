@@ -35,6 +35,7 @@ import { hasOwnGlyph } from '../src/tool-icons'
 import { GROUP_ORDER } from '../src/model/prop-groups'
 import { ToolThumb } from '../src/tool-card'
 import { cleanPage } from '../src/model/page'
+import { desktopBounds } from '../src/model/desktop-run'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
@@ -3929,6 +3930,22 @@ export async function runSelfTest(): Promise<string> {
     check('choosing Theme sets the page to the theme colour', app.doc.meta.page?.background === 'theme')
     app.loadDocument(before)
     await wait()
+  }
+
+  // --- 70. run on desktop: the dock places the window on the real screen ---
+  // Shane: "I was building a sidebar anchored to the side of the screen; in
+  // preview I expected to see it attached to the side of the desktop".
+  {
+    const work = { x: 0, y: 27, width: 1920, height: 1053 } // a top panel, as on this machine
+    const at = (anchor: string, w = 360, h = 400, x = 0, y = 0) => desktopBounds({ anchor, w, h, x, y }, work)
+    const eq = (a: object, b: object) => JSON.stringify(a) === JSON.stringify(b)
+    check('docked left: the left edge, full usable height', eq(at('left'), { x: 0, y: 27, width: 360, height: 1053 }), JSON.stringify(at('left')))
+    check('docked right: the right edge, full usable height', eq(at('right'), { x: 1560, y: 27, width: 360, height: 1053 }), JSON.stringify(at('right')))
+    check('docked top/bottom: full usable width', eq(at('top'), { x: 0, y: 27, width: 1920, height: 400 }) && eq(at('bottom'), { x: 0, y: 680, width: 1920, height: 400 }))
+    check('a corner dock sits in that corner at its own size', eq(at('bottom-right'), { x: 1560, y: 680, width: 360, height: 400 }))
+    check('centre and fill', eq(at('center'), { x: 780, y: 354, width: 360, height: 400 }) && eq(at('fill'), work))
+    check('undocked keeps its own place, on the screen', eq(at('none', 360, 400, 100, 50), { x: 100, y: 77, width: 360, height: 400 }) && at('none', 360, 400, 5000, 5000).x === 1560)
+    check('never bigger than the usable screen', at('left', 9999, 9999).width === 1920 && at('center', 9999, 9999).height === 1053)
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

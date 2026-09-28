@@ -6,7 +6,8 @@
  * the GPU paint strategies; the plain-DOM path does not need it.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, shell, type IpcMainInvokeEvent } from 'electron'
+import { desktopBounds, type RunTarget } from '../src/model/desktop-run'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { autosaveFileName, isExternalUrlAllowed } from './guards'
@@ -153,7 +154,12 @@ let pendingPreviewDoc: unknown = undefined
  * so there the desktop shows through unblurred (the Page panel says so).
  */
 function applyPageMaterial(doc: unknown) {
-  if (!previewWin || previewWin.isDestroyed()) return
+  if (previewWin) applyWindowMaterial(previewWin, doc)
+}
+
+function applyWindowMaterial(win: BrowserWindow, doc: unknown) {
+  if (win.isDestroyed()) return
+  const previewWin = win
   const page = (doc as { meta?: { page?: { background?: string; blur?: number } } } | null)?.meta?.page
   const blur = page && page.background !== 'none' ? page.blur ?? 0 : 0
   try {
@@ -238,8 +244,88 @@ function openPreview(doc: unknown) {
   return previewWin
 }
 
+/* ------------------------------------------------------------------ *
+ * Run on desktop: the design as a real window on the real screen.
+ *
+ * A sidebar docked left in the design is docked to the left edge of the
+ * monitor, full height of the usable area, drawn with no frame over a
+ * transparent window. Placement is `desktopBounds` (src/model/desktop-run.ts),
+ * pure and tested; this only creates, places, feeds and closes the window.
+ * ------------------------------------------------------------------ */
+
+let desktopWin: BrowserWindow | null = null
+let pendingDesktopDoc: unknown = undefined
+
+function runOnDesktop(payload: { doc: unknown; target: RunTarget }) {
+  const display = editorWin ? screen.getDisplayMatching(editorWin.getBounds()) : screen.getPrimaryDisplay()
+  const bounds = desktopBounds(payload.target, display.workArea)
+  if (!desktopWin || desktopWin.isDestroyed()) {
+    desktopWin = new BrowserWindow({
+      ...bounds,
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      hasShadow: false,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      show: false,
+      title: 'Loom — Running on desktop',
+      webPreferences: {
+        preload: path.join(here, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    })
+    const win = desktopWin
+    win.setAlwaysOnTop(true, 'floating')
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    win.once('ready-to-show', () => win.showInactive())
+    win.webContents.on('did-finish-load', () => {
+      win.webContents.send('desktop:document', pendingDesktopDoc ?? payload.doc)
+      pendingDesktopDoc = undefined
+    })
+    win.on('closed', () => {
+      if (desktopWin === win) desktopWin = null
+      editorWin?.webContents.send('desktop:closed')
+    })
+    pendingDesktopDoc = payload.doc
+    void win.loadFile(path.join(here, '../renderer/desktop.html'))
+  } else {
+    desktopWin.setBounds(bounds)
+    if (desktopWin.webContents.isLoading()) pendingDesktopDoc = payload.doc
+    else desktopWin.webContents.send('desktop:document', payload.doc)
+  }
+  applyWindowMaterial(desktopWin, payload.doc)
+  return bounds
+}
+
 app.whenReady().then(() => {
   createWindow()
+
+  ipcMain.handle('desktop:run', (e, payload: { doc: unknown; target: RunTarget }) => {
+    if (!fromEditor(e)) return null
+    if (!payload || typeof payload !== 'object' || !payload.target || typeof payload.target.anchor !== 'string') return null
+    const t = payload.target
+    if (![t.w, t.h, t.x, t.y].every((n) => typeof n === 'number' && Number.isFinite(n))) return null
+    return runOnDesktop(payload)
+  })
+  ipcMain.handle('desktop:stop', () => {
+    desktopWin?.close()
+    return true
+  })
+  // From the running window itself: pass clicks through its empty parts
+  // (Windows and macOS forward the pointer so it can take them back).
+  ipcMain.handle('desktop:ignore-mouse', (e, ignore: boolean) => {
+    if (!desktopWin || e.sender !== desktopWin.webContents) return false
+    desktopWin.setIgnoreMouseEvents(ignore === true, { forward: true })
+    return true
+  })
 
   ipcMain.handle('preview:open', (e, doc: unknown) => {
     if (!fromEditor(e)) return false

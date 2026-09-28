@@ -17,6 +17,7 @@ import { tooltipText } from './model/tooltip'
 import { inspectorView, propLabel } from './model/inspector-view'
 import { GROUP_ORDER } from './model/prop-groups'
 import { pageFill, MAX_PAGE_BLUR } from './model/page'
+import type { RunTarget } from './model/desktop-run'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { STARTERS, getStarter } from './model/starters'
@@ -141,6 +142,27 @@ export function App() {
     },
     [s],
   )
+
+  // Run on desktop. While on, every change re-places and redraws the running
+  // window (debounced like the preview); the window closing turns it off.
+  const [running, setRunning] = React.useState(false)
+  React.useEffect(() => {
+    const api = (window as unknown as { loomDesktop?: DesktopRunApi }).loomDesktop
+    if (!api) return
+    if (!running) {
+      void api.stop()
+      return
+    }
+    const id = window.setTimeout(() => {
+      const target = runTarget(s.doc)
+      if (target) void api.run(s.doc, target)
+    }, 60)
+    return () => window.clearTimeout(id)
+  }, [running, s.doc])
+  React.useEffect(() => {
+    const api = (window as unknown as { loomDesktop?: DesktopRunApi }).loomDesktop
+    return api?.onClosed(() => setRunning(false))
+  }, [])
 
   const togglePreview = React.useCallback(() => {
     setPreviewTo(!previewOpenRef.current)
@@ -285,7 +307,7 @@ export function App() {
 
   return (
     <div className={`loom ${mode === 'preview' ? 'previewing' : ''}`}>
-      <TitleBar s={s} mode={mode} onMode={setMode} previewOpen={previewOpen} onTogglePreview={togglePreview} />
+      <TitleBar s={s} mode={mode} onMode={setMode} previewOpen={previewOpen} onTogglePreview={togglePreview} running={running} onToggleRun={() => setRunning((r) => !r)} />
       <div className="body">
         {mode === 'design' && <Toolbox s={s} onDragChange={setDragging} zoom={zoom} />}
         <Canvas
@@ -364,12 +386,16 @@ function TitleBar({
   onMode,
   previewOpen,
   onTogglePreview,
+  running,
+  onToggleRun,
 }: {
   s: EditorStore
   mode: 'design' | 'preview'
   onMode: (m: 'design' | 'preview') => void
   previewOpen: boolean
   onTogglePreview: () => void
+  running: boolean
+  onToggleRun: () => void
 }) {
   const [exportOpen, setExportOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
@@ -436,6 +462,7 @@ function TitleBar({
         </div>
       </div>
 
+      <div className="tb-center">
       <div className="mode-switch pv-toggle" role="tablist" aria-label="Mode">
         {(['design', 'preview'] as const).map((m) => (
           <button
@@ -449,6 +476,20 @@ function TitleBar({
             {m === 'design' ? 'Design' : 'Preview'}
           </button>
         ))}
+      </div>
+        {/* Run on desktop: the design as a real window, placed on the real
+            screen by its dock (a sidebar docked left runs on the left). */}
+        <button
+          type="button"
+          className={`tb-run ${running ? 'on' : ''}`}
+          onClick={onToggleRun}
+          disabled={s.doc.root === null}
+          aria-pressed={running}
+          title={running ? 'Stop running on the desktop' : 'Run on your desktop: placed where its dock says, no window around it'}
+        >
+          <Ico name={running ? 'x' : 'monitor'} size={13} />
+          {running ? 'Stop' : 'Run'}
+        </button>
       </div>
 
       <div className="tb-right">
@@ -1914,6 +1955,30 @@ function ColorField({ value, onChange }: { value: string; onChange: (v: string) 
       />
     </div>
   )
+}
+
+interface DesktopRunApi {
+  run: (doc: unknown, target: RunTarget) => Promise<unknown>
+  stop: () => Promise<boolean>
+  onClosed: (cb: () => void) => () => void
+}
+
+/**
+ * What the running window needs to know about the top-level node: its dock,
+ * its drawn size (measured on the canvas, in design pixels; the props when
+ * the canvas is not showing it) and its own position.
+ */
+function runTarget(doc: Document): RunTarget | null {
+  const root = doc.root ? doc.nodes[doc.root] : undefined
+  if (!root) return null
+  const el = document.querySelector<HTMLElement>(`.surface [data-loom-id="${root.id}"]`)
+  const surf = document.querySelector<HTMLElement>('.surface')
+  const z = surf ? Number(surf.dataset.zoom) / 100 || 1 : 1
+  const r = el?.getBoundingClientRect()
+  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : d)
+  const w = r && r.width > 0 ? r.width / z : num(root.props.w, num(root.props.width, 360))
+  const h = r && r.height > 0 ? r.height / z : num(root.props.h, 400)
+  return { anchor: String(root.props.anchor ?? 'none'), w, h, x: Number(root.props.x) || 0, y: Number(root.props.y) || 0 }
 }
 
 /**

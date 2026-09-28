@@ -474,3 +474,22 @@
 .loom.previewing .canvas-wrap { background: var(--bg-2); }
 /* No background chosen: no screen, no edge, no shadow. The UI stands alone. */
 .canvas.previewing .stage.bare { box-shadow: none; border-radius: 0; overflow: visible; }
+
+/* Design / Preview, and Run on desktop beside them. */
+.tb-center { display: flex; align-items: center; gap: 6px; }
+.tb-run {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 550;
+}
+.tb-run:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); }
+.tb-run:disabled { opacity: 0.4; cursor: default; }
+.tb-run.on { color: #fff; background: #d6433b; border-color: transparent; }

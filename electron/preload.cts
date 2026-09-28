@@ -65,3 +65,27 @@ contextBridge.exposeInMainWorld('loomPreview', {
     return () => ipcRenderer.removeListener('preview:closed', h)
   },
 })
+
+const isDesktopWindow = process.argv.some((a) => a.includes('desktop.html'))
+
+/**
+ * Run on desktop. The editor asks to run (or re-place) the design as a real
+ * window, or to stop; the running window receives the document and may ask
+ * for its empty parts to let clicks through. Placement is decided in main.
+ */
+contextBridge.exposeInMainWorld('loomDesktop', {
+  isDesktopWindow,
+  run: (doc: unknown, target: unknown) => ipcRenderer.invoke('desktop:run', { doc, target }),
+  stop: () => ipcRenderer.invoke('desktop:stop'),
+  ignoreMouse: (ignore: boolean) => ipcRenderer.invoke('desktop:ignore-mouse', ignore),
+  onDocument: (cb: (doc: unknown) => void) => {
+    const h = (_e: unknown, doc: unknown) => cb(doc)
+    ipcRenderer.on('desktop:document', h)
+    return () => ipcRenderer.removeListener('desktop:document', h)
+  },
+  onClosed: (cb: () => void) => {
+    const h = () => cb()
+    ipcRenderer.on('desktop:closed', h)
+    return () => ipcRenderer.removeListener('desktop:closed', h)
+  },
+})
