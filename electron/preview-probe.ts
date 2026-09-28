@@ -11,7 +11,7 @@
 import { app, BrowserWindow } from 'electron'
 // Side effect: registers the REAL preview/save IPC handlers from main.ts,
 // so this probe drives production code, not a copy.
-import './main'
+import { setClosePromptForProbe } from './main'
 
 // The editor window main.ts creates loads the seeded demo scene. It must be
 // THAT window the probe drives: preview IPC is honoured only from the editor
@@ -99,6 +99,28 @@ async function run() {
     await new Promise((r) => setTimeout(r, 800))
     step('close destroys the preview window', previewWindows().length === 0 && pv.isDestroyed())
   }
+
+  // Closing with unsaved changes: Shane found the window simply would not
+  // close (the page's beforeunload guard, with no question asked). Now the
+  // question is asked, Cancel keeps the window, and closing always works.
+  await win.webContents.executeJavaScript(`(() => { const s = window.__loomStore; s.addComponent('Label', s.doc.root, 10, 10); return s.dirty })()`, true)
+  let asked = 0
+  setClosePromptForProbe(() => {
+    asked++
+    return false
+  })
+  win.close()
+  await new Promise((r) => setTimeout(r, 800))
+  step('closing with unsaved changes asks first', asked === 1, `asked ${asked} time(s)`)
+  step('answering Cancel keeps the window open', !win.isDestroyed())
+  setClosePromptForProbe(() => {
+    asked++
+    return true
+  })
+  const closed = new Promise((r) => win!.once('closed', () => r(true)))
+  win.close()
+  const didClose = await Promise.race([closed, new Promise((r) => setTimeout(() => r(false), 3000))])
+  step('answering Close closes it, unsaved changes or not', didClose === true && asked === 2, `closed=${didClose} asked=${asked}`)
 
   const failed = steps.filter((s) => !s.pass).length
   console.log(`\n${steps.length - failed}/${steps.length} preview probe steps pass`)

@@ -57,6 +57,32 @@ function fromEditor(e: IpcMainInvokeEvent): boolean {
 
 const FORBIDDEN = { ok: false, error: 'forbidden' } as const
 
+/**
+ * Asked when the editor is closed with unsaved changes; true closes anyway.
+ *
+ * The page's `beforeunload` guard, on its own, made Electron keep the window
+ * open WITHOUT asking: with unsaved changes the window simply would not close.
+ * Closing must always be possible, so the question is a native dialog whose
+ * default answer is to close. The probes swap in an answer (they cannot click
+ * a native dialog).
+ */
+let closePrompt = (win: BrowserWindow): boolean =>
+  dialog.showMessageBoxSync(win, {
+    type: 'warning',
+    title: 'Unsaved changes',
+    message: 'This workspace has unsaved changes.',
+    detail: 'Close Loom without saving them?',
+    buttons: ['Close without saving', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  }) === 0
+
+/** Test hook for the probes: answer the unsaved-changes question. */
+export function setClosePromptForProbe(answer: (win: BrowserWindow) => boolean): void {
+  closePrompt = answer
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
@@ -75,6 +101,11 @@ function createWindow() {
   })
 
   editorWin = win
+  // The page cancelled unloading (unsaved changes). Ask; calling
+  // preventDefault here overrides the page and lets the window close.
+  win.webContents.on('will-prevent-unload', (event) => {
+    if (closePrompt(win)) event.preventDefault()
+  })
   win.on('closed', () => {
     if (editorWin === win) editorWin = null
   })
