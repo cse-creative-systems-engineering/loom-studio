@@ -15,6 +15,7 @@ import { normalizeProps } from './registry'
 // nominal purity of not importing it.
 import { normalizeEffects } from '../render/effects'
 import { cleanStateStyle } from '../render/states'
+import { cleanPartStyle } from '../render/parts'
 
 let counter = 0
 
@@ -188,6 +189,25 @@ export function apply(doc: Document, op: Op): Document {
       if (Object.keys(clean).length === 0) delete nextBag[op.state]
       else nextBag[op.state] = clean
       node.states = Object.keys(nextBag).length === 0 ? undefined : nextBag
+      return next
+    }
+
+    case 'setPartStyle': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      const bag = node.parts ?? {}
+      const merged: Record<string, unknown> = { ...(bag[op.part] ?? {}) }
+      for (const [k, v] of Object.entries(op.patch)) {
+        if (v === null) delete merged[k]
+        else merged[k] = v
+      }
+      // Sanitised against the component's declaration: an undeclared part or
+      // a field the part does not accept never lands, whoever sent the op.
+      const clean = cleanPartStyle(node.type, op.part, merged).style
+      const nextBag = { ...bag }
+      if (Object.keys(clean).length === 0) delete nextBag[op.part]
+      else nextBag[op.part] = clean
+      node.parts = Object.keys(nextBag).length === 0 ? undefined : nextBag
       return next
     }
 
@@ -367,6 +387,15 @@ export function invert(doc: Document, op: Op): Op | undefined {
       const inverse: Record<string, string | number | null> = {}
       for (const k of Object.keys(op.patch)) inverse[k] = before[k] ?? null
       return { op: 'setStateStyle', id: op.id, state: op.state, patch: inverse }
+    }
+
+    case 'setPartStyle': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      const before = (node.parts?.[op.part] ?? {}) as Record<string, string | number | undefined>
+      const inverse: Record<string, string | number | null> = {}
+      for (const k of Object.keys(op.patch)) inverse[k] = before[k] ?? null
+      return { op: 'setPartStyle', id: op.id, part: op.part, patch: inverse }
     }
 
     case 'setEffects': {

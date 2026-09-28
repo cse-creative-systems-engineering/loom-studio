@@ -96,6 +96,35 @@ export interface ComponentSpec {
    * would be controls that change nothing a person can see.
    */
   rendersText?: boolean
+  /**
+   * The named inner parts a designer can style, in panel order. Declared here
+   * like props, so the inspector, the op, the file loader and the audit all
+   * read one list: a part that is declared must exist in the output, and every
+   * field it accepts must change what that part looks like.
+   */
+  parts?: Record<string, PartSpec>
+}
+
+/** The field groups a part can accept (see `render/parts.ts`). */
+export type PartFieldGroup = 'text' | 'box' | 'surface'
+
+export interface PartSpec {
+  label: string
+  /** One line on what this part is, for the panel. */
+  hint: string
+  /**
+   * Which fields apply. `text` is type; `box` is background, padding, radius
+   * and border; `surface` is background alone, for a part (a table row) that
+   * has no box of its own to pad or round.
+   */
+  fields: PartFieldGroup[]
+  /**
+   * The part already draws rule lines of its own (a grid cell's row rule). A
+   * border colour then RECOLOURS those lines; on any other part it draws a
+   * 1px border, because a colour for a border that does not exist would be a
+   * control that changes nothing.
+   */
+  lines?: boolean
 }
 
 const registry = new Map<string, ComponentSpec>()

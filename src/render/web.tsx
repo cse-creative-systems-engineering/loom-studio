@@ -19,6 +19,7 @@ import { applyEffects, normalizeEffects } from './effects'
 import { behaviourAttrs, groupId } from './behaviour'
 import { OUTPUT_HOOK, isResponsive } from './responsive'
 import { FORCE_ATTR, hasStates } from './states'
+import { partAttrs } from './parts'
 import type { Document, InteractionState, Node, NodeId, PropValue } from '../model/types'
 
 export interface RenderCtx {
@@ -1707,6 +1708,9 @@ function renderPreviewBody(
   ctx: RenderCtx,
 ): React.ReactElement {
   const p = node.props
+  // The hook a named part carries (see render/parts.ts): always on the canvas,
+  // in output only when that part is styled.
+  const part = (name: string) => partAttrs(node, name, ctx.mode !== 'preview')
 
   switch (node.type) {
     case 'Button': {
@@ -1799,12 +1803,12 @@ function renderPreviewBody(
       const described = [description ? helpId : '', message ? msgId : ''].filter(Boolean).join(' ')
       const labelBlock = (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', ...(inline ? { width: px(p.labelWidth, 180), flexShrink: 0 } : {}) }}>
-          <span id={labelId} style={{ fontSize: `${labelPx}px`, fontWeight: t.weightMedium, color: t.textSecondary, lineHeight: t.lineHeight }}>
+          <span id={labelId} {...part('label')} style={{ fontSize: `${labelPx}px`, fontWeight: t.weightMedium, color: t.textSecondary, lineHeight: t.lineHeight }}>
             {str(p.label)}
             {p.required === true ? <span style={{ color: t.danger }} aria-hidden="true"> *</span> : null}
           </span>
           {description ? (
-            <span id={helpId} style={{ fontSize: `${smallPx}px`, color: t.textMuted, lineHeight: 1.4 }}>{description}</span>
+            <span id={helpId} {...part('description')} style={{ fontSize: `${smallPx}px`, color: t.textMuted, lineHeight: 1.4 }}>{description}</span>
           ) : null}
         </div>
       )
@@ -1828,6 +1832,7 @@ function renderPreviewBody(
           {message ? (
             <span
               id={msgId}
+              {...part('message')}
               data-loom-field-message
               role={validation === 'error' ? 'alert' : undefined}
               style={{ fontSize: `${smallPx}px`, color: tone, lineHeight: 1.35 }}
@@ -3621,7 +3626,7 @@ function renderPreviewBody(
               <thead>
                 <tr>
                   {selectable && (
-                    <th scope="col" style={{ width: '38px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, textAlign: 'left', padding: rowPad, borderBottom: line }}>
+                    <th scope="col" {...part('header')} style={{ width: '38px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, textAlign: 'left', padding: rowPad, borderBottom: line }}>
                       <input
                         type="checkbox"
                         data-loom-select-all={node.id}
@@ -3634,6 +3639,7 @@ function renderPreviewBody(
                     <th
                       key={c}
                       scope="col"
+                      {...part('header')}
                       aria-sort={sortCol === ci && sortDir !== 'none' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
                       {...(sortable ? behaviourAttrs({ role: 'sort', group: node.id, index: ci }) : {})}
                       {...(sortCol === ci && sortDir !== 'none' ? { 'data-loom-sort': sortDir } : {})}
@@ -3657,7 +3663,7 @@ function renderPreviewBody(
                       {c}
                     </th>
                   ))}
-                  {rowActions && <th scope="col" style={{ width: '44px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, borderBottom: line }} />}
+                  {rowActions && <th scope="col" {...part('header')} style={{ width: '44px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, borderBottom: line }} />}
                 </tr>
               </thead>
             ) : null}
@@ -3666,6 +3672,7 @@ function renderPreviewBody(
                 <tr
                   key={i}
                   data-loom-row
+                  {...part('row')}
                   style={{
                     background: p.striped === true && i % 2 === 1 ? t.bg : 'transparent',
                     // Numeric cells get tabular figures so digits line up down
@@ -3674,7 +3681,7 @@ function renderPreviewBody(
                   }}
                 >
                   {selectable && (
-                    <td style={{ padding: rowPad, borderBottom: line, width: '38px' }}>
+                    <td {...part('cell')} style={{ padding: rowPad, borderBottom: line, width: '38px' }}>
                       <input
                         type="checkbox"
                         data-loom-select={node.id}
@@ -3691,6 +3698,7 @@ function renderPreviewBody(
                       // "the third child" is not "the third column" — and
                       // sorting by position silently sorted the checkbox.
                       data-loom-cell={ci}
+                      {...part('cell')}
                       style={{
                         padding: rowPad,
                         borderBottom: line,
@@ -3706,7 +3714,7 @@ function renderPreviewBody(
                     </td>
                   ))}
                   {rowActions && (
-                    <td style={{ padding: rowPad, borderBottom: line, textAlign: 'right' }}>
+                    <td {...part('cell')} style={{ padding: rowPad, borderBottom: line, textAlign: 'right' }}>
                       <div data-loom-menu={rowMenu(i)} style={{ display: 'inline-block' }}>
                         <button
                           type="button"
@@ -3762,23 +3770,23 @@ function renderPreviewBody(
       return (
         <div key={key} style={style}>
           {p.showLabel !== false ? (
-            <span style={{ fontSize: `${t.textXs}px`, textTransform: 'uppercase', letterSpacing: '0.6px', color: t.textMuted, fontWeight: t.weightSemibold }}>{str(p.label)}</span>
+            <span {...part('label')} style={{ fontSize: `${t.textXs}px`, textTransform: 'uppercase', letterSpacing: '0.6px', color: t.textMuted, fontWeight: t.weightSemibold }}>{str(p.label)}</span>
           ) : null}
-          <span style={{ fontSize: `${valueSize}px`, fontWeight: t.weightBold, color: str(p.accent) || t.textPrimary }}>{shown}</span>
+          <span {...part('value')} style={{ fontSize: `${valueSize}px`, fontWeight: t.weightBold, color: str(p.accent) || t.textPrimary }}>{shown}</span>
           {p.showDelta !== false && delta ? (
             deltaStyle === 'bar' ? (
               // A bar is the quiet comparison: the same delta, without a
               // coloured word, for a card that sits next to nine others.
-              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
+              <span {...part('delta')} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
                 <span aria-hidden="true" style={{ display: 'inline-block', width: tone === 'flat' ? '8px' : '18px', height: '3px', borderRadius: '2px', background: deltaToneColour, transform: tone === 'down' ? 'scaleX(-1)' : undefined }} />
                 <span>{delta}</span>
               </span>
             ) : deltaStyle === 'badge' ? (
-              <span style={{ alignSelf: 'flex-start', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour, background: `${deltaToneColour}1e`, border: `1px solid ${deltaToneColour}44`, borderRadius: `${t.radiusFull}px`, padding: '1px 8px' }}>
+              <span {...part('delta')} style={{ alignSelf: 'flex-start', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour, background: `${deltaToneColour}1e`, border: `1px solid ${deltaToneColour}44`, borderRadius: `${t.radiusFull}px`, padding: '1px 8px' }}>
                 {tone !== 'flat' ? <span aria-hidden="true">{arrow} </span> : null}{delta}
               </span>
             ) : (
-              <span style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
+              <span {...part('delta')} style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
                 {deltaStyle === 'arrow' ? <span aria-hidden="true">{arrow} </span> : null}{delta}
               </span>
             )
@@ -3807,11 +3815,11 @@ function renderPreviewBody(
       return (
         <div key={key} style={style}>
           {p.showLabel !== false ? (
-            <span style={{ fontSize: `${t.textXs}px`, textTransform: 'uppercase', letterSpacing: '0.6px', color: t.textMuted, fontWeight: t.weightSemibold }}>
+            <span {...part('label')} style={{ fontSize: `${t.textXs}px`, textTransform: 'uppercase', letterSpacing: '0.6px', color: t.textMuted, fontWeight: t.weightSemibold }}>
               {str(p.label)}
             </span>
           ) : null}
-          <span style={{ fontSize: `${valueSize}px`, fontWeight: t.weightBold, color: t.textPrimary, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
+          <span {...part('value')} style={{ fontSize: `${valueSize}px`, fontWeight: t.weightBold, color: t.textPrimary, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
             {shown}
           </span>
           {/* The comparison: a direction, the number, and what it is measured
@@ -3819,12 +3827,13 @@ function renderPreviewBody(
           {p.showDelta !== false && str(p.delta) ? (
             <span
               data-loom-kpi-delta=""
+              {...part('delta')}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: `${t.textSm}px`, fontWeight: t.weightSemibold, color: tone }}
             >
               <span aria-hidden="true">{arrow}</span>
               <span>{str(p.delta)}</span>
               {str(p.deltaLabel) ? (
-                <span style={{ fontWeight: t.weightNormal, color: t.textMuted, fontSize: `${t.textXs}px` }}>{str(p.deltaLabel)}</span>
+                <span {...part('caption')} style={{ fontWeight: t.weightNormal, color: t.textMuted, fontSize: `${t.textXs}px` }}>{str(p.deltaLabel)}</span>
               ) : null}
             </span>
           ) : null}
@@ -5385,6 +5394,34 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
       e.preventDefault()
       ctx.onContextMenuNode?.(id, e)
     },
+  }
+
+  // A component with styleable parts is drawn FOR REAL on the canvas: the
+  // output's own body, wearing the editor's attributes. A stub ("48200" in an
+  // empty box) cannot show a part being styled, and an editor that cannot show
+  // what it is editing is guesswork. Selected or not, it looks the same.
+  if (spec.parts) {
+    const body = renderPreviewBody(node, { ...authored, ...themeVars(t) }, children, t, key, parentOf(ctx.doc, id), ctx)
+    if (body.type === React.Fragment) throw new Error(`${node.type} declares parts but has no root element`)
+    const own = body.props as { style?: React.CSSProperties; children?: React.ReactNode }
+    // A leaf's insides are output controls (a grid's filter field, its row
+    // checkboxes). On the canvas they are a picture of those controls:
+    // `inert` sends every pointer to the node itself, so a click selects and a
+    // drag moves, and keeps them out of the tab order. A container's insides
+    // hold the author's own child nodes, which must stay live.
+    const inner = isContainer
+      ? own.children
+      : React.Children.map(own.children, (c) =>
+          React.isValidElement(c) && typeof c.type === 'string' ? React.cloneElement(c as React.ReactElement<{ inert?: boolean }>, { inert: true }) : c,
+        )
+    const handles = ctx.selected.has(id)
+      ? CORNERS.map((corner) => <span key={corner} className="loom-handle" data-corner={corner} data-loom-handle={corner} />)
+      : null
+    return React.cloneElement(
+      body,
+      { ...common, style: own.style, key } as Record<string, unknown>,
+      ...([eff.layers, inner, handles] as never[]),
+    )
   }
 
   if (ctx.selected.has(id)) {

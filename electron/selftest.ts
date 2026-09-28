@@ -13,6 +13,7 @@ import { humanize, inspectorView, isModified } from '../src/model/inspector-view
 import { universalStyleProps } from '../src/model/prop-vocab'
 import { isSafeColor, stateCss, STATE_PRESETS } from '../src/render/states'
 import { documentCss } from '../src/render/document-css'
+import { fieldsFor } from '../src/render/parts'
 import type { Document, Node as LoomNode } from '../src/model/types'
 import { descendants, parentOf } from '../src/model/ops'
 import { allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
@@ -2793,6 +2794,210 @@ export async function runSelfTest(): Promise<string> {
       style.remove()
     }
     check('an unusual node id is still addressed by its rules', matched === '0.5', matched)
+  }
+
+  // --- 54. part styling reaches INSIDE composites ------------------------
+  // Universal type/box props style a composite's root, and its inner parts
+  // style themselves inline, so a KPI's number could never change size. Every
+  // claim below is measured on real elements in a real document.
+  {
+    // Props that make every declared part actually render. A component that
+    // declares a part it does not draw fails the audit below by design.
+    const SEED: Record<string, Record<string, string | boolean>> = {
+      Field: { description: 'Help text', message: 'Something is wrong' },
+      KpiCard: {},
+      Stat: {},
+      DataGrid: {},
+    }
+    const withParts = allComponents().filter((c) => c.parts)
+    check('composites declare styleable parts',
+      ['DataGrid', 'KpiCard', 'Stat', 'Field'].every((n) => getComponent(n)?.parts !== undefined) &&
+      withParts.every((c) => Object.values(c.parts ?? {}).every((p) => p.fields.length > 0 && p.label !== '' && p.hint !== '')),
+      withParts.map((c) => c.name).join(', '))
+
+    // Mount real markup, run `fn` against it, clean up.
+    const mounted = <T,>(doc: Document, mode: 'preview' | 'authoring', fn: (host: HTMLElement) => T, selected: string[] = []): T => {
+      const style = document.createElement('style')
+      style.textContent = documentCss(doc)
+      document.head.appendChild(style)
+      const host = document.createElement('div')
+      host.className = 'loom-container'
+      host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:700px;z-index:99999;background:#000'
+      host.innerHTML = renderToStaticMarkup(renderNode({ doc, selected: new Set(selected), mode }, doc.root as string))
+      document.body.appendChild(host)
+      try {
+        return fn(host)
+      } finally {
+        host.remove()
+        style.remove()
+      }
+    }
+    const partEls = (host: HTMLElement, id: string, part: string) =>
+      [...host.querySelectorAll(`[data-loom-part]`)].filter((e) => e.getAttribute('data-loom-part') === `${id}/${part}`) as HTMLElement[]
+
+    // What each field is measured by: the CSS property on the part element,
+    // the value set, and the computed value expected (null: must differ).
+    const PROBE: Record<string, { css: string; value: string | number; lines?: string; expect: string | null }> = {
+      fontSize: { css: 'font-size', value: 23, expect: '23px' },
+      fontWeight: { css: 'font-weight', value: 800, expect: '800' },
+      color: { css: 'color', value: '#123456', expect: 'rgb(18, 52, 86)' },
+      lineHeight: { css: 'line-height', value: 2.5, expect: null },
+      letterSpacing: { css: 'letter-spacing', value: 3, expect: '3px' },
+      textTransform: { css: 'text-transform', value: 'capitalize', expect: 'capitalize' },
+      align: { css: 'text-align', value: 'center', expect: 'center' },
+      background: { css: 'background-color', value: '#123456', expect: 'rgb(18, 52, 86)' },
+      paddingX: { css: 'padding-left', value: 31, expect: '31px' },
+      paddingY: { css: 'padding-top', value: 29, expect: '29px' },
+      radius: { css: 'border-top-left-radius', value: 13, expect: '13px' },
+      // On a part with no lines of its own, a colour draws a hairline; on a
+      // part with rule lines, it recolours them.
+      border: { css: 'border-top-color', lines: 'border-bottom-color', value: '#123456', expect: 'rgb(18, 52, 86)' },
+      borderWidth: { css: 'border-left-width', value: 4, expect: '4px' },
+    }
+
+    const missing: string[] = []
+    const liars: string[] = []
+    const leaks: string[] = []
+    let measured = 0
+    for (const comp of withParts) {
+      for (const [partName, partSpec] of Object.entries(comp.parts ?? {})) {
+        const st = new EditorStore()
+        st.addComponent('Panel', null, 0, 0)
+        const r = st.doc.root as string
+        const id = st.addComponent(comp.name, r, 20, 20, SEED[comp.name] ?? {}) as string
+        if (comp.name === 'Field') st.addComponent('Input', id, 0, 0)
+        const baseDoc = st.doc
+        // The part must exist on the canvas before it is styled (the panel
+        // points at it), and in the output once it is.
+        const baseline = mounted(baseDoc, 'authoring', (h) => {
+          const els = partEls(h, id, partName)
+          return els.length > 0 ? getComputedStyle(els[0]) : null
+        })
+        const baseValues: Record<string, string> = {}
+        if (baseline === null) {
+          missing.push(`${comp.name}.${partName} (canvas)`)
+          continue
+        }
+        for (const f of fieldsFor(partSpec.fields)) {
+          const probe = PROBE[f.key]
+          if (!probe) {
+            liars.push(`${comp.name}.${partName}.${f.key} (no probe: add one)`)
+            continue
+          }
+          const prop = partSpec.lines && probe.lines ? probe.lines : probe.css
+          baseValues[f.key] = mounted(baseDoc, 'authoring', (h) => getComputedStyle(partEls(h, id, partName)[0]).getPropertyValue(prop))
+          const rootBefore = mounted(baseDoc, 'authoring', (h) => getComputedStyle(h.querySelector(`[data-loom-id="${id}"]`) as HTMLElement).getPropertyValue(prop))
+          st.commit({ op: 'setPartStyle', id, part: partName, patch: { [f.key]: probe.value } }, 'probe')
+          for (const mode of ['preview', 'authoring'] as const) {
+            mounted(st.doc, mode, (h) => {
+              const els = partEls(h, id, partName)
+              if (els.length === 0) {
+                missing.push(`${comp.name}.${partName} (${mode})`)
+                return
+              }
+              for (const el of els) {
+                const got = getComputedStyle(el).getPropertyValue(prop)
+                const ok = probe.expect === null ? got !== baseValues[f.key] : got === probe.expect
+                if (!ok) liars.push(`${comp.name}.${partName}.${f.key} ${mode}: ${prop}=${got}`)
+              }
+              measured += 1
+              // The root keeps its own look: a part rule must not leak up.
+              if (mode === 'authoring') {
+                const rootAfter = getComputedStyle(h.querySelector(`[data-loom-id="${id}"]`) as HTMLElement).getPropertyValue(prop)
+                if (rootAfter !== rootBefore) leaks.push(`${comp.name}.${partName}.${f.key}: ${rootBefore} -> ${rootAfter}`)
+              }
+            })
+          }
+          st.undo()
+        }
+      }
+    }
+    check('every declared part exists on the canvas and in the output', missing.length === 0, missing.join(', '))
+    check('every field of every part changes that part, on the canvas and in the output',
+      liars.length === 0 && measured > 100, `${measured} measured; ${liars.slice(0, 8).join(' | ')}`)
+    check('a part rule never restyles the component root', leaks.length === 0, leaks.join(', '))
+
+    // Op discipline: exact undo, and only declared parts and accepted fields land.
+    const s54 = new EditorStore()
+    s54.addComponent('Panel', null, 0, 0)
+    const r54 = s54.doc.root as string
+    s54.commit({ op: 'resize', id: r54, w: 900, h: 700 }, 'size root')
+    const grid = s54.addComponent('DataGrid', r54, 20, 20) as string
+    s54.commit({ op: 'resize', id: grid, w: 640, h: 300 }, 'size grid')
+    const field = s54.addComponent('Field', r54, 20, 400, { description: 'Help' }) as string
+    const inner = s54.addComponent('Stat', field, 0, 0) as string
+    s54.commit({ op: 'setPartStyle', id: grid, part: 'header', patch: { fontSize: 15, color: '#123456' } }, 'header')
+    check('a part style is stored per part', s54.doc.nodes[grid].parts?.header?.fontSize === 15 && s54.doc.nodes[grid].parts?.cell === undefined)
+    s54.undo()
+    check('undoing the first part style leaves no empty bag', s54.doc.nodes[grid].parts === undefined)
+    s54.redo()
+    s54.commit({ op: 'setPartStyle', id: grid, part: 'nonsense', patch: { fontSize: 15 } }, 'bad part')
+    s54.commit({ op: 'setPartStyle', id: grid, part: 'row', patch: { fontSize: 15, paddingX: 4 } }, 'not accepted')
+    check('an undeclared part, or a field the part does not take, never lands',
+      s54.doc.nodes[grid].parts?.nonsense === undefined && s54.doc.nodes[grid].parts?.row === undefined, JSON.stringify(s54.doc.nodes[grid].parts))
+    s54.commit({ op: 'setPartStyle', id: grid, part: 'cell', patch: { fontSize: 999, background: 'red}</style><script>alert(1)</script>' } }, 'hostile')
+    check('part numbers clamp and hostile colours never land',
+      s54.doc.nodes[grid].parts?.cell?.fontSize === 96 && s54.doc.nodes[grid].parts?.cell?.background === undefined, JSON.stringify(s54.doc.nodes[grid].parts?.cell))
+
+    // Isolation: a Field's label rule must not reach a Stat's label nested in it.
+    s54.commit({ op: 'setPartStyle', id: field, part: 'label', patch: { color: '#123456' } }, 'field label')
+    const nested = mounted(s54.doc, 'preview', (h) => {
+      const own = partEls(h, field, 'label')[0]
+      // The Stat's label is unstyled, so it carries no hook in output: find it by text.
+      const statLabel = [...h.querySelectorAll('span')].find((e) => e.textContent === 'Revenue') as HTMLElement | undefined
+      return { own: own ? getComputedStyle(own).color : 'missing', nested: statLabel ? getComputedStyle(statLabel).color : 'missing' }
+    })
+    check('a part rule stays inside its own component', nested.own === 'rgb(18, 52, 86)' && nested.nested !== 'rgb(18, 52, 86)' && nested.nested !== 'missing',
+      JSON.stringify(nested))
+    void inner
+
+    // Output hooks only where needed.
+    const html54 = emitHtml(s54.doc)
+    check('a styled part carries its hook in the export', html54.includes(`data-loom-part="${grid}/header"`) && html54.includes(`data-loom-part="${field}/label"`))
+    check('an unstyled part carries none', !html54.includes(`data-loom-part="${grid}/row"`) && !html54.includes(`data-loom-part="${field}/description"`))
+    check('both exports ship the part rules', html54.includes('Loom: part styling') && emitReact(s54.doc).includes('Loom: part styling'))
+
+    // The file trust boundary.
+    const hostile54 = JSON.parse(serialize(s54.doc)) as { nodes: Record<string, Record<string, unknown>> }
+    hostile54.nodes[grid].parts = { header: { fontSize: 'big', color: 'url(x)', align: 'sideways', fontWeight: 700 }, ghost: { color: 'red' }, row: { fontSize: 12 }, cell: 'x' }
+    const loaded54 = validate(JSON.stringify(hostile54))
+    const p54 = loaded54.issues.map((i) => `${i.path} ${i.message}`)
+    check('a hostile parts bag is repaired and reported',
+      JSON.stringify(loaded54.doc?.nodes[grid].parts) === JSON.stringify({ header: { fontWeight: 700 } }) &&
+      p54.some((p) => p.includes('no part "ghost"')) && p54.some((p) => p.includes('not a colour')) && p54.some((p) => p.includes('not accepted by this part')) &&
+      p54.some((p) => p.includes('parts.cell')) && p54.some((p) => p.includes('not one of')), p54.join(' | '))
+    const clean54 = validate(serialize(s54.doc))
+    check('parts survive save and load', clean54.issues.length === 0 &&
+      JSON.stringify(clean54.doc?.nodes[grid].parts) === JSON.stringify(s54.doc.nodes[grid].parts), clean54.issues.map((i) => i.message).join(' | '))
+    const forged54 = JSON.parse(JSON.stringify(s54.doc)) as Document
+    forged54.nodes[grid].parts = { header: { color: 'red}</style><script>alert(1)</script>' } } as never
+    check('a forged part colour cannot break out of the exported stylesheet', !emitHtml(forged54).includes('<script>alert(1)'))
+
+    // The canvas draws the composite for real.
+    const canvas = mounted(s54.doc, 'authoring', (h) => {
+      const g = h.querySelector(`[data-loom-id="${grid}"]`) as HTMLElement | null
+      const f = h.querySelector(`[data-loom-id="${field}"]`) as HTMLElement | null
+      const cell = g?.querySelector('td[data-loom-cell]') as HTMLElement | null
+      const r = cell?.getBoundingClientRect()
+      const hit = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null
+      return {
+        table: Boolean(g?.querySelector('table')),
+        headerCount: g?.querySelectorAll('th').length ?? 0,
+        fieldChild: Boolean(f?.querySelector(`[data-loom-id="${inner}"]`)),
+        searchInert: Boolean(g?.querySelector('input[type="search"]')?.closest('[inert]')),
+        hitGoesToNode: hit !== null && hit === g,
+        hit: hit ? `${hit.tagName}.${hit.getAttribute('data-loom-id') ?? ''}` : 'nothing',
+      }
+    })
+    check('the canvas draws a real grid, not a stub', canvas.table && canvas.headerCount >= 4, JSON.stringify(canvas))
+    check('an unselected Field shows the control inside it on the canvas', canvas.fieldChild, JSON.stringify(canvas))
+    check('a composite\'s own controls are a picture on the canvas: inert, and a click lands on the node',
+      canvas.searchInert && canvas.hitGoesToNode, JSON.stringify(canvas))
+    const picked = mounted(s54.doc, 'authoring', (h) => {
+      const g = h.querySelector(`[data-loom-id="${grid}"]`) as HTMLElement | null
+      return { table: Boolean(g?.querySelector('table')), handles: g?.querySelectorAll('[data-loom-handle]').length ?? 0, selected: g?.getAttribute('data-selected') }
+    }, [grid])
+    check('selected, it is the same grid with handles', picked.table && picked.handles === 4 && picked.selected === 'true', JSON.stringify(picked))
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

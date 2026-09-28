@@ -89,7 +89,7 @@ body{background:${theme.bg};color:${theme.textPrimary};font-family:${theme.fontF
 ${pageFill}
 /* Built-in control behaviour: the same state rules the editor preview uses. */
 ${behaviourCss()}
-/* Per-breakpoint layout and interaction states: the same generated rules the editor authors against. */
+/* Per-breakpoint layout, part styling and interaction states: the same generated rules the editor authors against. */
 ${documentCss(doc, theme)}
 </style>
 </head>

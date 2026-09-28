@@ -16,6 +16,7 @@ import { getComponent, validateProps } from './registry'
 import { clampZ } from './ops'
 import { normalizeEffects } from '../render/effects'
 import { cleanStateStyle } from '../render/states'
+import { cleanPartStyle, partsOf } from '../render/parts'
 import './toolbox'
 
 /**
@@ -249,6 +250,33 @@ export function validate(input: unknown): Validated {
       issues.push({ path: `$.nodes.${id}.states`, message: 'not an object (dropped)' })
       states = undefined
     }
+    // Part styling is stylesheet text too, and it is also checked against the
+    // component: a part the component does not declare, or a field that part
+    // does not accept, is dropped and reported. Same sanitiser as the op.
+    let parts: Node['parts']
+    if (node.parts === undefined) {
+      parts = undefined
+    } else if (node.parts && typeof node.parts === 'object' && !Array.isArray(node.parts)) {
+      const declared = partsOf(node.type) ?? {}
+      const bag: NonNullable<Node['parts']> = {}
+      for (const [partRaw, styleRaw] of Object.entries(node.parts as Record<string, unknown>)) {
+        if (!Object.prototype.hasOwnProperty.call(declared, partRaw)) {
+          issues.push({ path: `$.nodes.${id}.parts.${partRaw}`, message: `${node.type} has no part "${partRaw}" (dropped)` })
+          continue
+        }
+        if (!styleRaw || typeof styleRaw !== 'object' || Array.isArray(styleRaw)) {
+          issues.push({ path: `$.nodes.${id}.parts.${partRaw}`, message: 'not an object (dropped)' })
+          continue
+        }
+        const { style, dropped } = cleanPartStyle(node.type, partRaw, styleRaw as Record<string, unknown>)
+        for (const d of dropped) issues.push({ path: `$.nodes.${id}.parts.${partRaw}`, message: `${d} (dropped)` })
+        if (Object.keys(style).length > 0) bag[partRaw] = style
+      }
+      parts = Object.keys(bag).length > 0 ? bag : undefined
+    } else {
+      issues.push({ path: `$.nodes.${id}.parts`, message: 'not an object (dropped)' })
+      parts = undefined
+    }
     // Opacity repairs toward 1, clamped into range like the op does.
     let opacity = 1
     if (node.opacity !== undefined) {
@@ -271,6 +299,7 @@ export function validate(input: unknown): Validated {
       z,
       responsive,
       states,
+      parts,
     }
   }
 

@@ -75,7 +75,39 @@ export interface Node {
    * state, carried only for the states a node actually styles.
    */
   states?: InteractionStyles
+  /**
+   * Styling for the named inner parts of a composite (a grid's header, a KPI's
+   * value). Universal props style a component's ROOT, and inner parts style
+   * themselves inline, so without this a card's number could never change
+   * size. Keys are the part names the component declares in the registry;
+   * same discipline as `states`: a small typed bag, only for styled parts.
+   */
+  parts?: PartStyles
 }
+
+/**
+ * What a part may change. Type and box only: a part is placed by its
+ * component, so nothing here moves it. Which fields a given part accepts is
+ * declared by the component (a table row has no padding to give).
+ */
+export interface PartStyle {
+  fontSize?: number
+  fontWeight?: number
+  color?: string
+  lineHeight?: number
+  letterSpacing?: number
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  align?: 'left' | 'center' | 'right'
+  background?: string
+  paddingX?: number
+  paddingY?: number
+  radius?: number
+  /** Border colour. */
+  border?: string
+  borderWidth?: number
+}
+
+export type PartStyles = Record<string, PartStyle>
 
 /** The interaction states a node can be styled for, in cascade order. */
 export type InteractionState = 'hover' | 'focus' | 'pressed'
@@ -240,6 +272,12 @@ export type Op =
    * so it must not be able to carry anything but a colour.
    */
   | { op: 'setStateStyle'; id: NodeId; state: InteractionState; patch: Record<string, string | number | null> }
+  /**
+   * Write one named part's styling for a node. `null` removes a key. Same
+   * sanitising as `setStateStyle`, plus the part must be one the component
+   * declares and the key one that part accepts.
+   */
+  | { op: 'setPartStyle'; id: NodeId; part: string; patch: Record<string, string | number | null> }
   | { op: 'rename'; name: string }
   /**
    * Set the document's design theme. `null` clears it back to the default.

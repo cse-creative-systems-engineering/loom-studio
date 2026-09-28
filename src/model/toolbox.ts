@@ -285,6 +285,11 @@ defineComponent({
     // where the visible one is abbreviated or duplicated elsewhere on screen.
     ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
   },
+  parts: {
+    label: { label: 'Label', hint: 'The field name', fields: ['text', 'box'] },
+    description: { label: 'Help text', hint: 'The description under the label', fields: ['text', 'box'] },
+    message: { label: 'Message', hint: 'The validation message', fields: ['text', 'box'] },
+  },
 })
 
 defineComponent({

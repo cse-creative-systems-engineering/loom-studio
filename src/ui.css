@@ -1229,3 +1229,9 @@ input, select { font-family: inherit; font-size: 12px; }
 
 .mini:hover { color: var(--ink); border-color: rgba(91, 140, 255, 0.5); }
 .mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Parts: same tab strip as Interaction, but the number of parts varies per
+   component, so the columns follow the count instead of a fixed four. */
+.parts-panel .state-tabs { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.parts-panel .state-tab { padding: 5px 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.parts-panel h3 { margin-bottom: 0; }

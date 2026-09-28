@@ -16,6 +16,8 @@ import { inspectorView, propLabel } from './model/inspector-view'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { StatesPanel } from './states-inspector'
+import { PartsPanel } from './parts-inspector'
+import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
 import { Toggle } from './ui-primitives'
 import { VIEWPORTS, nodeBreakpoints } from './render/responsive'
@@ -1361,6 +1363,12 @@ function Inspector({
             ))}
           </section>
         ))}
+
+        {/* Inner parts are styling, so they sit behind "more properties" with
+            the rest of it; a styled part is never hidden. */}
+        {spec.parts && (showAdvanced || Object.keys(spec.parts).some((n) => partStyled(node, n))) && (
+          <PartsPanel s={s} node={node} parts={spec.parts} />
+        )}
 
         {/*
           The atmosphere layer. Present but separate from the schema-driven

@@ -206,7 +206,7 @@ function StateFieldRow({
  * straight to the document; the draft lets a person finish typing, commits the
  * moment the text IS a colour, and reverts on blur if it never became one.
  */
-function ColorInput({ value, label, onChange }: { value: string; label: string; onChange: (v: string | null) => void }) {
+export function ColorInput({ value, label, onChange }: { value: string; label: string; onChange: (v: string | null) => void }) {
   const [draft, setDraft] = React.useState(value)
   React.useEffect(() => setDraft(value), [value])
   const hex = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#ffffff'

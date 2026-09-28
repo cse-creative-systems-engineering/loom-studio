@@ -327,6 +327,10 @@ defineComponent({ name: 'DataGrid', category: 'Data', icon: '▦', description: 
   // that appears to work and does not.
   ...boxProps(),
   ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
+}, parts: {
+  header: { label: 'Header', hint: 'The column titles', fields: ['text', 'box'], lines: true },
+  row: { label: 'Rows', hint: 'Each data row, behind its cells', fields: ['surface'] },
+  cell: { label: 'Cells', hint: 'Every data cell', fields: ['text', 'box'], lines: true },
 }})
 defineComponent({ name: 'Stat', category: 'Data', icon: '📊', description: 'KPI stat with delta.', props: {
   label: { type: 'string', default: 'Revenue', group: 'Content' },
@@ -351,6 +355,11 @@ defineComponent({ name: 'Stat', category: 'Data', icon: '📊', description: 'KP
   // NOT `...textProps()`: the label, the value and the delta each set their own
   // size and colour, so the fragment's type controls would be inherited and
   // immediately overridden. `size` is the scale that does reach all three.
+  // Their own type is reached through the parts below.
+}, parts: {
+  label: { label: 'Label', hint: 'The small caption above the number', fields: ['text', 'box'] },
+  value: { label: 'Value', hint: 'The number itself', fields: ['text', 'box'] },
+  delta: { label: 'Delta', hint: 'The comparison under the number', fields: ['text', 'box'] },
 }})
 defineComponent({ name: 'KpiCard', category: 'Data', icon: '◧', description: 'KPI card: one number, one comparison, one visual.', props: {
   label: { type: 'string', default: 'Monthly revenue', group: 'Content' },
@@ -373,6 +382,11 @@ defineComponent({ name: 'KpiCard', category: 'Data', icon: '◧', description: '
   ...stackAlign('start'),
   ...padProps(),
   accent: { type: 'color', default: '', group: 'Style' },
+}, parts: {
+  label: { label: 'Label', hint: 'The small caption above the number', fields: ['text', 'box'] },
+  value: { label: 'Value', hint: 'The number itself', fields: ['text', 'box'] },
+  delta: { label: 'Delta', hint: 'The change, with its arrow', fields: ['text', 'box'] },
+  caption: { label: 'Comparison', hint: 'What the change is measured against', fields: ['text', 'box'] },
 }})
 defineComponent({ name: 'ProgressBar', category: 'Data', icon: '▰', description: "Progress towards a known total. If the total is unknown, use LoadingBar.", props: {
   value: { type: 'number', default: 62, min: 0, max: 100, group: 'Data', bindable: true },
