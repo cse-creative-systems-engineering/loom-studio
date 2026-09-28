@@ -27,7 +27,7 @@ import { AddsPanel, ListsPanel } from './list-inspector'
 import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
 import { Toggle } from './ui-primitives'
-import { VIEWPORTS, nodeBreakpoints } from './render/responsive'
+import { VIEWPORTS, fitZoom, nodeBreakpoints } from './render/responsive'
 import { installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import { ContextMenu, type MenuState } from './context-menu'
 import { THEME_NAMES, getTheme } from './render/theme'
@@ -97,12 +97,16 @@ export function App() {
   const [menu, setMenu] = React.useState<MenuState | null>(null)
   // Canvas zoom is view state, not document state: it never touches the
   // doc, the history, or the output. 1 = 100%.
-  const [zoom, setZoom] = React.useState(1)
+  // 'fit' (the default) scales the viewport's true width into the room the
+  // canvas has; a number is a zoom the designer chose.
+  const [zoomPref, setZoomPref] = React.useState<number | 'fit'>('fit')
+  const [room, setRoom] = React.useState(0)
   // Design or preview, IN PLACE: the canvas becomes the running artifact at
   // the same viewport and zoom, and the panels step aside. A separate window
   // made you look away from where you were working; it is still one click
   // away ("Pop out") for a second screen.
   const [mode, setMode] = React.useState<'design' | 'preview'>('design')
+  const zoom = zoomPref === 'fit' ? fitZoom(room, VIEWPORTS.find((v) => v.id === viewport)?.width ?? 1280) : zoomPref
   const modeRef = React.useRef(mode)
   modeRef.current = mode
 
@@ -289,7 +293,9 @@ export function App() {
           dragging={dragging}
           onMenu={setMenu}
           zoom={zoom}
-          onZoom={(z) => setZoom(Math.min(2, Math.max(0.25, Math.round(z * 100) / 100)))}
+          fit={zoomPref === 'fit'}
+          onZoom={(z) => setZoomPref(z === 'fit' ? 'fit' : Math.min(2, Math.max(0.25, Math.round(z * 100) / 100)))}
+          onRoom={setRoom}
           mode={mode}
           onMode={setMode}
         />
@@ -970,7 +976,9 @@ function Canvas({
   dragging,
   onMenu,
   zoom,
+  fit,
   onZoom,
+  onRoom,
   viewport,
   onViewport,
   editState,
@@ -982,7 +990,10 @@ function Canvas({
   dragging: string | null
   onMenu: (m: MenuState | null) => void
   zoom: number
-  onZoom: (z: number) => void
+  fit: boolean
+  onZoom: (z: number | 'fit') => void
+  /** The width the canvas has for the viewport, for the Fit zoom. */
+  onRoom: (px: number) => void
   viewport: Breakpoint
   onViewport: (b: Breakpoint) => void
   mode: 'design' | 'preview'
@@ -1180,8 +1191,22 @@ function Canvas({
 
   const selected = new Set(s.selection)
 
+  // The room the viewport has: the canvas minus its gutters (and the rulers'
+  // strip), re-measured whenever the window or the panels change.
+  const wrapRef = React.useRef<HTMLElement | null>(null)
+  const gutter = mode === 'preview' ? 42 : 58 + (rulers ? 22 : 0)
+  React.useLayoutEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const measure = () => onRoom(el.clientWidth - gutter)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [gutter, onRoom])
+
   return (
-    <main className="canvas-wrap">
+    <main className="canvas-wrap" ref={wrapRef}>
       {mode === 'preview' && (
         <div className="canvas previewing">
           {/* The artifact, running: same viewport, same zoom, real behaviour. */}
@@ -1189,7 +1214,7 @@ function Canvas({
               viewport's width, so where the artifact sits on it is visible. */}
           <div
             className={`stage ${CONTAINER_CLASS}`}
-            style={{ zoom, width: viewportWidth, maxWidth: '100%', minHeight: `calc((100vh - 122px) / ${zoom})`, background: getTheme(s.doc.meta.theme).bg, color: getTheme(s.doc.meta.theme).textPrimary, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
+            style={{ zoom, width: viewportWidth, minHeight: `calc((100vh - 122px) / ${zoom})`, background: getTheme(s.doc.meta.theme).bg, color: getTheme(s.doc.meta.theme).textPrimary, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
             data-viewport={viewport}
           >
             <PreviewStage s={s} />
@@ -1204,7 +1229,9 @@ function Canvas({
           data-viewport={viewport}
           onPointerDown={() => s.select([])}
           // The design's type, not the Studio's: what the export's body sets.
-          style={{ zoom, width: viewportWidth, maxWidth: '100%', fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
+          // Exactly the viewport's width, never squeezed to the canvas: the
+          // zoom fits it instead, so positions match the preview.
+          style={{ zoom, width: viewportWidth, fontFamily: getTheme(s.doc.meta.theme).fontFamily }}
         >
           {s.doc.root !== null && (
             renderNode(
@@ -1265,7 +1292,12 @@ function Canvas({
           <button onClick={() => onZoom(zoom / 1.25)} title="Zoom out" aria-label="Zoom out">
             <Ico name="minus" size={12} />
           </button>
-          <button className="dock-zoom" onClick={() => onZoom(1)} title="Reset to 100%" aria-label={`Zoom ${Math.round(zoom * 100)} percent, activate to reset`}>
+          <button
+            className={`dock-zoom ${fit ? 'fit' : ''}`}
+            onClick={() => onZoom(fit ? 1 : 'fit')}
+            title={fit ? 'Fitting the whole viewport. Click for 100%' : 'Fit the whole viewport'}
+            aria-label={`Zoom ${Math.round(zoom * 100)} percent${fit ? ', fitted' : ''}`}
+          >
             {Math.round(zoom * 100)}%
           </button>
           <button onClick={() => onZoom(zoom * 1.25)} title="Zoom in" aria-label="Zoom in">

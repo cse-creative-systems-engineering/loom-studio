@@ -3511,6 +3511,64 @@ export async function runSelfTest(): Promise<string> {
     check('the real toolbox draws every tool icon as a glyph, not a character', tools.length > 50 && bare.length === 0, `tools=${tools.length} bare=${bare.length}`)
   }
 
+  // --- 64. where you put it in the design is where it is in the preview ---
+  // Shane: "an item placed in the center of the workspace, then Preview: it's
+  // off to the left". The design canvas was squeezed to the room between the
+  // panels (920px) while Preview ran the real 1280px viewport, so x=440 was
+  // the middle of one and left of the middle of the other. Now the canvas is
+  // always the viewport's true width and the zoom fits it. Real mounted app.
+  {
+    const app = window.__loomStore
+    const before = app.doc
+    const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms))
+    const scene = new EditorStore()
+    scene.addComponent('Button', scene.doc.root!, 0, 0, { label: 'Centred' })
+    const btnId = scene.selection[0]!
+    app.loadDocument(scene.doc)
+    await wait()
+    const btn = () => document.querySelector<HTMLElement>(`[data-loom-id="${btnId}"]`) ?? document.querySelector<HTMLElement>('.preview-stage button')
+    // Put it dead centre of the Desktop viewport, measured, in doc px.
+    const w = btn()!.getBoundingClientRect().width / (Number(document.querySelector<HTMLElement>('.surface')!.dataset.zoom) / 100)
+    app.commit({ op: 'move', id: btnId, x: Math.round(640 - w / 2), y: 60 }, 'centre')
+    await wait()
+    const zoomOf = (el: HTMLElement) => Number(getComputedStyle(el).zoom) || 1
+    const surf = document.querySelector<HTMLElement>('.surface')!
+    const dz = zoomOf(surf)
+    const sr = surf.getBoundingClientRect()
+    const designWidth = (sr.width - 2 * surf.clientLeft * dz) / dz
+    check('the design canvas is the viewport\'s true width', Math.abs(designWidth - 1280) <= 2, `${designWidth.toFixed(1)}px at zoom ${dz}`)
+    const br = btn()!.getBoundingClientRect()
+    const designMid = (br.left + br.width / 2 - (sr.left + surf.clientLeft * dz)) / dz
+    ;[...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === 'Preview')?.click()
+    await wait(250)
+    const stage = document.querySelector<HTMLElement>('.canvas.previewing .stage')!
+    const pz = zoomOf(stage)
+    const pr = stage.getBoundingClientRect()
+    const pb = document.querySelector<HTMLElement>('.preview-stage button')!.getBoundingClientRect()
+    const previewMid = (pb.left + pb.width / 2 - pr.left) / pz
+    // What the designer SEES: the middle of the canvas as drawn is the middle
+    // of the viewport (it was x=640 of a 718px-wide canvas: right of centre).
+    check('the middle of the design canvas is the middle of the viewport', Math.abs(designMid / designWidth - 0.5) <= 0.005, `${designMid.toFixed(1)} of ${designWidth.toFixed(1)}`)
+    check('and in the same place in the preview', Math.abs(previewMid - designMid) <= 3, `design ${designMid.toFixed(1)} / preview ${previewMid.toFixed(1)}`)
+    const stageMid = pr.left + pr.width / 2
+    const wrap = document.querySelector<HTMLElement>('.canvas-wrap')!.getBoundingClientRect()
+    check('the preview screen sits in the middle of the canvas', Math.abs(stageMid - (wrap.left + wrap.width / 2)) <= 12, `${stageMid.toFixed(0)} vs ${(wrap.left + wrap.width / 2).toFixed(0)}`)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await wait()
+    // Every viewport is its own width: the phone was 720px wide (a min-width).
+    const pick = (label: string) => document.querySelector<HTMLButtonElement>(`.dock button[aria-label="${label}"]`)?.click()
+    for (const [label, px] of [['Phone', 390], ['Tablet', 834], ['Desktop', 1280]] as const) {
+      pick(label)
+      await wait()
+      const el = document.querySelector<HTMLElement>('.surface')!
+      const z = zoomOf(el)
+      const width = (el.getBoundingClientRect().width - 2 * el.clientLeft * z) / z
+      check(`the ${label} canvas is ${px}px wide`, Math.abs(width - px) <= 2, `${width.toFixed(1)}px at zoom ${z}`)
+    }
+    app.loadDocument(before)
+    await wait()
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

@@ -160,6 +160,18 @@ export const VIEWPORTS: ReadonlyArray<{ id: Breakpoint; label: string; width: nu
   { id: 'lg', label: 'Desktop', width: 1280 },
 ]
 
+/**
+ * The zoom that shows a whole viewport in `room` px of canvas: never above
+ * 100%, never below 25%. The canvas is ALWAYS the viewport's true width and
+ * scales to fit; narrowing it instead (what it did) moved everything the
+ * designer placed relative to the page, so "centred" in the design landed
+ * left of centre in the preview.
+ */
+export function fitZoom(room: number, viewportWidth: number): number {
+  if (!(room > 0) || !(viewportWidth > 0)) return 1
+  return Math.min(1, Math.max(0.25, Math.floor((room / viewportWidth) * 100) / 100))
+}
+
 /** The viewport a given container width falls into. */
 export function breakpointForWidth(width: number): Breakpoint {
   for (const bp of BREAKPOINTS) {

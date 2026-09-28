@@ -224,7 +224,7 @@
 
 /* ---------------- preview, in place ---------------- */
 
-.canvas.previewing { display: grid; justify-items: center; align-content: start; }
+.canvas.previewing { display: grid; justify-content: safe center; align-content: start; }
 
 /* The artifact on its own, no editor chrome at all: what ships. */
 .canvas.previewing .stage { position: relative; }
@@ -234,6 +234,8 @@
    so the artifact's own position on it reads as a layout, not as drift. */
 .canvas.previewing { padding: 20px 20px 64px; }
 .canvas.previewing .stage {
+  box-sizing: content-box;
+  flex: none;
   border-radius: 10px;
   overflow: hidden;
   box-shadow: 0 0 0 1px var(--line-2), 0 24px 60px -30px rgba(0, 0, 0, 0.9);

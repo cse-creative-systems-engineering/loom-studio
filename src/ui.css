@@ -197,6 +197,11 @@ input, select { font-family: inherit; font-size: 12px; }
   /* Room at the bottom for the floating dock, so it never covers the work. */
   padding: 28px 28px 72px;
   min-height: 0;
+  /* The viewport sits centred, as it does in Preview; `safe` keeps a zoomed-in
+     artboard scrollable to its left edge instead of clipping it. */
+  display: grid;
+  justify-content: safe center;
+  align-content: start;
 }
 
 .canvas[hidden] { display: none; }
@@ -206,7 +211,11 @@ input, select { font-family: inherit; font-size: 12px; }
    border said "empty dropzone placeholder". */
 .surface {
   position: relative;
-  min-width: 720px;
+  /* The width IS the viewport's (set inline); the border sits outside it, so
+     the content box is exactly 1280 / 834 / 390 like the preview's. No
+     min-width: a floor of 720px made the 390px phone a 720px phone. */
+  box-sizing: content-box;
+  flex: none;
   min-height: 460px;
   border-radius: 12px;
   background-color: #12151d;

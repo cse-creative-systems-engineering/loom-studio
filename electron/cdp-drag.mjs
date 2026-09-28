@@ -152,7 +152,8 @@ try {
     ews,
     `(() => { const r = document.querySelector('[data-loom-id="${ids.gauge}"]').getBoundingClientRect();
       const n = window.__loomStore.doc.nodes[${JSON.stringify(ids.gauge)}];
-      return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, x: n.props.x, y: n.props.y, hist: window.__loomStore.history.length }; })()`,
+      const z = Number(document.querySelector('.surface').dataset.zoom) / 100;
+      return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, x: n.props.x, y: n.props.y, z, hist: window.__loomStore.history.length }; })()`,
   )
   await drag(ews, g0.cx, g0.cy, g0.cx + 140, g0.cy + 90)
   const g1 = await evaluate(
@@ -160,9 +161,11 @@ try {
     `(() => { const n = window.__loomStore.doc.nodes[${JSON.stringify(ids.gauge)}];
       return { x: n.props.x, y: n.props.y, hist: window.__loomStore.history.length }; })()`,
   )
+  // Screen pixels are doc pixels times the zoom (the canvas opens at Fit).
+  const ex = g0.x + 140 / g0.z, ey = g0.y + 90 / g0.z
   step('free drag moves the node',
-    Math.abs(g1.x - (g0.x + 140)) <= 8 && Math.abs(g1.y - (g0.y + 90)) <= 8,
-    `(${g0.x},${g0.y}) -> (${g1.x},${g1.y})`)
+    Math.abs(g1.x - ex) <= 8 && Math.abs(g1.y - ey) <= 8,
+    `(${g0.x},${g0.y}) -> (${g1.x},${g1.y}), expected (${ex.toFixed(0)},${ey.toFixed(0)}) at zoom ${g0.z}`)
   step('free drag seals to exactly one history entry', g1.hist === g0.hist + 1, `${g0.hist} -> ${g1.hist}`)
 
   const f0 = await evaluate(
