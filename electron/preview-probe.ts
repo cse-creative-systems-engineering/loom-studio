@@ -9,12 +9,16 @@
  */
 
 import { app, BrowserWindow } from 'electron'
-import path from 'node:path'
 // Side effect: registers the REAL preview/save IPC handlers from main.ts,
 // so this probe drives production code, not a copy.
 import './main'
 
-const here = __dirname
+// The editor window main.ts creates loads the seeded demo scene. It must be
+// THAT window the probe drives: preview IPC is honoured only from the editor
+// window main.ts registered (see `fromEditor`), so a second window of the
+// probe's own is refused, which is how this probe went red after the IPC
+// guard landed. Set before `whenReady`, when main.ts reads it.
+process.env.LOOM_DEMO = '1'
 
 interface Step {
   name: string
@@ -29,18 +33,13 @@ async function run() {
     console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
   }
 
-  const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    show: false,
-    webPreferences: {
-      preload: path.join(here, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
-  await win.loadFile(path.join(here, '../renderer/index.html'), { search: 'demo=1' })
+  let win: BrowserWindow | undefined
+  for (let i = 0; i < 60 && !win; i++) {
+    win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.getURL().includes('index.html'))
+    if (!win) await new Promise((r) => setTimeout(r, 250))
+  }
+  if (!win) throw new Error('main.ts created no editor window')
+  if (win.webContents.isLoading()) await new Promise((r) => win?.webContents.once('did-finish-load', () => r(undefined)))
   await new Promise((r) => setTimeout(r, 1500))
 
   const hasBridge = await win.webContents.executeJavaScript('Boolean(window.loomPreview && window.__loomStore)', true)
