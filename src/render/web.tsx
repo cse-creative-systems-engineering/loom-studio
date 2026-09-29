@@ -554,6 +554,7 @@ function applyCommonStyle(
 const GLASS_SURFACES = new Set([
   'Card', 'Tabs', 'Modal', 'Drawer', 'Toolbar', 'StatusBar', 'HeaderBar', 'FooterBar',
   'SettingsSection', 'SidebarPanel', 'KpiCard', 'DataCard', 'Menu', 'CommandBar', 'ConfirmDialog',
+  'AccordionItem',
 ])
 
 function isGlass(node: Node): boolean {
@@ -793,8 +794,10 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
     }
     case 'AccordionItem': {
       s.display = 'flex'; s.flexDirection = 'column'
-      s.borderRadius = `${t.radiusMd}px`; s.background = t.surface
-      s.border = `1px solid ${t.border}`
+      s.borderRadius = `${t.radiusMd}px`
+      // Each section is a surface: glass, raised on a glass parent, and no
+      // drop shadow of its own so a stack of them stays calm.
+      glassSurface(s, t, raised, { shadow: false })
       break
     }
     case 'Modal': {

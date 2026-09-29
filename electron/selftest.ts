@@ -4431,6 +4431,53 @@ export async function runSelfTest(): Promise<string> {
     check('a seed must be one of the component\'s own adds', refused && !getComponent('__bad_seed'))
   }
 
+  // --- 99. an accordion arrives with its sections -----------------------------
+  // Dropped empty, an Accordion drew nothing at all. A toolbox drop brings
+  // three sections (an FAQ), one undo step; each section is glass; a click
+  // on a summary opens its body.
+  {
+    const s99 = new EditorStore()
+    const root99 = withRoot(s99)
+    const before99 = s99.history.length
+    const acc = s99.dropComponent('Accordion', root99, 0, 0)!
+    const items = s99.doc.nodes[acc]?.children ?? []
+    const titles = items.map((c) => `${s99.doc.nodes[c]?.type}:${String(s99.doc.nodes[c]?.props.title)}`)
+    check('a dropped Accordion arrives with three sections', titles.join('|') === 'AccordionItem:What is included?|AccordionItem:How does billing work?|AccordionItem:Can I cancel at any time?', titles.join('|'))
+    check('the accordion and its sections are one undo step', s99.history.length === before99 + 1)
+    const host = document.createElement('div')
+    host.id = 'selftest-99'
+    document.body.appendChild(host)
+    const still99 = document.createElement('style')
+    still99.textContent = '#selftest-99 *{transition:none !important}'
+    document.head.appendChild(still99)
+    installBehaviourRuntime()
+    const r99 = createRoot(host)
+    // The accordion drawn on its own (it sits in the root panel, so its
+    // sections are the raised glass).
+    r99.render(renderNode({ doc: s99.doc, selected: new Set(), mode: 'preview', theme: getTheme('midnight') }, acc))
+    await new Promise((r) => setTimeout(r, 60))
+    const summaries = [...host.querySelectorAll<HTMLElement>('[data-loom-summary]')]
+    check('the accordion draws its three summaries', summaries.map((x) => x.textContent).join('|') === 'What is included?|How does billing work?|Can I cancel at any time?', summaries.map((x) => x.textContent).join('|'))
+    const sections = [...host.querySelectorAll<HTMLElement>('[data-loom-b="disclosure"]')]
+    // Glass of either kind: it sits on the root panel's glass here, so it is
+    // the raised kind (no second blur): the material's fill and lit edge.
+    check('each section is glass', sections.length === 3 && sections.every((x) => getComputedStyle(x).backgroundImage.includes('gradient') && getComputedStyle(x).boxShadow.includes('inset')),
+      sections.map((x) => getComputedStyle(x).backgroundImage.slice(0, 20)).join(' | '))
+    const body = sections[1]?.querySelector<HTMLElement>('[data-loom-body]')
+    const shut = body ? getComputedStyle(body).display : 'missing'
+    summaries[1]?.click()
+    await new Promise((r) => setTimeout(r, 40))
+    check('a click on a summary opens its section', shut === 'none' && body !== null && body !== undefined && getComputedStyle(body).display !== 'none', `${shut} -> ${body ? getComputedStyle(body).display : 'missing'}`)
+    r99.unmount()
+    host.remove()
+    still99.remove()
+    s99.undo()
+    check('one undo removes the accordion and its sections', !s99.doc.nodes[acc] && items.every((c) => !s99.doc.nodes[c]))
+    const bare = new EditorStore()
+    const bareId = bare.addComponent('Accordion', withRoot(bare), 0, 0)!
+    check('an Accordion added by code stays bare', (bare.doc.nodes[bareId]?.children.length ?? -1) === 0)
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

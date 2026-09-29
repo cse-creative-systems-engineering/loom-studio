@@ -163,6 +163,13 @@ defineComponent({
   description: 'Stack of collapsible sections. Add sections from its panel.',
   childTypes: ['AccordionItem'],
   adds: [{ type: 'AccordionItem', label: 'Add section', props: { title: 'Section {n}' } }],
+  // Dropped with three sections, as an FAQ (the canonical accordion):
+  // empty, it drew nothing at all.
+  seed: [
+    { type: 'AccordionItem', props: { title: 'What is included?' } },
+    { type: 'AccordionItem', props: { title: 'How does billing work?' } },
+    { type: 'AccordionItem', props: { title: 'Can I cancel at any time?' } },
+  ],
   props: {
     ...insetProps(),
     ...flowProps(),
