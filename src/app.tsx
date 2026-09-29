@@ -1432,10 +1432,29 @@ function Canvas({
           )}
           {s.doc.root === null && (
             <div className="empty-hint">
-              <div className="empty-hint-title">Empty workspace</div>
-              <div className="empty-hint-body">
-                Drag a component from the left panel onto the canvas to create the first node —
-                it becomes the root of this document.
+              {/* A card, not a caption: the first thing a new document shows.
+                  The workspace stays genuinely empty; a starter is placed only
+                  when the person asks for one. */}
+              <div className="empty-card">
+                <span className="mark empty-mark" aria-hidden="true" />
+                <div className="empty-hint-title">Start with a blank canvas</div>
+                <div className="empty-hint-body">
+                  Drag any tool from the left onto the canvas. The first one becomes the root of this
+                  document.
+                </div>
+                <div className="empty-starts">
+                  {STARTERS.map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      className="empty-start"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => s.addStarter(st.id, null, 0, 0)}
+                    >
+                      <Glyph markup={starterGlyph(st.id)} /> Start from {st.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}

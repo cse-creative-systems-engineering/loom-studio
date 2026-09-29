@@ -344,18 +344,58 @@ input, select { font-family: inherit; font-size: 12px; }
   color: var(--ink-3);
 }
 
+/* The empty document's welcome: a glass card on the artboard. Drops still
+   pass through it; only its buttons take the pointer. */
+.empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 32px 24px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)), var(--glass);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-hi), var(--glass-depth), 0 0 120px -40px rgba(91, 140, 255, 0.35);
+}
+
+.empty-card .empty-mark { width: 28px; height: 28px; border-radius: 9px; margin-bottom: 6px; box-shadow: 0 0 28px -4px rgba(91, 140, 255, 0.8); }
+
 .empty-hint-title {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .empty-hint-body {
   font-size: 12px;
-  line-height: 1.5;
-  max-width: 42ch;
+  line-height: 1.55;
+  max-width: 40ch;
+  color: var(--ink-2);
 }
+
+.empty-starts { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
+
+.empty-start {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 14px 0 11px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 550;
+  transition: border-color 120ms ease, filter 120ms ease;
+}
+
+.empty-start:hover { border-color: rgba(91, 140, 255, 0.45); filter: brightness(1.1); }
+.empty-start .glyph { color: #f5b453; }
 
 /* Manipulation affordance. An unselected element must LOOK grabbable, and
    must not advertise `cursor: pointer` from the designed control it renders. */

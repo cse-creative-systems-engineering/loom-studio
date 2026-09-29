@@ -4322,7 +4322,46 @@ export async function runSelfTest(): Promise<string> {
     check('toolbox icons carry their category colour', cats.every((c) => c !== 'missing') && new Set(cats).size === cats.length, cats.join(' | '))
     const on = cs('.seg button.on')
     check('a chosen segment is raised out of its well', on !== null && on.boxShadow !== 'none' && (cs('.seg')?.boxShadow ?? 'none').includes('inset'), on?.boxShadow ?? 'no segment')
-    check('the Studio\'s fields are wells', (cs('.toolbox .search')?.boxShadow ?? 'none').includes('inset'))  }
+    check('the Studio\'s fields are wells', (cs('.toolbox .search')?.boxShadow ?? 'none').includes('inset'))
+    // Glass is the containing block of any fixed-position child: the toolbox
+    // hover card, rendered inside the (now glass) toolbox, was placed against
+    // it and clipped: in the DOM, never on screen. It must be where it says.
+    // (relatedTarget null: the pointer enters from outside, which is what
+    // makes React fire the row's pointerenter.)
+    const row = [...document.querySelectorAll<HTMLElement>('.toolbox .tool')].find((b) => b.textContent?.trim() === 'Tabs')
+    row?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, relatedTarget: null, pointerType: 'mouse' }))
+    await new Promise((r) => setTimeout(r, 450))
+    const card = document.querySelector<HTMLElement>('.tool-card')
+    const cr = card?.getBoundingClientRect()
+    // The card takes no pointer, so it cannot be hit-tested; what matters is
+    // that no ancestor clips it: every clipping ancestor must contain it.
+    const clippers: string[] = []
+    for (let p = card?.parentElement ?? null; p && cr; p = p.parentElement) {
+      const st = getComputedStyle(p)
+      if (st.overflow === 'visible' && st.overflowX === 'visible' && st.overflowY === 'visible') continue
+      const pr = p.getBoundingClientRect()
+      if (cr.left < pr.left - 0.5 || cr.right > pr.right + 0.5 || cr.top < pr.top - 0.5 || cr.bottom > pr.bottom + 0.5) clippers.push(p.className || p.tagName)
+    }
+    check('the toolbox hover card is on screen, not clipped by a panel', card !== null && cr !== undefined && cr.width > 100 && clippers.length === 0,
+      card ? `${cr?.left.toFixed(0)},${cr?.top.toFixed(0)} ${cr?.width.toFixed(0)}x${cr?.height.toFixed(0)} clipped by ${clippers.join(', ') || 'nothing'}` : 'no card')
+    row?.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: null, pointerType: 'mouse' }))
+    await new Promise((r) => setTimeout(r, 50))
+    // An empty document welcomes you with a way in: the starters, one click
+    // each. Still genuinely empty until you choose (nothing placed unasked).
+    {
+      const app = window.__loomStore
+      const before = app.doc
+      app.loadDocument(emptyDocument())
+      await new Promise((r) => setTimeout(r, 100))
+      const starts = [...document.querySelectorAll<HTMLButtonElement>('.loom .surface .empty-start')]
+      check('an empty document is still empty, and offers the starters', app.doc.root === null && starts.length === STARTERS.length && starts.length > 0, `root=${app.doc.root} buttons=${starts.length}`)
+      const undoBefore = app.history.length
+      starts[0]?.click()
+      await new Promise((r) => setTimeout(r, 100))
+      check('one click on a starter places it, as one undo step', app.doc.root !== null && app.history.length === undoBefore + 1 && !document.querySelector('.loom .surface .empty-start'),
+        `root=${app.doc.root} history ${undoBefore}->${app.history.length}`)
+      app.loadDocument(before)
+    }  }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
