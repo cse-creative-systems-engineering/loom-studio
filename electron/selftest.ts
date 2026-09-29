@@ -4427,8 +4427,8 @@ export async function runSelfTest(): Promise<string> {
     const bareId = bare.addComponent('Tabs', withRoot(bare), 0, 0)!
     check('a Tabs added by code stays bare', (bare.doc.nodes[bareId]?.children.length ?? -1) === 0)
     let refused = false
-    try { defineComponent({ name: '__bad_seed', category: 'Test', container: true, icon: '', description: '', props: {}, seed: [{ type: 'Button' }] }) } catch { refused = true }
-    check('a seed must be one of the component\'s own adds', refused && !getComponent('__bad_seed'))
+    try { defineComponent({ name: '__bad_seed', category: 'Test', container: true, icon: '', description: '', props: {}, childTypes: ['TabPanel'], seed: [{ type: 'Button' }] }) } catch { refused = true }
+    check('a seed must be a child the container accepts', refused && !getComponent('__bad_seed'))
   }
 
   // --- 99. an accordion arrives with its sections -----------------------------
@@ -4476,6 +4476,113 @@ export async function runSelfTest(): Promise<string> {
     const bare = new EditorStore()
     const bareId = bare.addComponent('Accordion', withRoot(bare), 0, 0)!
     check('an Accordion added by code stays bare', (bare.doc.nodes[bareId]?.children.length ?? -1) === 0)
+  }
+
+  // --- 100. composites arrive with their parts; layouts arrive empty -------
+  // Every seed, table-driven: it names a real component, a toolbox drop
+  // builds exactly it as one undo step, and the output draws it. Layout
+  // containers stay empty for you to fill (the form-designer model).
+  {
+    const seeded = allComponents().filter((c) => (c.seed ?? []).length > 0)
+    const unknown = seeded.flatMap((c) => (c.seed ?? []).filter((k) => !getComponent(k.type)).map((k) => `${c.name}:${k.type}`))
+    check('every seed names a real component', unknown.length === 0, unknown.join(', '))
+    const wrong: string[] = []
+    for (const spec of seeded) {
+      const st = new EditorStore()
+      const r = withRoot(st)
+      const before = st.history.length
+      const id = st.dropComponent(spec.name, r, 0, 0)
+      const kids = id ? st.doc.nodes[id].children.map((c) => st.doc.nodes[c]?.type) : []
+      const want = (spec.seed ?? []).map((k) => k.type)
+      if (!id || kids.join(',') !== want.join(',') || st.history.length !== before + 1) wrong.push(`${spec.name}: ${kids.join(',')}`)
+      else {
+        try { emitHtml(st.doc) } catch (e) { wrong.push(`${spec.name}: ${String(e)}`) }
+      }
+    }
+    check('every seeded component drops with exactly its seed, in one step', wrong.length === 0, wrong.join(' | '))
+    const expect: Record<string, string[]> = {
+      SettingsSection: ['Email notifications', 'Two-factor authentication', 'Language'],
+      KanbanColumn: ['Design review', 'Update onboarding copy', 'Fix login redirect'],
+      NotificationList: ['New comment', 'Deploy finished', 'Storage almost full'],
+      ButtonGroup: ['Left', 'Center', 'Right'],
+      CommandBar: ['New', 'Import', 'Export'],
+    }
+    const missing: string[] = []
+    for (const [name, words] of Object.entries(expect)) {
+      const st = new EditorStore()
+      st.dropComponent(name, withRoot(st), 0, 0)
+      const html = emitHtml(st.doc)
+      for (const w of words) if (!html.includes(`>${w}<`)) missing.push(`${name}:${w}`)
+    }
+    check('composites draw their parts', missing.length === 0, missing.join(', '))
+    // A settings row is a label AND its control: seeds nest one level.
+    {
+      const ss = new EditorStore()
+      const sid = ss.dropComponent('SettingsSection', withRoot(ss), 0, 0)!
+      const controls = ss.doc.nodes[sid].children.map((r) => (ss.doc.nodes[r]?.children ?? []).map((c) => ss.doc.nodes[c]?.type).join('+'))
+      check('each seeded settings row arrives with its control', controls.join(',') === 'Switch,Switch,Select', controls.join(','))
+    }
+    // A bar reads across: its seeded parts sit on one line.
+    {
+      const host = document.createElement('div')
+      host.style.cssText = 'position:fixed;left:0;top:0;width:1400px;height:600px'
+      document.body.appendChild(host)
+      const rb = createRoot(host)
+      const stacked: string[] = []
+      for (const name of ['Toolbar', 'CommandBar', 'ButtonGroup']) {
+        const st = new EditorStore()
+        const id = st.dropComponent(name, withRoot(st), 0, 0)!
+        rb.render(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, id))
+        await new Promise((r) => setTimeout(r, 20))
+        const bar = host.firstElementChild as HTMLElement | null
+        const tops = [...(bar?.children ?? [])].map((c) => Math.round(c.getBoundingClientRect().top))
+        if (tops.length < 3 || new Set(tops).size !== 1) stacked.push(`${name}: ${tops.join(',')}`)
+      }
+      rb.unmount()
+      host.remove()
+      check('a bar lays its parts out in a row', stacked.length === 0, stacked.join(' | '))
+    }
+    const tb = new EditorStore()
+    const tbId = tb.dropComponent('Toolbar', withRoot(tb), 0, 0)!
+    check('a toolbar arrives with its tools', tb.doc.nodes[tbId].children.length === 4 && tb.doc.nodes[tbId].children.every((c) => tb.doc.nodes[c]?.type === 'IconButton'))
+    // Arranged, not piled: seeded parts must not overlap (free-positioned they
+    // all sat at 0,0), measured live for every seeded component.
+    {
+      const host = document.createElement('div')
+      host.style.cssText = 'position:fixed;left:0;top:0;width:1400px;height:900px'
+      document.body.appendChild(host)
+      const r100 = createRoot(host)
+      const piled: string[] = []
+      for (const spec of seeded) {
+        const st = new EditorStore()
+        const id = st.dropComponent(spec.name, withRoot(st), 0, 0)!
+        r100.render(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, id))
+        await new Promise((r) => setTimeout(r, 20))
+        const own = host.firstElementChild as HTMLElement | null
+        // The seeded children, found as the container's element children in
+        // document order that the renderer drew for them (visible ones only).
+        const boxes = [...(own?.querySelectorAll<HTMLElement>('*') ?? [])]
+          .filter((el) => el.parentElement && getComputedStyle(el).display !== 'none')
+          .filter((el) => el.textContent && (spec.seed ?? []).some((k) => {
+            const t = String(k.props?.title ?? k.props?.label ?? '')
+            return t !== '' && el.firstChild !== null && el.textContent?.trim().startsWith(t) && el.getBoundingClientRect().height > 0
+          }))
+          .map((el) => el.getBoundingClientRect())
+        for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i], b = boxes[j]
+          const overlap = Math.min(a.right, b.right) - Math.max(a.left, b.left) > 2 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2
+          const nested = (a.left <= b.left && a.right >= b.right && a.top <= b.top && a.bottom >= b.bottom) || (b.left <= a.left && b.right >= a.right && b.top <= a.top && b.bottom >= a.bottom)
+          if (overlap && !nested) { piled.push(spec.name); i = boxes.length; break }
+        }
+        const kidsFlow = st.doc.nodes[id].flow
+        if (!kidsFlow) piled.push(`${spec.name} (not arranged)`)
+      }
+      r100.unmount()
+      host.remove()
+      check('seeded parts are arranged, not piled on each other', piled.length === 0, [...new Set(piled)].join(', '))
+    }
+    const layouts = ['Panel', 'Stack', 'Grid', 'Card', 'ScrollView', 'SplitH', 'SplitV', 'FormGrid'].filter((n) => (getComponent(n)?.seed ?? []).length > 0)
+    check('layout containers land empty, for you to fill', layouts.length === 0, layouts.join(', '))
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

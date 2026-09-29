@@ -345,9 +345,18 @@ defineComponent({
   container: true,
   icon: '⛭',
   description: "A strip of grouped actions above a surface. Use it for per-view actions, not navigation.",
+  seed: [
+    { type: 'IconButton', props: { icon: 'plus', variant: 'ghost' } },
+    { type: 'IconButton', props: { icon: 'copy', variant: 'ghost' } },
+    { type: 'IconButton', props: { icon: 'trash', variant: 'ghost' } },
+    { type: 'IconButton', props: { icon: 'more', variant: 'ghost' } },
+  ],
   props: {
     ...insetProps(),
     ...flowProps(),
+    // A bar reads across: its tools in a row. The shared flow default (a
+    // column) stacked them out of the bar.
+    direction: en(['row', 'column'], 'row', 'Layout'),
     ...barProps(),
     ...typeProps(),
     // One scale for the whole strip: padding and type together, the way a size
@@ -486,6 +495,12 @@ defineComponent({
   icon: '⚙',
   description: 'Settings section: title, description, rows, optional save bar. Add rows from its panel.',
   adds: [{ type: 'SettingsRow', label: 'Add row', props: { label: 'Setting {n}' } }],
+  seed: [
+    // A row is a label AND its control: without one it is a floating caption.
+    { type: 'SettingsRow', props: { label: 'Email notifications', description: 'A summary of activity, once a day.' }, seed: [{ type: 'Switch', props: { label: '', on: true } }] },
+    { type: 'SettingsRow', props: { label: 'Two-factor authentication', description: 'Ask for a code when signing in.' }, seed: [{ type: 'Switch', props: { label: '' } }] },
+    { type: 'SettingsRow', props: { label: 'Language' }, seed: [{ type: 'Select', props: { options: 'English,Deutsch,Français,Español', value: 'English' } }] },
+  ],
   props: {
     title: str('Section'),
     description: str(''),
@@ -937,6 +952,11 @@ defineComponent({
   container: true,
   icon: '⋯',
   description: 'Grouped buttons.',
+  seed: [
+    { type: 'Button', props: { label: 'Left', variant: 'secondary' } },
+    { type: 'Button', props: { label: 'Center', variant: 'secondary' } },
+    { type: 'Button', props: { label: 'Right', variant: 'secondary' } },
+  ],
   props: {
     ...insetProps(),
     ...flowProps(),

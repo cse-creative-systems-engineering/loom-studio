@@ -284,7 +284,10 @@ try {
     await drag(ews, b0.cx, b0.cy, tx, ty, 8)
     tried++
     const p = await parent(made.b)
-    if (p !== made.into) refused.push(`${kind} (in ${p === made.root ? 'the page' : p})`)
+    // Inside means the container or, for one that arrives with its own
+    // children (a settings section's rows), the one under the pointer.
+    const inside = p === made.into || (made.into === made.c && await evaluate(ews, `(() => { const d = window.__loomStore.doc; let k = ${JSON.stringify(p)}; while (k) { if (k === ${JSON.stringify(made.c)}) return true; k = Object.keys(d.nodes).find((n) => d.nodes[n].children.includes(k)) } return false })()`))
+    if (!inside) refused.push(`${kind} (in ${p === made.root ? 'the page' : p})`)
   }
   step(`a drop goes inside every container (${tried} tried)`, tried > 20 && refused.length === 0, refused.join(', '))
 

@@ -13,7 +13,7 @@
 import { buildStarter, getStarter } from '../model/starters'
 import { dropSize } from '../model/drop-size'
 import { apply, duplicateSubtree, parentOf } from '../model/ops'
-import { getComponent, instantiate } from '../model/registry'
+import { getComponent, instantiate, type SeedSpec } from '../model/registry'
 import type { Document, Node, NodeId, Op, PropValue, TargetId } from '../model/types'
 import { serialize, validate, filenameFor } from '../model/persist'
 import { emitHtml, exportFilenameFor } from '../export/html'
@@ -284,9 +284,22 @@ export class EditorStore {
     // A container that arrives with its first children (Tabs with its tabs):
     // one insert for it and one per child, as ONE undo step, built exactly
     // as its own "Add ..." button builds them.
-    const node = this.buildNode(name, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow))
-    const kids = seed.map((c) => this.buildNode(c.type, 0, 0, c.props ?? {}))
-    const ok = this.commitAll([{ op: 'insert', parent, node }, ...kids.map((k) => ({ op: 'insert' as const, parent: node.id, node: k }))], `Add ${name}`)
+    // It arrives ARRANGED: its parts flow (a row of buttons, a column of
+    // cards). Free-positioned they all sat at 0,0 on top of each other. It
+    // stays an ordinary container: the Layout toggle switches it to free.
+    const node = this.buildNode(name, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow), { flow: true })
+    // Depth first, parents before children, so every insert has its parent.
+    // A seeded child that brings its own children arranges them too.
+    const ops: Op[] = [{ op: 'insert', parent, node }]
+    const place = (under: NodeId, list: SeedSpec[]) => {
+      for (const c of list) {
+        const k = this.buildNode(c.type, 0, 0, c.props ?? {}, c.seed?.length ? { flow: true } : {})
+        ops.push({ op: 'insert', parent: under, node: k })
+        if (c.seed?.length) place(k.id, c.seed)
+      }
+    }
+    place(node.id, seed)
+    const ok = this.commitAll(ops, `Add ${name}`)
     if (ok) this.select([node.id])
     return ok ? node.id : undefined
   }

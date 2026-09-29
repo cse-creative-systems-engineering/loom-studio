@@ -87,6 +87,13 @@ export type Capability =
   | 'native-widget'
   | 'native-canvas'
 
+/** One seeded child; it may bring its own (a settings row arrives with its control). */
+export interface SeedSpec {
+  type: string
+  props?: Record<string, PropValue>
+  seed?: SeedSpec[]
+}
+
 export interface ComponentSpec {
   name: string
   category: string
@@ -125,13 +132,15 @@ export interface ComponentSpec {
   /**
    * What a container arrives WITH when dropped from the toolbox: children it
    * cannot be recognised without (a tab set with no tabs is an empty box
-   * with a rule across it). Each must be one of its own `adds`, created the
-   * way that button creates it, so the drop is exactly "these clicks, done
-   * for you" and every seeded child stays an ordinary, deletable node. Only
-   * the toolbox drop seeds (`EditorStore.dropComponent`); a component added
-   * by code arrives bare.
+   * with a rule across it; a button group with no buttons is nothing). Each
+   * is an ordinary component it accepts, built as a drop builds it, so the
+   * drop is exactly "what you would have dropped in, done for you" and every
+   * seeded child stays an ordinary, deletable node. Only the toolbox drop
+   * seeds (`EditorStore.dropComponent`); a component added by code arrives
+   * bare. Layout containers (Panel, Stack, Grid...) are NOT seeded: they
+   * land empty for you to fill, as in a form designer.
    */
-  seed?: Array<{ type: string; props?: Record<string, PropValue> }>
+  seed?: SeedSpec[]
   /**
    * When set, the only child types this container accepts. A tab set holds
    * tabs; a button dropped on it belongs in the tab, not beside it.
@@ -244,10 +253,12 @@ function grouped(props: Record<string, PropSpec>, spec: ComponentSpec): Record<s
 }
 
 export function defineComponent(spec: ComponentSpec): ComponentSpec {
-  // A seeded child is one its own "Add ..." button makes; anything else would
-  // be a child the component could never have been given by hand.
+  // A seeded child must be one this container ACCEPTS (its childTypes, when
+  // it declares them): a seed is "what you would have dropped in by hand,
+  // done for you", never a child it could not have been given. (Whether the
+  // type exists is checked once every component is registered: selftest §99.)
   for (const c of spec.seed ?? []) {
-    if (!(spec.adds ?? []).some((a) => a.type === c.type)) throw new Error(`${spec.name}: seed type ${c.type} is not one of its adds`)
+    if (spec.childTypes && !spec.childTypes.includes(c.type)) throw new Error(`${spec.name}: seed type ${c.type} is not one of its childTypes`)
   }
   const full = withUniversalProps(spec)
   registry.set(full.name, full)

@@ -11,7 +11,7 @@
 
 import React from 'react'
 import type { Document, Node } from './model/types'
-import { getComponent, instantiate } from './model/registry'
+import { getComponent, instantiate, type SeedSpec } from './model/registry'
 import { dropSize } from './model/drop-size'
 import { buildStarter, getStarter } from './model/starters'
 import { renderNode } from './render/web'
@@ -50,18 +50,22 @@ export function thumbDoc(tool: { type?: string; starter?: string }, theme?: stri
     root = 'thumb'
     // What the drop gives you, children included (a tab set arrives with its
     // tabs: see ComponentSpec.seed), built the way the drop builds them.
-    const kids = (getComponent(type)?.seed ?? []).map((c, i) => {
+    let n = 0
+    const grow = (list: SeedSpec[]): string[] => list.map((c) => {
       const k = instantiate(c.type)
-      const id = `thumb-${i}`
-      nodes[id] = { id, type: c.type, props: { ...k.props, ...(c.props ?? {}), x: 0, y: 0 }, children: [], flow: k.flow, visible: true, locked: false, opacity: 1 }
+      const id = `thumb-${n++}`
+      const children = grow(c.seed ?? [])
+      nodes[id] = { id, type: c.type, props: { ...k.props, ...(c.props ?? {}), x: 0, y: 0 }, children, flow: children.length > 0 ? true : k.flow, visible: true, locked: false, opacity: 1 }
       return id
     })
+    const kids = grow(getComponent(type)?.seed ?? [])
     nodes[root] = {
       id: root,
       type,
       props: { ...made.props, ...dropSize(type, false), x: 0, y: 0 },
       children: kids,
-      flow: made.flow,
+      // Arranged, as the drop arranges it (EditorStore.dropComponent).
+      flow: kids.length > 0 ? true : made.flow,
       visible: true,
       locked: false,
       opacity: 1,
