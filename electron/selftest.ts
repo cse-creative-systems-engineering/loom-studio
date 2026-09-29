@@ -1184,6 +1184,14 @@ export async function runSelfTest(): Promise<string> {
     check('react styles are object literals: style={{...}}', src.includes('style={{"') && !/style=\{"/.test(src))
     check('react keeps custom properties by name', src.includes('"--loom-accent"') && !src.includes('-LoomAccent'))
     check('react installs its behaviour on mount, not on import', /const installBehaviour = \(function[\s\S]*\}\);\n/.test(src) && !/const installBehaviour = \(function[\s\S]*?\}\)\(\);\n/.test(src))
+    // The page under the design travels with the component, as in the HTML
+    // export (export/page.ts): the typeface embedded, the aurora drawn and
+    // moving, and every page rule scoped to the component's own wrapper.
+    const pageCss = /const PAGE_CSS = (".*");\n/.exec(src)?.[1]
+    const pageRules = pageCss ? (JSON.parse(pageCss) as string) : ''
+    check('react embeds the output typeface', /@font-face\{font-family:'Inter Variable'[^}]*src:url\(data:font\/woff2;base64,/.test(pageRules))
+    check('react draws the aurora page', s28.doc.meta.page?.background === 'aurora' && src.includes('data-loom-aurora') && pageRules.includes('@keyframes loom-wander-1'))
+    check('react page rules stay inside the component', src.includes('className="loom-export loom-container"') && !/(^|\})\s*body\{/.test(pageRules) && !/(^|\})\s*\*,/.test(pageRules), pageRules.slice(0, 80))
     check('react filename is filesystem-safe', reactFilenameFor('My App / v2.0!') === 'my-app-v2-0.jsx', reactFilenameFor('My App / v2.0!'))
 
     // Hostile text is expression-wrapped (a JS string literal, never parsed

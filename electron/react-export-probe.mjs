@@ -10,9 +10,12 @@
  * 1. Exports the demo and a document per toolbox tool from the live app.
  * 2. Compiles each with esbuild (JSX).
  * 3. Server-renders each with React; any React warning is a failure.
- * 4. Mounts the Tabs export in a FRESH blank page (so only the exported
+ * 4. Mounts the Tabs export in a FRESH blank document (so only the exported
  *    module can install behaviour), clicks the second tab, and checks the
  *    page switched.
+ * 5. Mounts the demo export (an aurora page) and checks the page travels
+ *    with it: text set in the embedded typeface (measured), the aurora drawn
+ *    and moving, and the host page's body left untouched.
  *
  * Self-contained: spawns its own Electron (demo scene, unique debug port)
  * and kills exactly what it spawned. Usage: `npm run probe:react` (builds
@@ -127,42 +130,74 @@ try {
   // Every one must RENDER: one that never compiled has not passed this.
   step('every export renders with React, without a warning', rendered === total, `${rendered}/${total}${renderFail.length ? `: ${renderFail.slice(0, 2).join(' | ')}` : ''}`)
 
-  // 4. Mount the Tabs export in a fresh page and operate it.
-  const client = path.join(work, 'client.jsx')
-  fs.writeFileSync(client, `import React from 'react'\nimport { createRoot } from 'react-dom/client'\nimport C from './Tabs.jsx'\nconst el = document.createElement('div'); document.body.appendChild(el)\ncreateRoot(el).render(React.createElement(C))\n`)
-  const bundle = await build({ entryPoints: [client], bundle: true, platform: 'browser', format: 'iife', write: false, jsx: 'automatic', logLevel: 'silent', nodePaths: [path.join(root, 'node_modules')], define: { 'process.env.NODE_ENV': '"production"' } })
-  // A fresh document: an about:blank frame in the app page (Electron opens no
-  // new tabs over CDP). Its document is its own, so the Studio's listeners
-  // never see its clicks; the bundle runs in an isolated world in that frame
-  // (a fresh `window`, and DevTools evaluation is not subject to the page's
-  // content-security-policy).
+  // 4 + 5. Mount exports in fresh documents and operate them. Each goes in its
+  // own about:blank frame in the app page (Electron opens no new tabs over
+  // CDP): its document is its own, so the Studio's listeners never see its
+  // clicks, and its bundle runs in an isolated world there (a fresh `window`;
+  // DevTools evaluation is not subject to the page's content-security-policy).
   const host = await connect((await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()).find((t) => t.type === 'page' && t.url.includes('index.html')))
-  await host.ev(`(() => { const f = document.createElement('iframe'); f.id = 'loom-react-probe'; f.style.cssText = 'position:fixed;left:0;top:0;width:1200px;height:800px;z-index:99999;background:#fff'; document.body.appendChild(f); return true })()`)
-  await sleep(300)
-  const tree = await host.rpc('Page.getFrameTree')
-  const frameId = (tree.frameTree.childFrames ?? []).map((c) => c.frame).find((f) => f.url === 'about:blank')?.id
-  if (!frameId) throw new Error('could not open a blank frame')
-  const { executionContextId } = await host.rpc('Page.createIsolatedWorld', { frameId, worldName: 'loom-react-probe' })
-  const inFrame = async (expression) => {
-    const r = await host.rpc('Runtime.evaluate', { expression, contextId: executionContextId, returnByValue: true, awaitPromise: true })
-    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text)
-    return r.result?.value
+  const usedFrames = new Set()
+  const mount = async (name) => {
+    const client = path.join(work, `client-${name}.jsx`)
+    fs.writeFileSync(client, `import React from 'react'\nimport { createRoot } from 'react-dom/client'\nimport C from './${name}.jsx'\nconst el = document.createElement('div'); document.body.appendChild(el)\ncreateRoot(el).render(React.createElement(C))\n`)
+    const bundle = await build({ entryPoints: [client], bundle: true, platform: 'browser', format: 'iife', write: false, jsx: 'automatic', logLevel: 'silent', nodePaths: [path.join(root, 'node_modules')], define: { 'process.env.NODE_ENV': '"production"' } })
+    await host.ev(`(() => { const f = document.createElement('iframe'); f.style.cssText = 'position:fixed;left:0;top:0;width:1280px;height:800px;z-index:99999;border:0'; document.body.appendChild(f); return true })()`)
+    await sleep(300)
+    const tree = await host.rpc('Page.getFrameTree')
+    const frameId = (tree.frameTree.childFrames ?? []).map((c) => c.frame).find((f) => f.url === 'about:blank' && !usedFrames.has(f.id))?.id
+    if (!frameId) throw new Error('could not open a blank frame')
+    usedFrames.add(frameId)
+    const { executionContextId } = await host.rpc('Page.createIsolatedWorld', { frameId, worldName: `loom-react-probe-${name}` })
+    const ev = async (expression) => {
+      const r = await host.rpc('Runtime.evaluate', { expression, contextId: executionContextId, returnByValue: true, awaitPromise: true })
+      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text)
+      return r.result?.value
+    }
+    await ev(`window.__errors = []; window.addEventListener('error', (e) => window.__errors.push(String(e.message))); 0`)
+    await ev(bundle.outputFiles[0].text + ';0')
+    await sleep(400)
+    return ev
   }
-  const blank = { ws: host.ws, ev: inFrame }
-  await blank.ev(`window.__errors = []; window.addEventListener('error', (e) => window.__errors.push(String(e.message))); 0`)
-  await blank.ev(bundle.outputFiles[0].text + ';0')
-  await sleep(400)
-  const state = async () => blank.ev(`(() => {
+
+  // 4. The Tabs export: its behaviour installs and a tab click switches the page.
+  const tabs = await mount('Tabs')
+  const state = async () => tabs(`(() => {
     const shown = [...document.querySelectorAll('[role=tabpanel]')].filter((p) => getComputedStyle(p).display !== 'none').map((p) => p.getAttribute('aria-label'))
     return { shown, installed: window.__loomBehaviour === true, errors: window.__errors }
   })()`)
   const before = await state()
-  await blank.ev(`document.querySelectorAll('[role=tab]')[1].click()`)
+  await tabs(`document.querySelectorAll('[role=tab]')[1].click()`)
   await sleep(200)
   const after = await state()
   step('the mounted export installs its behaviour without an error', before.installed && after.errors.length === 0, `installed=${before.installed} errors=${after.errors.join(', ')}`)
   step('a tab click in the exported component switches the page', before.shown.join(',') === 'Overview' && after.shown.join(',') === 'Activity', `${before.shown.join(',')} -> ${after.shown.join(',')}`)
-  blank.ws.close()
+
+  // 5. The demo export (an aurora page): the page travels with the component.
+  const demo = await mount('demo')
+  const onPage = await demo(`(async () => {
+    await document.fonts.load("16px 'Inter Variable'")
+    await document.fonts.ready
+    const wrap = document.querySelector('.loom-export')
+    const loaded = [...document.fonts].some((f) => f.family.replace(/["']/g, '') === 'Inter Variable' && f.status === 'loaded')
+    const probe = (family) => { const el = document.createElement('span'); el.style.cssText = 'font:400 32px ' + family + ';white-space:nowrap;position:absolute'; el.textContent = 'Hamburgefonstiv 0123'; (wrap || document.body).appendChild(el); const w = el.getBoundingClientRect().width; el.remove(); return w }
+    const shipped = wrap ? probe(getComputedStyle(wrap).fontFamily) : 0
+    const platform = probe('ui-sans-serif, system-ui, sans-serif')
+    const blobs = [...document.querySelectorAll('.loom-export [data-loom-aurora] [data-loom-blob]')]
+    return {
+      wrapFont: wrap ? getComputedStyle(wrap).fontFamily : 'no wrapper',
+      loaded, shipped, platform,
+      blobs: blobs.length,
+      moving: blobs.every((b) => getComputedStyle(b).animationName.startsWith('loom-wander-')),
+      bodyBg: getComputedStyle(document.body).backgroundColor,
+      bodyFont: getComputedStyle(document.body).fontFamily,
+      errors: window.__errors,
+    }
+  })()`)
+  step('the exported component sets its text in the shipped typeface', onPage.wrapFont.startsWith('"Inter Variable"') && onPage.loaded && Math.abs(onPage.shipped - onPage.platform) > 2,
+    `${onPage.wrapFont.slice(0, 30)} loaded=${onPage.loaded} shipped=${onPage.shipped.toFixed(1)} platform=${onPage.platform.toFixed(1)}`)
+  step('the exported component draws the aurora, moving', onPage.blobs >= 4 && onPage.moving, `blobs=${onPage.blobs} moving=${onPage.moving}`)
+  step('the exported component leaves the host page alone', onPage.bodyBg === 'rgba(0, 0, 0, 0)' && !onPage.bodyFont.includes('Inter Variable') && onPage.errors.length === 0, `body bg=${onPage.bodyBg} font=${onPage.bodyFont.slice(0, 30)}`)
+  host.ws.close()
 } catch (e) {
   step('probe ran', false, String(e.message ?? e))
 } finally {

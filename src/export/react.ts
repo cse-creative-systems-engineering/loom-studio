@@ -22,6 +22,7 @@ import { renderNode } from '../render/web'
 import { behaviourCss, behaviourInstaller } from '../render/behaviour'
 import { documentCss } from '../render/document-css'
 import { resolveTheme } from '../render/theme'
+import { exportAuroraMarkup, exportPageCss } from './page'
 import type { Document } from '../model/types'
 
 /** `My App / v2.0!` -> `my-app-v2-0.jsx`. Mirrors `persist.filenameFor`. */
@@ -155,7 +156,9 @@ export function emitReact(doc: Document): string {
     doc.root === null
       ? ''
       : renderToStaticMarkup(renderNode({ doc, selected: new Set(), mode: 'preview', theme }, doc.root))
-  const parsed = new DOMParser().parseFromString(`<div data-loom-root>${html}</div>`, 'text/html')
+  // The page under the design travels with it, exactly as in the HTML export
+  // (export/page.ts): the aurora is drawn after the design, in the wrapper.
+  const parsed = new DOMParser().parseFromString(`<div data-loom-root>${html}${exportAuroraMarkup(doc, theme)}</div>`, 'text/html')
   const holder = parsed.querySelector('[data-loom-root]')
   if (!holder) throw new Error('export failed: empty document body')
   const lines: string[] = []
@@ -171,6 +174,10 @@ import React from 'react';
 
 const THEME = ${JSON.stringify(theme, null, 2)};
 
+// The page this component draws on: its typeface (embedded, so it reads the
+// same on every machine), its fill and the aurora's motion, all scoped to this
+// component's own wrapper so it never restyles the page it is placed in.
+const PAGE_CSS = ${JSON.stringify(exportPageCss(doc, theme, 'component'))};
 const BEHAVIOUR_CSS = ${JSON.stringify(behaviourCss())};
 const DOCUMENT_CSS = ${JSON.stringify(documentCss(doc, theme))};
 const installBehaviour = ${behaviourInstaller()};
@@ -181,7 +188,7 @@ export default function LoomExport() {
   const root = React.useRef(null);
   React.useEffect(() => {
     const style = document.createElement('style');
-    style.textContent = BEHAVIOUR_CSS + DOCUMENT_CSS;
+    style.textContent = PAGE_CSS + BEHAVIOUR_CSS + DOCUMENT_CSS;
     document.head.appendChild(style);
     // Called directly: the payload travels as source, so it works under a
     // strict content-security-policy that forbids eval.
@@ -189,7 +196,7 @@ export default function LoomExport() {
     return () => { style.remove(); };
   }, []);
   return (
-    <div ref={root} className="loom-container">
+    <div ref={root} className="loom-export loom-container">
 ${lines.join('\n')}
     </div>
   );
