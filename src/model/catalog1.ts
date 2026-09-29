@@ -115,6 +115,13 @@ defineComponent({
   // where a separate "tabs" list used to disagree with the panels it named.
   childTypes: ['TabPanel'],
   adds: [{ type: 'TabPanel', label: 'Add tab', props: { title: 'Tab {n}' } }],
+  // Dropped with three tabs: without them the strip had nothing to draw and
+  // the tab set landed as an empty box.
+  seed: [
+    { type: 'TabPanel', props: { title: 'Overview' } },
+    { type: 'TabPanel', props: { title: 'Activity' } },
+    { type: 'TabPanel', props: { title: 'Settings' } },
+  ],
   props: {
     ...insetProps(),
     ...flowProps(),

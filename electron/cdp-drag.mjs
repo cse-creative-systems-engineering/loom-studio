@@ -266,9 +266,11 @@ try {
         const root = s.doc.root;
         const c = s.dropComponent(${JSON.stringify(kind)}, root, 420, 140);
         // A tab set or an accordion takes only its own sections; the Button
-        // belongs INSIDE one of those, so give it one to land in.
+        // belongs INSIDE one of those. A container that arrives with its
+        // sections (Tabs brings three) takes the drop in the one you can see,
+        // its first (active) section; otherwise give it one to land in.
         const inner = { Tabs: 'TabPanel', Accordion: 'AccordionItem' }[${JSON.stringify(kind)}];
-        const into = inner ? s.addComponent(inner, c, 0, 0) : c;
+        const into = inner ? (s.doc.nodes[c].children[0] ?? s.addComponent(inner, c, 0, 0)) : c;
         const b = s.dropComponent('Button', root, 40, 40);
         s.select([]);
         return { c, b, root, into }; })()`,

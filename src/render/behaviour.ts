@@ -245,8 +245,13 @@ export function behaviourCss(): string {
     '[data-loom-b="tab"]{transition:color 90ms ease,background 90ms ease}',
     '[data-loom-b="tab"][data-loom-active="1"]{color:var(--loom-accent) !important;font-weight:600 !important}',
     '[data-loom-b="tab"][data-loom-active="0"]{color:var(--loom-muted) !important;font-weight:500 !important}',
-    '[data-loom-b="panel"]{display:none}',
-    '[data-loom-b="panel"][data-loom-shown="1"]{display:flex}',
+    '[data-loom-b="tab"]{background:transparent;box-shadow:none}',
+    '[data-loom-b="tab"][data-loom-active="1"]{background:var(--loom-tab-on,transparent);box-shadow:var(--loom-tab-shadow,none)}',
+    // A panel's own `display` is inline (it is a flex column), and inline
+    // beats a stylesheet: without `!important` on the hidden state no panel
+    // ever hid, and a tab set drew every page stacked. Only "hidden" is
+    // forced; a shown panel keeps its own display.
+    '[data-loom-b="panel"][data-loom-shown="0"]{display:none !important}',
     // --- disclosure ---
     // A selector with an unterminated quote does not fail alone: the parser
     // keeps consuming until it finds a `]`, so a stray `"` here silently eats

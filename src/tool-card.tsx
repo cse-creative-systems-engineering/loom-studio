@@ -11,7 +11,7 @@
 
 import React from 'react'
 import type { Document, Node } from './model/types'
-import { instantiate } from './model/registry'
+import { getComponent, instantiate } from './model/registry'
 import { dropSize } from './model/drop-size'
 import { buildStarter, getStarter } from './model/starters'
 import { renderNode } from './render/web'
@@ -48,11 +48,19 @@ export function thumbDoc(tool: { type?: string; starter?: string }, theme?: stri
     const type = tool.type!
     const made = instantiate(type)
     root = 'thumb'
+    // What the drop gives you, children included (a tab set arrives with its
+    // tabs: see ComponentSpec.seed), built the way the drop builds them.
+    const kids = (getComponent(type)?.seed ?? []).map((c, i) => {
+      const k = instantiate(c.type)
+      const id = `thumb-${i}`
+      nodes[id] = { id, type: c.type, props: { ...k.props, ...(c.props ?? {}), x: 0, y: 0 }, children: [], flow: k.flow, visible: true, locked: false, opacity: 1 }
+      return id
+    })
     nodes[root] = {
       id: root,
       type,
       props: { ...made.props, ...dropSize(type, false), x: 0, y: 0 },
-      children: [],
+      children: kids,
       flow: made.flow,
       visible: true,
       locked: false,

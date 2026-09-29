@@ -252,8 +252,8 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   // TabPanel
   "TabPanel|div": ["color", "fontSize", "fontWeight"],
   // Tabs
+  "Tabs|div>button data-loom-b": ["color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
   "Tabs|div": ["background", "border", "borderWidth", "gap", "paddingX", "paddingY", "radius"],
-  "Tabs|div>button data-loom-b": ["background", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius", "shadow"],
   // TagInput
   "TagInput|input": ["color", "fontSize"],
   "TagInput|span": ["background", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],

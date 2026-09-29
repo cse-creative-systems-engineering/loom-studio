@@ -123,6 +123,16 @@ export interface ComponentSpec {
    */
   adds?: AddSpec[]
   /**
+   * What a container arrives WITH when dropped from the toolbox: children it
+   * cannot be recognised without (a tab set with no tabs is an empty box
+   * with a rule across it). Each must be one of its own `adds`, created the
+   * way that button creates it, so the drop is exactly "these clicks, done
+   * for you" and every seeded child stays an ordinary, deletable node. Only
+   * the toolbox drop seeds (`EditorStore.dropComponent`); a component added
+   * by code arrives bare.
+   */
+  seed?: Array<{ type: string; props?: Record<string, PropValue> }>
+  /**
    * When set, the only child types this container accepts. A tab set holds
    * tabs; a button dropped on it belongs in the tab, not beside it.
    */
@@ -234,6 +244,11 @@ function grouped(props: Record<string, PropSpec>, spec: ComponentSpec): Record<s
 }
 
 export function defineComponent(spec: ComponentSpec): ComponentSpec {
+  // A seeded child is one its own "Add ..." button makes; anything else would
+  // be a child the component could never have been given by hand.
+  for (const c of spec.seed ?? []) {
+    if (!(spec.adds ?? []).some((a) => a.type === c.type)) throw new Error(`${spec.name}: seed type ${c.type} is not one of its adds`)
+  }
   const full = withUniversalProps(spec)
   registry.set(full.name, full)
   return full

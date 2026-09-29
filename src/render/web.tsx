@@ -782,8 +782,9 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
     }
     case 'TabPanel': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = `${t.space2}px`
+      // A page OF its tab set, not a surface of its own: the Tabs is the
+      // frame (a black box inside the glass read as a hole in it).
       s.padding = px(p.padding, t.space3); s.borderRadius = `${t.radiusMd}px`
-      s.background = t.bg; s.border = `1px solid ${t.border}`
       break
     }
     case 'Accordion': {
@@ -2323,19 +2324,19 @@ function renderPreviewBody(
           cursor: 'pointer',
           ...(full ? { flex: 1 } : {}),
         }
-        if (variant === 'enclosed') {
-          return { ...base, padding: '5px 12px', background: on ? t.surface : 'transparent', boxShadow: on ? t.shadowSm : 'none' }
-        }
-        if (variant === 'pills') {
-          return { ...base, padding: '5px 12px', background: on ? `${t.accent}1f` : 'transparent' }
-        }
-        return { ...base, padding: '4px 10px', background: on ? `${t.accent}14` : 'transparent' }
+        // The chosen tab's FILL is the state stylesheet's (data-loom-active,
+        // from --loom-tab-on below), so it moves with a click; inline, it
+        // stayed on the authored tab while the colour moved.
+        return { ...base, padding: variant === 'underline' ? '4px 10px' : '5px 12px' }
       }
+      const tabOn: Record<string, string> = variant === 'enclosed'
+        ? { '--loom-tab-on': t.raisedFill, '--loom-tab-shadow': t.raisedShadow }
+        : { '--loom-tab-on': `${t.accent}${variant === 'pills' ? '1f' : '14'}` }
       // The strip owns the group; each tab is a real button so it is
       // clickable, focusable, and reports its selected state to assistive tech.
       return (
         <div key={key} style={style} data-loom-tabs={node.id} data-loom-active={String(active)}>
-          <div role="tablist" style={strip}>
+          <div role="tablist" style={{ ...strip, ...tabOn }}>
             {tabs.map((tb, i) => (
               <button
                 key={i}
@@ -2354,11 +2355,14 @@ function renderPreviewBody(
       )
     }
     case 'TabPanel': {
-      // The Nth TabPanel is the Nth tab's content. It ships SHOWN so a panel
-      // dropped on its own is never invisible, and hidden the moment its tab
-      // is switched away from.
+      // The Nth TabPanel is the Nth tab's content. Inside a Tabs, only the
+      // ACTIVE tab's panel is shown (the runtime switches it on click); every
+      // panel used to ship shown, so a tab set drew all its pages stacked.
+      // A panel on its own is shown, never invisible.
       const owner = parentId ? ctx.doc.nodes[parentId] : undefined
-      const index = owner?.type === 'Tabs' ? Math.max(0, tabPanelsOf(ctx.doc, owner, ctx.mode === 'preview').indexOf(node.id)) : 0
+      const inTabs = owner?.type === 'Tabs'
+      const index = inTabs ? Math.max(0, tabPanelsOf(ctx.doc, owner, ctx.mode === 'preview').indexOf(node.id)) : 0
+      const shown = !inTabs || index === num(owner.props.active, 0)
       const aria = str(p.ariaLabel)
       return (
         <div
@@ -2366,10 +2370,12 @@ function renderPreviewBody(
           style={style}
           role="tabpanel"
           aria-label={aria || str(p.title) || undefined}
-          data-loom-shown="1"
+          data-loom-shown={shown ? '1' : '0'}
           {...behaviourAttrs({ role: 'panel', group: parentId, index })}
         >
-          {str(p.title) ? (
+          {/* In a tab set the tab's label IS the title: repeating it inside
+              the page was noise. A lone panel keeps its heading. */}
+          {str(p.title) && !inTabs ? (
             <div
               style={{
                 fontSize: num(p.fontSize, -1) > 0 ? 'inherit' : `${t.textSm}px`,

@@ -16,7 +16,7 @@ import { documentCss } from '../src/render/document-css'
 import { fieldsFor } from '../src/render/parts'
 import type { Document, Node as LoomNode } from '../src/model/types'
 import { descendants, parentOf } from '../src/model/ops'
-import { allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
+import { defineComponent, allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
 import { emitHtml, exportFilenameFor } from '../src/export/html'
 import { emitReact, reactFilenameFor } from '../src/export/react'
 import React from 'react'
@@ -1447,7 +1447,9 @@ export async function runSelfTest(): Promise<string> {
     check('a closed dropdown menu is hidden', css.includes('[data-loom-menu-panel][data-loom-open="0"]'))
     check('state colours come from theme variables', css.includes('var(--loom-on)') && css.includes('var(--loom-accent'))
     check('a pressed control looks pressed', css.includes('[data-loom-pressed="1"]'))
-    check('a closed panel is hidden', css.includes('[data-loom-b="panel"]{display:none}'))
+    // Forced: the panel's own display is inline, which beat the plain rule
+    // (§98 measures it live).
+    check('a closed panel is hidden', css.includes('[data-loom-b="panel"][data-loom-shown="0"]{display:none !important}'))
     check('a collapsed drawer is hidden even against inline styles',
       css.includes(':not([data-loom-open="1"]){display:none !important}'))
 
@@ -4362,6 +4364,72 @@ export async function runSelfTest(): Promise<string> {
         `root=${app.doc.root} history ${undoBefore}->${app.history.length}`)
       app.loadDocument(before)
     }  }
+
+  // --- 98. a tab set arrives with its tabs -----------------------------------
+  // Dropped empty, a Tabs had nothing for its strip to draw: an empty box
+  // with a rule across it. A toolbox drop now brings three tabs, built as its
+  // own "Add tab" builds them, in one undo step. Code that adds a Tabs still
+  // gets a bare one.
+  {
+    const s98 = new EditorStore()
+    const root98 = withRoot(s98)
+    const before98 = s98.history.length
+    const tabs = s98.dropComponent('Tabs', root98, 0, 0)!
+    const kids = s98.doc.nodes[tabs]?.children ?? []
+    const titles = kids.map((c) => `${s98.doc.nodes[c]?.type}:${String(s98.doc.nodes[c]?.props.title)}`)
+    check('a dropped Tabs arrives with three named tabs', titles.join(',') === 'TabPanel:Overview,TabPanel:Activity,TabPanel:Settings', titles.join(','))
+    check('the tab set and its tabs are one undo step', s98.history.length === before98 + 1)
+    const html98 = emitHtml(s98.doc)
+    check('the strip draws the three tabs', ['Overview', 'Activity', 'Settings'].every((l) => html98.includes(`>${l}<`)))
+    // Only the active tab's page shows (every panel used to ship shown, so a
+    // tab set drew all its pages stacked), measured live under the state
+    // stylesheet; `active` picks which; the tab's label is not repeated as a
+    // heading inside its page.
+    {
+      const host = document.createElement('div')
+      host.id = 'selftest-98'
+      document.body.appendChild(host)
+      // The test window is hidden, so transitions never advance: a fill read
+      // after a click would be its pre-click value.
+      const still98 = document.createElement('style')
+      still98.textContent = '#selftest-98 *{transition:none !important}'
+      document.head.appendChild(still98)
+      const r98 = createRoot(host)
+      const shownTitles = async () => {
+        r98.render(renderNode({ doc: s98.doc, selected: new Set(), mode: 'preview', theme: getTheme('midnight') }, s98.doc.root!))
+        await new Promise((r) => setTimeout(r, 40))
+        return [...host.querySelectorAll<HTMLElement>('[role=tabpanel]')].filter((el) => getComputedStyle(el).display !== 'none').map((el) => el.getAttribute('aria-label'))
+      }
+      const first = await shownTitles()
+      check('a tab set shows only its active page', first.join(',') === 'Overview', first.join(','))
+      s98.commit({ op: 'setProp', id: tabs, key: 'active', value: 1 }, 'Active')
+      const second = await shownTitles()
+      check('the active prop picks the page', second.join(',') === 'Activity', second.join(','))
+      const page = host.querySelector<HTMLElement>('[role=tabpanel][aria-label=Activity]')
+      check('a page does not repeat its tab label as a heading', page !== null && !(page.textContent ?? '').includes('Activity'), page?.textContent ?? '')
+      // A click moves the page AND the highlight: the chosen tab's fill was
+      // inline, so it stayed on the authored tab while the colour moved.
+      installBehaviourRuntime()
+      const tabBtn = (label: string) => [...host.querySelectorAll<HTMLElement>('[role=tab]')].find((b) => b.textContent === label)
+      tabBtn('Settings')?.click()
+      await new Promise((r) => setTimeout(r, 40))
+      const filled = [...host.querySelectorAll<HTMLElement>('[role=tab]')].filter((b) => getComputedStyle(b).backgroundColor !== 'rgba(0, 0, 0, 0)').map((b) => b.textContent)
+      const visible = [...host.querySelectorAll<HTMLElement>('[role=tabpanel]')].filter((el) => getComputedStyle(el).display !== 'none').map((el) => el.getAttribute('aria-label'))
+      check('a click moves the page and the highlight together', filled.join(',') === 'Settings' && visible.join(',') === 'Settings', `filled=${filled.join(',')} shown=${visible.join(',')}`)
+      r98.unmount()
+      host.remove()
+      still98.remove()
+      s98.undo()
+    }
+    s98.undo()
+    check('one undo removes the tab set and its tabs', !s98.doc.nodes[tabs] && kids.every((c) => !s98.doc.nodes[c]))
+    const bare = new EditorStore()
+    const bareId = bare.addComponent('Tabs', withRoot(bare), 0, 0)!
+    check('a Tabs added by code stays bare', (bare.doc.nodes[bareId]?.children.length ?? -1) === 0)
+    let refused = false
+    try { defineComponent({ name: '__bad_seed', category: 'Test', container: true, icon: '', description: '', props: {}, seed: [{ type: 'Button' }] }) } catch { refused = true }
+    check('a seed must be one of the component\'s own adds', refused && !getComponent('__bad_seed'))
+  }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
