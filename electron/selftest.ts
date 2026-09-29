@@ -4298,6 +4298,11 @@ export async function runSelfTest(): Promise<string> {
     const coloured = Object.values(sd.doc.nodes).filter((n) => typeof n.props.color === 'string' && n.props.color !== '').map((n) => `${n.type}:${n.props.color}`)
     check('the demo writes no colour literals; text takes the theme', coloured.length === 0, coloured.join(' '))
     check('the demo sits on the aurora page', sd.doc.meta.page?.background === 'aurora')
+    // Nothing is gated off either target, so the toolbox shows no dots and no
+    // key to them.
+    const toolbox = document.querySelector('.toolbox')
+    check('the toolbox shows no "limited on" key when nothing is limited', toolbox !== null && !toolbox.querySelector('.legend') && !toolbox.querySelector('.tool-gate'),
+      toolbox?.querySelector('.legend')?.textContent ?? '')
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

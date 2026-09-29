@@ -719,10 +719,15 @@ function Toolbox({
       </div>
       {tab === 'components' ? (
         <>
-          <div className="legend">
-            <span className="tool-gate" aria-hidden="true" />
-            limited on {s.target === 'web' ? 'Desktop' : 'Web'}
-          </div>
+          {/* The key to the tool dots, only while some tool carries one: with
+              desktop rendered by Chromium nothing does, and a key to nothing
+              is noise. */}
+          {[...componentsByCategory().values()].flat().some((c) => unsupportedProps(c, s.target).length > 0) && (
+            <div className="legend">
+              <span className="tool-gate" aria-hidden="true" />
+              limited on {s.target === 'web' ? 'Desktop' : 'Web'}
+            </div>
+          )}
           <div className="scroll">
             {/* Starters first: a finished arrangement of real tools is the
                 fastest way in, and everything it drops stays editable. */}
