@@ -362,6 +362,16 @@ export function behaviourRuntime(): string {
   return `(${installBehaviour.toString()})()`
 }
 
+/**
+ * The installer as a FUNCTION expression, not a running script: for a module
+ * that installs it when it mounts (the React export). Inlined as the running
+ * form, it touched `window` the moment the module was imported (a crash in
+ * any server render) and left nothing to call on mount.
+ */
+export function behaviourInstaller(): string {
+  return `(${installBehaviour.toString()})`
+}
+
 /** Install the behaviour layer on the current document. Idempotent. */
 export function installBehaviour(): void {
   const w = window as unknown as { __loomBehaviour?: boolean }

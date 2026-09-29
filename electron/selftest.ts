@@ -1175,6 +1175,15 @@ export async function runSelfTest(): Promise<string> {
     check('react output keeps absolute positioning', src.includes('"position": "absolute"'))
     check('react output carries no editor hooks', !src.includes('data-loom-id') && !src.includes('loom-handle'))
     check('react output is deterministic', emitReact(s28.doc) === src)
+    // It must COMPILE and RUN (npm run probe:react compiles, renders and
+    // mounts every export for real); these are the fast guards for the three
+    // ways it did not: a style as `style={"k": v}` (a syntax error in every
+    // export), custom properties camel-cased (`--loom-accent` as
+    // `-LoomAccent`), and a behaviour runtime that ran on import (touching
+    // `window`, leaving nothing to call on mount).
+    check('react styles are object literals: style={{...}}', src.includes('style={{"') && !/style=\{"/.test(src))
+    check('react keeps custom properties by name', src.includes('"--loom-accent"') && !src.includes('-LoomAccent'))
+    check('react installs its behaviour on mount, not on import', /const installBehaviour = \(function[\s\S]*\}\);\n/.test(src) && !/const installBehaviour = \(function[\s\S]*?\}\)\(\);\n/.test(src))
     check('react filename is filesystem-safe', reactFilenameFor('My App / v2.0!') === 'my-app-v2-0.jsx', reactFilenameFor('My App / v2.0!'))
 
     // Hostile text is expression-wrapped (a JS string literal, never parsed

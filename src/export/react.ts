@@ -19,7 +19,7 @@
 
 import { renderToStaticMarkup } from 'react-dom/server'
 import { renderNode } from '../render/web'
-import { behaviourCss, behaviourRuntime } from '../render/behaviour'
+import { behaviourCss, behaviourInstaller } from '../render/behaviour'
 import { documentCss } from '../render/document-css'
 import { resolveTheme } from '../render/theme'
 import type { Document } from '../model/types'
@@ -42,9 +42,34 @@ function isSafeText(text: string): boolean {
   return /^[A-Za-z0-9 .,;:'"?!()\-–—%/]+$/.test(text)
 }
 
+/** HTML's lowercase attribute names that React spells differently. */
+const REACT_ATTR: Record<string, string> = {
+  class: 'className',
+  for: 'htmlFor',
+  tabindex: 'tabIndex',
+  maxlength: 'maxLength',
+  minlength: 'minLength',
+  inputmode: 'inputMode',
+  colspan: 'colSpan',
+  rowspan: 'rowSpan',
+  autocomplete: 'autoComplete',
+  autofocus: 'autoFocus',
+  readonly: 'readOnly',
+  enterkeyhint: 'enterKeyHint',
+  spellcheck: 'spellCheck',
+  crossorigin: 'crossOrigin',
+  srcset: 'srcSet',
+}
+
+/**
+ * Attributes whose PRESENCE is the value. Written as `disabled=""` they
+ * would pass an empty string, which React reads as false: a disabled
+ * control would come back enabled.
+ */
+const BOOLEAN_ATTR = new Set(['disabled', 'multiple', 'required', 'readonly', 'autofocus', 'hidden', 'inert', 'open', 'novalidate', 'formnovalidate', 'default', 'reversed'])
+
 function attrName(raw: string): string {
-  if (raw === 'class') return 'className'
-  if (raw === 'for') return 'htmlFor'
+  if (REACT_ATTR[raw]) return REACT_ATTR[raw]
   if (raw.startsWith('data-') || raw.startsWith('aria-')) return raw
   return raw.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
 }
@@ -57,7 +82,9 @@ function styleObject(style: string): string {
     const key = decl.slice(0, colon).trim()
     const value = decl.slice(colon + 1).trim()
     if (!key || value === '') continue
-    const camel = key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
+    // A custom property keeps its name exactly: camel-cased, `--loom-accent`
+    // became `-LoomAccent` and every state colour silently fell back.
+    const camel = key.startsWith('--') ? key : key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
     entries.push([camel, value])
   }
   if (entries.length === 0) return ''
@@ -76,14 +103,33 @@ function emitJsx(node: ChildNode, indent: number, lines: string[]): void {
   const el = node as Element
   const tag = el.tagName.toLowerCase()
   const attrs: string[] = []
+  // A form control's initial state is `default*` in React: `value` /
+  // `checked` would make it controlled with no handler, i.e. read-only.
+  const formField = tag === 'input' || tag === 'select' || tag === 'textarea'
   for (const name of el.getAttributeNames()) {
     const value = el.getAttribute(name) ?? ''
     if (name === 'style') {
       const obj = styleObject(value)
-      if (obj !== '') attrs.push(`style=${obj}`)
+      // An object literal inside the expression braces: `style={{...}}`.
+      if (obj !== '') attrs.push(`style={${obj}}`)
       continue
     }
+    if (name === 'selected' && tag === 'option') continue // the <select> carries it (below)
+    if (name === 'checked' && tag === 'input') { attrs.push('defaultChecked={true}'); continue }
+    if (name === 'value' && formField) { attrs.push(`defaultValue=${JSON.stringify(value)}`); continue }
+    if (BOOLEAN_ATTR.has(name)) { attrs.push(`${attrName(name)}={true}`); continue }
     attrs.push(`${attrName(name)}=${JSON.stringify(value)}`)
+  }
+  if (tag === 'select') {
+    const chosen = Array.from(el.querySelectorAll('option')).filter((o) => o.hasAttribute('selected')).map((o) => o.getAttribute('value') ?? o.textContent ?? '')
+    if (chosen.length > 0) attrs.push(`defaultValue={${JSON.stringify(el.hasAttribute('multiple') ? chosen : chosen[0])}}`)
+  }
+  // A textarea's text is its initial value, not children, in React.
+  if (tag === 'textarea') {
+    const text = el.textContent ?? ''
+    if (text !== '') attrs.push(`defaultValue=${JSON.stringify(text)}`)
+    lines.push(`${pad}<textarea${attrs.length > 0 ? ' ' + attrs.join(' ') : ''} />`)
+    return
   }
   const open = attrs.length > 0 ? `<${tag} ${attrs.join(' ')}` : `<${tag}`
   const kids = Array.from(el.childNodes)
@@ -127,7 +173,7 @@ const THEME = ${JSON.stringify(theme, null, 2)};
 
 const BEHAVIOUR_CSS = ${JSON.stringify(behaviourCss())};
 const DOCUMENT_CSS = ${JSON.stringify(documentCss(doc, theme))};
-const installBehaviour = ${behaviourRuntime()};
+const installBehaviour = ${behaviourInstaller()};
 
 void THEME;
 
