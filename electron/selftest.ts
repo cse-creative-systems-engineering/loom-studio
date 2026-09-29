@@ -4322,8 +4322,7 @@ export async function runSelfTest(): Promise<string> {
     check('toolbox icons carry their category colour', cats.every((c) => c !== 'missing') && new Set(cats).size === cats.length, cats.join(' | '))
     const on = cs('.seg button.on')
     check('a chosen segment is raised out of its well', on !== null && on.boxShadow !== 'none' && (cs('.seg')?.boxShadow ?? 'none').includes('inset'), on?.boxShadow ?? 'no segment')
-    check('the Studio\'s fields are wells', (cs('.toolbox .search')?.boxShadow ?? 'none').includes('inset'))
-  }
+    check('the Studio\'s fields are wells', (cs('.toolbox .search')?.boxShadow ?? 'none').includes('inset'))  }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.

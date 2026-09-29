@@ -1,4 +1,5 @@
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { EditorStore, emptyDocument } from './state/store'
 import type { Breakpoint, Document, InteractionState, Node, NodeId, PageBackground, PropValue } from './model/types'
 import { ancestry, descendants, parentOf } from './model/ops'
@@ -22,7 +23,6 @@ import type { RunTarget } from './model/desktop-run'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { STARTERS, getStarter } from './model/starters'
-import { iconMarkup } from './render/icons'
 import { starterGlyph, toolGlyph } from './tool-icons'
 import { PreviewStage } from './preview'
 import { ToolCard, type CardTarget } from './tool-card'
@@ -31,7 +31,7 @@ import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
 import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
-import { Toggle } from './ui-primitives'
+import { Toggle, Glyph, Ico } from './ui-primitives'
 import { VIEWPORTS, fitZoom, nodeBreakpoints } from './render/responsive'
 import { installBehaviourStyles, installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import { ContextMenu, type MenuState } from './context-menu'
@@ -329,48 +329,6 @@ export function App() {
       </div>
       {menu && <ContextMenu s={s} state={menu} onClose={() => setMenu(null)} />}
     </div>
-  )
-}
-
-/** A tool's own drawing (toolbox, layers, inspector header). */
-function Glyph({ markup, size = 14 }: { markup: string; size?: number }) {
-  return (
-    <svg
-      className="ico glyph"
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      // Compile-time constants from tool-icons.ts, never user input.
-      dangerouslySetInnerHTML={{ __html: markup }}
-    />
-  )
-}
-
-/** One icon from Loom's own set, for the chrome: the same family the output uses. */
-function Ico({ name, size = 14 }: { name: string; size?: number }) {
-  const markup = iconMarkup(name)
-  if (!markup) throw new Error(`chrome icon missing from the set: ${name}`)
-  return (
-    <svg
-      className="ico"
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.75}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      // Compile-time constants from icons.ts, never user input.
-      dangerouslySetInnerHTML={{ __html: markup }}
-    />
   )
 }
 
@@ -689,7 +647,10 @@ function Toolbox({
 
   return (
     <aside className="toolbox" onPointerLeave={hideCard}>
-      {card && <ToolCard target={card} theme={s.doc.meta.theme} />}
+      {/* Portaled: a glass panel (backdrop-filter) is the containing block of
+          any fixed-position child, so inside the toolbox the card was placed
+          against the panel and clipped by it: present, and invisible. */}
+      {card && createPortal(<ToolCard target={card} theme={s.doc.meta.theme} />, document.body)}
       {tab === 'components' && (
         <input
           className="search"

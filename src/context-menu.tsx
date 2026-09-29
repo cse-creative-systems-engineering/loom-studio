@@ -12,6 +12,8 @@ import { getComponent, unsupportedProps } from './model/registry'
 import { isFlowChild } from './render/web'
 import { parentOf } from './model/ops'
 import type { NodeId } from './model/types'
+import { Glyph, Ico } from './ui-primitives'
+import { toolGlyph } from './tool-icons'
 import './context-menu.css'
 
 export interface MenuState {
@@ -87,7 +89,8 @@ export function ContextMenu({ s, state, onClose }: Props) {
       onContextMenu={(e) => e.preventDefault()}
     >
       <div className="ctx-head">
-        <span className="ctx-icon">{spec?.icon ?? '▢'}</span>
+        {/* The tool's own drawing, as the toolbox shows it, not its legacy character. */}
+        <span className="ctx-icon"><Glyph markup={toolGlyph(node.type, spec?.category)} /></span>
         <div>
           <div className="ctx-name">{spec?.name ?? node.type}</div>
           <div className="ctx-sub">{isRoot ? 'root' : parent ? `in ${s.doc.nodes[parent]?.type ?? '?'}` : ''}</div>
@@ -97,7 +100,7 @@ export function ContextMenu({ s, state, onClose }: Props) {
       <div className="ctx-sep" />
 
       <button className="ctx-item" role="menuitem" onClick={run(() => s.select([id]))}>
-        <span className="ctx-k">↵</span> Select
+        <span className="ctx-k"><Ico name="check" size={13} /></span> Select
       </button>
 
       {!isRoot && (
@@ -116,7 +119,7 @@ export function ContextMenu({ s, state, onClose }: Props) {
               ),
             )}
           >
-            <span className="ctx-k">⌂</span> Reset geometry
+            <span className="ctx-k"><Ico name="refresh" size={13} /></span> Reset geometry
           </button>
 
           <button
@@ -124,7 +127,7 @@ export function ContextMenu({ s, state, onClose }: Props) {
             role="menuitem"
             onClick={run(() => s.commit({ op: 'setFlow', id, flow: !node.flow }, 'Toggle layout'))}
           >
-            <span className="ctx-k">{node.flow ? '⊞' : '⤢'}</span>
+            <span className="ctx-k"><Ico name={node.flow ? 'grid' : 'list'} size={13} /></span>
             {node.flow ? 'Make free-positioned' : 'Make flow child'}
             {flowChild && <span className="ctx-note">set by parent</span>}
           </button>
@@ -134,7 +137,7 @@ export function ContextMenu({ s, state, onClose }: Props) {
             role="menuitem"
             onClick={run(() => s.setProp(id, 'w', 200))}
           >
-            <span className="ctx-k">↔</span> Set width 200
+            <span className="ctx-k"><Ico name="ruler" size={13} /></span> Set width 200
           </button>
 
           <div className="ctx-sep" />
@@ -147,7 +150,7 @@ export function ContextMenu({ s, state, onClose }: Props) {
             })}
             disabled={!parent}
           >
-            <span className="ctx-k">↑</span> Select parent
+            <span className="ctx-k"><Ico name="arrow-up" size={13} /></span> Select parent
           </button>
 
           <button
@@ -155,7 +158,7 @@ export function ContextMenu({ s, state, onClose }: Props) {
             role="menuitem"
             onClick={run(() => s.remove([id]))}
           >
-            <span className="ctx-k">⌫</span> Delete
+            <span className="ctx-k"><Ico name="trash" size={13} /></span> Delete
             <span className="ctx-note">Del</span>
           </button>
         </>
