@@ -4305,6 +4305,26 @@ export async function runSelfTest(): Promise<string> {
       toolbox?.querySelector('.legend')?.textContent ?? '')
   }
 
+  // --- 97. the Studio is made of what it makes ---------------------------
+  // The chrome was generic dark: flat grey panels on black. It now shares the
+  // output's language: glass panels over a still wash of the accent colours,
+  // wells and raised segments, and a toolbox whose icons carry their
+  // category's colour. Read from the live Studio.
+  {
+    const cs = (q: string) => { const el = document.querySelector<HTMLElement>(q); return el ? getComputedStyle(el) : null }
+    const tb = cs('.loom .toolbox')
+    const ins = cs('.loom .inspector')
+    check('the side panels are glass', tb !== null && ins !== null && tb.backdropFilter.includes('blur') && ins.backdropFilter.includes('blur'),
+      `${tb?.backdropFilter} / ${ins?.backdropFilter}`)
+    check('the Studio sits on a wash of its accent colours', getComputedStyle(document.body).backgroundImage.split('radial-gradient').length - 1 >= 2)
+    const iconColour = (cat: string) => cs(`.toolbox [data-cat="${cat}"] .tool-icon`)?.color ?? 'missing'
+    const cats = ['Containers', 'Text', 'Controls', 'Data'].map(iconColour)
+    check('toolbox icons carry their category colour', cats.every((c) => c !== 'missing') && new Set(cats).size === cats.length, cats.join(' | '))
+    const on = cs('.seg button.on')
+    check('a chosen segment is raised out of its well', on !== null && on.boxShadow !== 'none' && (cs('.seg')?.boxShadow ?? 'none').includes('inset'), on?.boxShadow ?? 'no segment')
+    check('the Studio\'s fields are wells', (cs('.toolbox .search')?.boxShadow ?? 'none').includes('inset'))
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

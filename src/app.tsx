@@ -732,7 +732,7 @@ function Toolbox({
             {/* Starters first: a finished arrangement of real tools is the
                 fastest way in, and everything it drops stays editable. */}
             {STARTERS.some((st) => st.label.toLowerCase().includes(filter.toLowerCase())) && (
-              <section>
+              <section data-cat="Starters">
                 <h3>Starters</h3>
                 {STARTERS.filter((st) => st.label.toLowerCase().includes(filter.toLowerCase())).map((st) => (
                   <button
@@ -756,7 +756,7 @@ function Toolbox({
               const items = list.filter((c) => !added.has(c.name) && c.name.toLowerCase().includes(filter.toLowerCase()))
               if (items.length === 0) return null
               return (
-                <section key={cat}>
+                <section key={cat} data-cat={cat}>
                   <h3>{cat}</h3>
                   {items.map((c) => {
                     const gated = unsupportedProps(c, s.target)
