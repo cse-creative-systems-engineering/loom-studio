@@ -4193,7 +4193,7 @@ function renderPreviewBody(
             </span>
           ) : null}
           {visual === 'sparkline' ? (
-            <Sparkline points={points} width={Number(p.width) || 220} height={visH} accent={accent} id={node.id} />
+            <Sparkline points={points} width={(Number(p.width) || 220) - 2 * ((size === 'sm' ? t.space3 : size === 'lg' ? t.space5 : t.space4) + 1)} height={visH} accent={accent} id={node.id} />
           ) : visual === 'bars' ? (
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: visH }}>
               {points.map((v, i) => {

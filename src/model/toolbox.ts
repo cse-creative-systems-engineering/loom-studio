@@ -200,7 +200,9 @@ defineComponent({
     // the size you need. Both are honoured; the scale is what a drop starts on.
     size: { type: 'enum', options: ['xs', 'sm', 'md', 'lg', 'xl'], default: 'md', group: 'Style' },
     weight: { type: 'enum', options: ['400', '500', '600', '700'], default: '500', group: 'Style' },
-    color: { type: 'color', default: '#e6e9ef', group: 'Style' },
+    // Unset: the theme's text colour. A literal near-white here made every
+    // Label dropped on a daylight page all but invisible.
+    color: { type: 'color', default: '', group: 'Style' },
     fontSize: { type: 'number', default: -1, min: -1, max: 96, group: 'Type' },
     uppercase: { type: 'boolean', default: false, group: 'Type' },
     align: { type: 'enum', options: ['left', 'center', 'right', 'justify'], default: 'left', group: 'Type' },

@@ -310,9 +310,10 @@ export async function runSelfTest(): Promise<string> {
     }
     check('no container double-links a child', dupes.length === 0, dupes.join(','))
 
-    const labels = Object.values(s4.doc.nodes).filter((n) => n.type === 'Label')
+    // Muted lines are Captions (theme-coloured), so text is Label + Caption.
+    const labels = Object.values(s4.doc.nodes).filter((n) => n.type === 'Label' || n.type === 'Caption')
     check(
-      'demo seeds 8 Labels (2 header, 2 per card x 3 cards)',
+      'demo seeds 8 text lines (2 header, 5 in the cards, 1 footer)',
       labels.length === 8,
       `got ${labels.length}`,
     )
@@ -1054,7 +1055,7 @@ export async function runSelfTest(): Promise<string> {
     // label shares its text with <title>, so it can never prove removal).
     const someId = Object.keys(s24.doc.nodes).find((id) => {
       const n = s24.doc.nodes[id]
-      if (id === withRoot(s24) || n.type !== 'Label') return false
+      if (id === withRoot(s24) || (n.type !== 'Label' && n.type !== 'Caption')) return false
       const t = String(n.props.text ?? '').trim()
       return t !== '' && t !== s24.doc.meta.name && beforeHide.split(t).length - 1 === 1
     })
@@ -2409,7 +2410,9 @@ export async function runSelfTest(): Promise<string> {
     const s47 = new EditorStore()
     const r47 = withRoot(s47)
     s47.addComponent('KpiCard', r47, 0, 0, { points: '12,30,22,48', width: 200, height: 44 })
-    s47.addComponent('Sparkline', r47, 0, 0, { points: '12,30,22,48', width: 200, height: 44 })
+    // The card draws its chart INSIDE its edge and padding (200 - 2 x 17), so the
+    // standalone sparkline is given the same box to compare like with like.
+    s47.addComponent('Sparkline', r47, 0, 0, { points: '12,30,22,48', width: 166, height: 44 })
     const both = emitHtml(s47.doc)
     // Each chart draws an area path and a line path, so two charts make four:
     // the card's two must match the sparkline's two exactly.
@@ -4254,6 +4257,47 @@ export async function runSelfTest(): Promise<string> {
     r95.unmount()
     host.remove()
     still.remove()
+  }
+
+  // --- 96. finished defaults: legible, aligned, inside their padding -------
+  {
+    const s96 = new EditorStore()
+    const root96 = withRoot(s96)
+    s96.addComponent('Label', root96, 0, 0)
+    s96.addComponent('BannerBox', root96, 0, 60)
+    s96.addComponent('KpiCard', root96, 0, 140)
+    const host = document.createElement('div')
+    host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:700px'
+    document.body.appendChild(host)
+    const r96 = createRoot(host)
+    const day = getTheme('daylight')
+    r96.render(renderNode({ doc: s96.doc, selected: new Set(), mode: 'preview', theme: day }, s96.doc.root!))
+    await new Promise((r) => setTimeout(r, 60))
+    const rgbOf = (hex: string) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`
+    const labelEl = [...host.querySelectorAll<HTMLElement>('*')].find((e) => e.textContent === getComponent('Label')!.props.text.default && e.children.length === 0)
+    check('a dropped Label takes the theme text colour (legible on daylight)', labelEl !== undefined && getComputedStyle(labelEl).color === rgbOf(day.textPrimary),
+      labelEl ? getComputedStyle(labelEl).color : 'no label')
+    const banner = [...host.querySelectorAll<HTMLElement>('div')].find((d) => d.textContent === 'Announcement')
+    const icon = banner?.querySelector('svg')?.getBoundingClientRect()
+    const words = banner ? [...banner.querySelectorAll('span')].find((x) => x.textContent === 'Announcement')?.getBoundingClientRect() : undefined
+    check('a banner sets its icon beside its message', icon !== undefined && words !== undefined && icon.right <= words.left && Math.abs((icon.top + icon.bottom) / 2 - (words.top + words.bottom) / 2) < 6,
+      icon && words ? `icon ${icon.left.toFixed(0)}-${icon.right.toFixed(0)} @${icon.top.toFixed(0)}, text ${words.left.toFixed(0)} @${words.top.toFixed(0)}` : 'missing')
+    // The chart, not an icon: the only drawing wider than an icon is.
+    const kpiSvg = [...host.querySelectorAll<SVGElement>('svg')].find((v) => v.getBoundingClientRect().width > 60)
+    // The card is the raised kind here (it sits on the root's glass): found by its width.
+    const kpiCard = kpiSvg?.closest<HTMLElement>('div[style*="width: 220px"]') ?? null
+    const inner = kpiCard ? kpiCard.getBoundingClientRect().right - parseFloat(getComputedStyle(kpiCard).paddingRight) - parseFloat(getComputedStyle(kpiCard).borderRightWidth) : 0
+    check('a KPI card draws its chart inside its padding', kpiSvg !== undefined && kpiCard !== null && kpiSvg.getBoundingClientRect().right <= inner + 0.5,
+      kpiSvg && kpiCard ? `svg right ${kpiSvg.getBoundingClientRect().right.toFixed(1)} content right ${inner.toFixed(1)}` : 'missing')
+    r96.unmount()
+    host.remove()
+    // The demo is the first thing anyone sees: it must be right in EVERY
+    // theme, so it writes no colour of its own.
+    const sd = new EditorStore()
+    seedDemo(sd)
+    const coloured = Object.values(sd.doc.nodes).filter((n) => typeof n.props.color === 'string' && n.props.color !== '').map((n) => `${n.type}:${n.props.color}`)
+    check('the demo writes no colour literals; text takes the theme', coloured.length === 0, coloured.join(' '))
+    check('the demo sits on the aurora page', sd.doc.meta.page?.background === 'aurora')
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

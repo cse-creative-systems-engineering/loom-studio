@@ -609,6 +609,10 @@ defineComponent({
     icon: str('megaphone'),
     ...insetProps(),
     ...flowProps(),
+    // A banner reads across: its icon BESIDE its message, centred on it. The
+    // shared flow default (a column) stacked the icon above the text.
+    direction: en(['row', 'column'], 'row', 'Layout'),
+    align: en(['stretch', 'start', 'center', 'end', 'baseline'], 'center', 'Layout'),
     ...surfaceProps(),
     ...typeProps(),
     tone: en(['info', 'success', 'warning', 'danger'], 'info', 'State'),
