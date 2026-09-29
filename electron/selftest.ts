@@ -4521,6 +4521,26 @@ export async function runSelfTest(): Promise<string> {
       const sid = ss.dropComponent('SettingsSection', withRoot(ss), 0, 0)!
       const controls = ss.doc.nodes[sid].children.map((r) => (ss.doc.nodes[r]?.children ?? []).map((c) => ss.doc.nodes[c]?.type).join('+'))
       check('each seeded settings row arrives with its control', controls.join(',') === 'Switch,Switch,Select', controls.join(','))
+      // Names read down the left edge: the row's `align` (control side, right
+      // by default) was also applied as text alignment, right-aligning every
+      // label. Measured on the label text itself.
+      const host = document.createElement('div')
+      host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px'
+      document.body.appendChild(host)
+      const rs = createRoot(host)
+      rs.render(renderNode({ doc: ss.doc, selected: new Set(), mode: 'preview' }, sid))
+      await new Promise((r) => setTimeout(r, 30))
+      const offsets = ['Email notifications', 'Two-factor authentication', 'Language'].map((label) => {
+        const span = [...host.querySelectorAll<HTMLElement>('span')].find((x) => x.textContent === label)
+        const col = span?.parentElement
+        if (!span || !col) return 'missing'
+        const range = document.createRange()
+        range.selectNodeContents(span)
+        return Math.round(range.getBoundingClientRect().left - col.getBoundingClientRect().left)
+      })
+      rs.unmount()
+      host.remove()
+      check('settings row labels are left-aligned', offsets.every((o) => o === 0), offsets.join(','))
     }
     // A bar reads across: its seeded parts sit on one line.
     {

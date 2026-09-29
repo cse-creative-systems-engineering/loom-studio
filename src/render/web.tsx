@@ -472,8 +472,12 @@ function applyCommonStyle(
   // item alignment only, handled above: a row aligned to the end used to
   // right-align every line of text inside it, down to a chat bubble.
   const align = str(p.align)
-  const alignOptions = getComponent(nodeType)?.props.align?.options ?? []
-  const textual = alignOptions.includes('left') || alignOptions.includes('right') || alignOptions.includes('justify')
+  const alignSpec = getComponent(nodeType)?.props.align
+  const alignOptions = alignSpec?.options ?? []
+  // An `align` filed under Layout is geometry (where a part sits: a settings
+  // row's control), never text alignment, even when its words are left/right:
+  // read as text it right-aligned every settings label.
+  const textual = alignSpec?.group !== 'Layout' && (alignOptions.includes('left') || alignOptions.includes('right') || alignOptions.includes('justify'))
   const flexBox = s.display === 'flex' || s.display === 'inline-flex'
   if (align && (textual || !flexBox)) {
     s.textAlign = align as React.CSSProperties['textAlign']
