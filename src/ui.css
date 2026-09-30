@@ -17,7 +17,8 @@
   --well-hover: rgba(255, 255, 255, 0.07);
   --ink: #ededf0;
   --ink-2: #a3a6b0;
-  --ink-3: #6e717c;
+  /* Tertiary text still reads: 4.5:1 on the panels (it was 3.5-3.8:1). */
+  --ink-3: #8b8e99;
   /* Chrome accent: selection + focus in the TOOL only. */
   --accent: #5b8cff;
   --accent-2: #a06bff;
@@ -27,6 +28,18 @@
   --danger: #e2564d;
   --radius: 10px;
   --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.85);
+  /* The Studio's material is the one its designs are made of: glass over
+     colour (render/theme.ts, render/aurora.tsx), calmer. The tool and what it
+     makes read as one product. */
+  --glass: rgba(15, 16, 22, 0.64);
+  --glass-edge: rgba(255, 255, 255, 0.075);
+  --glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glass-blur: blur(24px) saturate(150%);
+  --glass-depth: 0 16px 40px -20px rgba(0, 0, 0, 0.9);
+  /* Soft depth for the Studio's own controls: fields are wells, "on" is raised. */
+  --well-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+  --raised: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.045));
+  --raised-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   /* Bundled, so every machine draws the same Studio. The canvas does NOT use
      it: a design is drawn in its theme's type, which is what exports ship. */
   --font: 'Inter Variable', 'Inter', system-ui, sans-serif;
@@ -36,6 +49,109 @@
   --text-sm: 11.5px;
   --text-md: 12.5px;
   --text-lg: 13px;
+  /* Overlays and plates, named so the light appearance can redefine them. */
+  --tint-1: rgba(255, 255, 255, 0.04);
+  --tint-2: rgba(255, 255, 255, 0.06);
+  --track: rgba(255, 255, 255, 0.1);
+  --track-edge: rgba(255, 255, 255, 0.1);
+  --sunk: rgba(0, 0, 0, 0.2);
+  --dots: rgba(255, 255, 255, 0.055);
+  --plate: #1c1d24;
+  --plate-selected: #1b2336;
+  --overlay: rgba(15, 16, 22, 0.9);
+  --ink-4: #454c5c;
+  --accent-ink: #c8d7ff;
+  --danger-ink: #f08a82;
+  --teal: #4ad6c0;
+  --canvas-bg: rgba(12, 13, 17, 0.8);
+  color-scheme: dark;
+}
+
+/* Light appearance: chosen in the title bar (Dark, the Studio's own look,
+   stays the default; System follows the OS). */
+:root[data-appearance='light'] {
+  /* The Studio in daylight: the same ramp, inverted, with the same
+     contrast floor (tertiary text 5.6:1 on the panels). The artboard and
+     rulers stay dark: they stand for the design's own viewport. */
+  --bg: #e9ecf1;
+  --bg-2: #e2e5eb;
+  --panel: #f7f8fa;
+  --panel-2: #eceef2;
+  --line: rgba(15, 20, 30, 0.09);
+  --line-2: rgba(15, 20, 30, 0.16);
+  --well: rgba(15, 20, 30, 0.05);
+  --well-hover: rgba(15, 20, 30, 0.08);
+  --ink: #16181d;
+  --ink-2: #454a55;
+  --ink-3: #5c616c;
+  --ink-4: #a9aeb9;
+  --accent: #3b6ef5;
+  --select: #e08e00;
+  --shadow: 0 18px 50px -20px rgba(20, 30, 50, 0.35);
+  --glass: rgba(250, 251, 253, 0.74);
+  --glass-edge: rgba(15, 20, 30, 0.09);
+  --glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --glass-depth: 0 16px 40px -22px rgba(20, 30, 50, 0.35);
+  --well-shadow: inset 0 1px 2px rgba(15, 20, 30, 0.12);
+  --raised: linear-gradient(180deg, #ffffff, #f2f3f6);
+  --raised-shadow: 0 1px 2px rgba(15, 20, 30, 0.16), inset 0 1px 0 #ffffff;
+  --tint-1: rgba(15, 20, 30, 0.035);
+  --tint-2: rgba(15, 20, 30, 0.05);
+  --track: rgba(15, 20, 30, 0.14);
+  --track-edge: rgba(15, 20, 30, 0.1);
+  --sunk: rgba(15, 20, 30, 0.06);
+  --dots: rgba(15, 20, 30, 0.1);
+  --plate: #eceef2;
+  --plate-selected: #e1e8fb;
+  --overlay: rgba(250, 251, 253, 0.95);
+  --accent-ink: #2447b8;
+  --danger-ink: #c2372e;
+  --teal: #0f8f7c;
+  --canvas-bg: rgba(226, 229, 236, 0.85);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-appearance='system'] {
+    /* The Studio in daylight: the same ramp, inverted, with the same
+       contrast floor (tertiary text 5.6:1 on the panels). The artboard and
+       rulers stay dark: they stand for the design's own viewport. */
+    --bg: #e9ecf1;
+    --bg-2: #e2e5eb;
+    --panel: #f7f8fa;
+    --panel-2: #eceef2;
+    --line: rgba(15, 20, 30, 0.09);
+    --line-2: rgba(15, 20, 30, 0.16);
+    --well: rgba(15, 20, 30, 0.05);
+    --well-hover: rgba(15, 20, 30, 0.08);
+    --ink: #16181d;
+    --ink-2: #454a55;
+    --ink-3: #5c616c;
+    --ink-4: #a9aeb9;
+    --accent: #3b6ef5;
+    --select: #e08e00;
+    --shadow: 0 18px 50px -20px rgba(20, 30, 50, 0.35);
+    --glass: rgba(250, 251, 253, 0.74);
+    --glass-edge: rgba(15, 20, 30, 0.09);
+    --glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    --glass-depth: 0 16px 40px -22px rgba(20, 30, 50, 0.35);
+    --well-shadow: inset 0 1px 2px rgba(15, 20, 30, 0.12);
+    --raised: linear-gradient(180deg, #ffffff, #f2f3f6);
+    --raised-shadow: 0 1px 2px rgba(15, 20, 30, 0.16), inset 0 1px 0 #ffffff;
+    --tint-1: rgba(15, 20, 30, 0.035);
+    --tint-2: rgba(15, 20, 30, 0.05);
+    --track: rgba(15, 20, 30, 0.14);
+    --track-edge: rgba(15, 20, 30, 0.1);
+    --sunk: rgba(15, 20, 30, 0.06);
+    --dots: rgba(15, 20, 30, 0.1);
+    --plate: #eceef2;
+    --plate-selected: #e1e8fb;
+    --overlay: rgba(250, 251, 253, 0.95);
+    --accent-ink: #2447b8;
+    --danger-ink: #c2372e;
+    --teal: #0f8f7c;
+    --canvas-bg: rgba(226, 229, 236, 0.85);
+    color-scheme: light;
+}
 }
 
 * { box-sizing: border-box; }
@@ -54,7 +170,14 @@ html, body, #root {
 }
 
 body {
-  background: var(--bg);
+  /* A quiet, STILL wash of the accent colours behind the whole Studio: the
+     aurora's calm cousin. Still on purpose: a tool keeps still while you
+     work; the moving colour belongs to the design. */
+  background:
+    radial-gradient(1200px 820px at 0% 0%, rgba(91, 140, 255, 0.3), transparent 60%),
+    radial-gradient(1100px 820px at 100% 100%, rgba(160, 107, 255, 0.28), transparent 60%),
+    radial-gradient(800px 560px at 62% 40%, rgba(74, 214, 192, 0.07), transparent 70%),
+    var(--bg);
   color: var(--ink);
   font-family: var(--font);
   font-size: 13px;
@@ -99,6 +222,7 @@ input, select { font-family: inherit; font-size: 12px; }
   background: var(--well);
   border: 1px solid transparent;
   border-radius: 6px;
+  box-shadow: var(--well-shadow);
   color: var(--ink);
   outline: none;
 }
@@ -145,8 +269,8 @@ input, select { font-family: inherit; font-size: 12px; }
 }
 
 .tool:hover {
-  background: var(--panel-2);
-  border-color: var(--line-2);
+  background: linear-gradient(90deg, rgba(91, 140, 255, 0.1), rgba(91, 140, 255, 0.03));
+  border-color: rgba(91, 140, 255, 0.16);
 }
 
 .tool:active { transform: scale(0.985); }
@@ -159,6 +283,28 @@ input, select { font-family: inherit; font-size: 12px; }
   font-size: 11px;
 }
 
+/* Every category has its colour, as a node type does in Blender: the icons
+   carry it, muted at rest and full on hover, so a long toolbox scans by
+   kind before it reads by name. */
+[data-cat] { --cat: var(--accent); }
+[data-cat='Starters'] { --cat: #f5b453; }
+[data-cat='Containers'] { --cat: #6f9bff; }
+[data-cat='Text'] { --cat: #4fd1c5; }
+[data-cat='Controls'] { --cat: #a58bff; }
+[data-cat='Data'] { --cat: #f0a35e; }
+[data-cat='Navigation'] { --cat: #f478b8; }
+[data-cat='Feedback'] { --cat: #5ed49a; }
+[data-cat='Conversation'] { --cat: #7cc4ff; }
+[data-cat] .tool-icon { color: color-mix(in srgb, var(--cat) 62%, var(--ink-3)); }
+[data-cat] .tool:hover .tool-icon {
+  color: var(--cat);
+  background: color-mix(in srgb, var(--cat) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cat) 28%, transparent);
+}
+[data-cat] .tool:hover {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--cat) 11%, transparent), color-mix(in srgb, var(--cat) 3%, transparent));
+  border-color: color-mix(in srgb, var(--cat) 18%, transparent);
+}
 .tool:hover .tool-icon { color: var(--accent); }
 
 .tool-name { flex: 1; font-size: 12px; }
@@ -180,8 +326,9 @@ input, select { font-family: inherit; font-size: 12px; }
   /* A fine dot field with one soft light from above: depth without lines. */
   background:
     radial-gradient(1100px 520px at 50% -18%, rgba(120, 140, 255, 0.07), transparent 65%),
-    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.055) 1px, transparent 1.2px) 0 0 / 18px 18px,
-    var(--bg-2);
+    radial-gradient(circle at 1px 1px, var(--dots) 1px, transparent 1.2px) 0 0 / 18px 18px,
+    /* Translucent: the Studio's wash tints the work area, faintly. */
+    var(--canvas-bg);
 }
 
 .chip {
@@ -214,6 +361,10 @@ input, select { font-family: inherit; font-size: 12px; }
    border said "empty dropzone placeholder". */
 .surface {
   position: relative;
+  /* The artboard IS the design's viewport: a fixed overlay (a command
+     palette, a scrim) is fixed to it, as it will be to the page. Without
+     this it was fixed to the Studio window and covered the whole editor. */
+  contain: layout;
   /* The width IS the viewport's (set inline); the border sits outside it, so
      the content box is exactly 1280 / 834 / 390 like the preview's. No
      min-width: a floor of 720px made the 390px phone a 720px phone. */
@@ -228,7 +379,8 @@ input, select { font-family: inherit; font-size: 12px; }
   border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.4),
-    0 24px 60px -24px rgba(0, 0, 0, 0.9);
+    0 24px 60px -24px rgba(0, 0, 0, 0.9),
+    0 0 140px -50px rgba(91, 140, 255, 0.35);
 }
 
 /* Rulers: real tick strips along the top and left edges. The previous rule
@@ -300,18 +452,86 @@ input, select { font-family: inherit; font-size: 12px; }
   color: var(--ink-3);
 }
 
+/* The empty document's welcome: a glass card on the artboard. Drops still
+   pass through it; only its buttons take the pointer. */
+.empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 32px 24px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--tint-2), transparent), var(--glass);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-hi), var(--glass-depth), 0 0 120px -40px rgba(91, 140, 255, 0.35);
+}
+
+.empty-card .empty-mark { width: 28px; height: 28px; border-radius: 9px; margin-bottom: 6px; box-shadow: 0 0 28px -4px rgba(91, 140, 255, 0.8); }
+
 .empty-hint-title {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .empty-hint-body {
   font-size: 12px;
-  line-height: 1.5;
-  max-width: 42ch;
+  line-height: 1.55;
+  max-width: 46ch;
+  color: var(--ink-2);
 }
+
+.empty-starts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  width: min(520px, 100%);
+  margin-top: 10px;
+}
+
+/* What an earlier session left: offered first, never loaded unasked. */
+.empty-recover {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin-top: 8px;
+  padding: 6px 14px 6px 11px;
+  border: 1px solid rgba(91, 140, 255, 0.45);
+  border-radius: 8px;
+  background: rgba(91, 140, 255, 0.12);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+}
+.empty-recover:hover { background: rgba(91, 140, 255, 0.2); }
+.empty-recover .dim { color: var(--ink-2); font-weight: 450; }
+
+.empty-start {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  height: 34px;
+  padding: 0 14px 0 11px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 550;
+  transition: border-color 120ms ease, filter 120ms ease;
+}
+
+.empty-start:hover { border-color: rgba(91, 140, 255, 0.45); filter: brightness(1.1); }
+.empty-start .glyph { color: #f5b453; }
 
 /* Manipulation affordance. An unselected element must LOOK grabbable, and
    must not advertise `cursor: pointer` from the designed control it renders. */
@@ -323,35 +543,62 @@ input, select { font-family: inherit; font-size: 12px; }
   cursor: grabbing;
 }
 
+/* An empty container: a faint dashed edge so a split, a button group or an
+   accordion that paints nothing is still there to see, find and drop into.
+   Design-time only (the attribute is never rendered into the output), and
+   deliberately weaker than hover and selection so both still win. */
+.surface [data-loom-vacant='true'] {
+  outline: 1px dashed rgba(150, 162, 190, 0.38);
+  outline-offset: -1px;
+}
+
+/* Selection chrome is drawn inside the zoomed surface, so every length here is
+   divided by the zoom (--loom-zoom, set on the surface): an outline, a handle
+   and its offset are the same size on screen at 37% as at 200%. At 69% the
+   8px handles were 5.5px, and 3px at 37%: too small to find, let alone grab. */
+
 /* Hover: a faint selection-hue outline on the INNERMOST element under the
    pointer only. Plain :hover also matches every ancestor, which drew the
    element, its card and its panel at once. */
 .surface [data-loom-id]:hover:not(:has([data-loom-id]:hover)) {
-  outline: 1px solid rgba(255, 178, 36, 0.45);
-  outline-offset: 1px;
+  outline: calc(1px / var(--loom-zoom, 1)) solid rgba(255, 178, 36, 0.45);
+  outline-offset: calc(1px / var(--loom-zoom, 1));
 }
 
 /* Selected: its own hue so it never reads as one of the user's blue buttons. */
 .surface [data-loom-id][data-selected='true'] {
-  outline: 1.5px solid var(--select);
-  outline-offset: 1px;
+  outline: calc(1.5px / var(--loom-zoom, 1)) solid var(--select);
+  outline-offset: calc(1px / var(--loom-zoom, 1));
 }
 
-/* Corner handles — the visible promise that resize exists. */
-.surface [data-loom-id][data-selected='true'] .loom-handle {
+/* Corner handles: the visible promise that resize exists. They live in one
+   layer over the design (SelectionLayer), on each selected node's border
+   box: never clipped by the node's own overflow, never placed against some
+   other ancestor. The layer takes no pointer; the handles do. */
+.surface .sel-layer {
   position: absolute;
-  width: 8px;
-  height: 8px;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483000;
+}
+.surface .sel-box { position: absolute; }
+.surface .sel-box .loom-handle {
+  pointer-events: auto;
+  --h: calc(8px / var(--loom-zoom, 1));
+  --o: calc(-4px / var(--loom-zoom, 1));
+  position: absolute;
+  width: var(--h);
+  height: var(--h);
   background: #0f1219;
-  border: 1.5px solid var(--select);
-  border-radius: 2px;
+  border: calc(1.5px / var(--loom-zoom, 1)) solid var(--select);
+  border-radius: calc(2px / var(--loom-zoom, 1));
   z-index: 5;
 }
 
-.surface .loom-handle[data-corner='nw'] { top: -5px; left: -5px; cursor: nwse-resize; }
-.surface .loom-handle[data-corner='ne'] { top: -5px; right: -5px; cursor: nesw-resize; }
-.surface .loom-handle[data-corner='sw'] { bottom: -5px; left: -5px; cursor: nesw-resize; }
-.surface .loom-handle[data-corner='se'] { bottom: -5px; right: -5px; cursor: nwse-resize; }
+.surface .loom-handle[data-corner='nw'] { top: var(--o); left: var(--o); cursor: nwse-resize; }
+.surface .loom-handle[data-corner='ne'] { top: var(--o); right: var(--o); cursor: nesw-resize; }
+.surface .loom-handle[data-corner='sw'] { bottom: var(--o); left: var(--o); cursor: nesw-resize; }
+.surface .loom-handle[data-corner='se'] { bottom: var(--o); right: var(--o); cursor: nwse-resize; }
 
 /* ---------------- inspector ---------------- */
 
@@ -374,9 +621,10 @@ input, select { font-family: inherit; font-size: 12px; }
 .insp-icon {
   width: 28px; height: 28px;
   display: grid; place-items: center;
-  background: rgba(91, 140, 255, 0.14);
+  background: linear-gradient(135deg, rgba(91, 140, 255, 0.24), rgba(160, 107, 255, 0.2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 12px -6px rgba(91, 140, 255, 0.6);
   border-radius: 8px;
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .insp-name { font-weight: 600; font-size: 13px; }
@@ -538,6 +786,7 @@ input, select { font-family: inherit; font-size: 12px; }
   background: var(--well);
   border: 1px solid transparent;
   border-radius: 6px;
+  box-shadow: var(--well-shadow);
   color: var(--ink);
   outline: none;
 }
@@ -559,6 +808,7 @@ input, select { font-family: inherit; font-size: 12px; }
   background: var(--well);
   border: 1px solid transparent;
   border-radius: 6px;
+  box-shadow: var(--well-shadow);
   color: var(--ink);
   outline: none;
   cursor: pointer;
@@ -629,7 +879,7 @@ input, select { font-family: inherit; font-size: 12px; }
 .num-label { cursor: ew-resize; user-select: none; }
 .num-label:active { cursor: grabbing; color: var(--accent); }
 
-.bind { color: #4ad6c0; font-size: 9px; }
+.bind { color: var(--teal); font-size: 9px; }
 
 .gate-badge {
   margin-left: auto;
@@ -652,25 +902,43 @@ input, select { font-family: inherit; font-size: 12px; }
 .num input { flex: 1; }
 
 .toggle {
-  width: 28px; height: 16px;
-  padding: 2px;
-  background: rgba(255, 255, 255, 0.1);
+  /* A 36x24 target (WCAG 2.2's minimum), the track drawn inside it: a
+     28x16 button was a small thing to hit. */
+  position: relative;
+  flex: none;
+  width: 36px; height: 24px;
+  padding: 0;
+  background: transparent;
   border: 0;
   border-radius: 999px;
-  display: flex;
-  transition: background 140ms ease, border-color 140ms ease;
+  cursor: pointer;
+}
+
+/* A well that still reads as a track on dark glass: black alone vanished
+   there, and an off switch looked like a stray dot. */
+.toggle::before {
+  content: '';
+  position: absolute;
+  inset: 3px 2px;
+  border-radius: 999px;
+  background: var(--track);
+  box-shadow: var(--well-shadow), inset 0 0 0 1px var(--track-edge);
+  transition: background 140ms ease;
 }
 
 .toggle .knob {
-  width: 12px; height: 12px;
+  position: absolute;
+  left: 4px;
+  top: 5px;
+  width: 14px; height: 14px;
   border-radius: 50%;
-  background: #c9cfdb;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  background: linear-gradient(180deg, #e9edf5, #b9c0cf);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.7);
   transition: transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1), background 140ms ease;
 }
 
-.toggle.on { background: var(--accent); }
-.toggle.on .knob { transform: translateX(12px); background: #fff; }
+.toggle.on::before { background: var(--accent); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3); }
+.toggle.on .knob { transform: translateX(14px); background: linear-gradient(180deg, #ffffff, #e3e8f2); }
 
 .empty { padding: 28px 18px; color: var(--ink-2); }
 .empty .dim { color: var(--ink-3); font-size: 11.5px; line-height: 1.5; }
@@ -705,7 +973,7 @@ input, select { font-family: inherit; font-size: 12px; }
 }
 
 .hist-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--ink); border-color: var(--line); }
-.hist-btn:disabled { color: #3d4453; cursor: default; }
+.hist-btn:disabled { color: var(--ink-4); cursor: default; }
 
 .warn-btn {
   background: rgba(217, 161, 58, 0.1);
@@ -785,29 +1053,69 @@ input, select { font-family: inherit; font-size: 12px; }
   border-color: var(--line-2);
 }
 
+.layer-tree { display: flex; flex-direction: column; gap: 1px; }
+
 .layer-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   width: 100%;
-  padding: 5px 6px;
-  margin-bottom: 1px;
+  min-height: 28px;
+  padding: 3px 6px 3px 4px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 7px;
   color: var(--ink);
   text-align: left;
   font-size: 12px;
+  cursor: default;
+  user-select: none;
 }
 
 .layer-row:hover { background: var(--panel-2); }
+.layer-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .layer-row.selected {
   background: rgba(91, 140, 255, 0.12);
   border-color: rgba(91, 140, 255, 0.45);
 }
 
-.layer-row.is-hidden { opacity: 0.55; }
+.layer-row.is-hidden .tool-name,
+.layer-row.is-hidden .tool-icon { opacity: 0.55; }
+
+/* Where a dragged row will land: a line between rows, or a ring on the
+   container it goes into. */
+.layer-row.drop-before::before,
+.layer-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.layer-row.drop-before::before { top: -2px; }
+.layer-row.drop-after::after { bottom: -2px; }
+.layer-row.drop-inside { border-color: var(--accent); background: rgba(91, 140, 255, 0.18); }
+
+.layer-twist {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--ink-3);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+}
+button.layer-twist:hover { color: var(--ink); background: var(--panel-2); }
+.layer-twist .ico { transition: transform 120ms ease; }
+.layer-twist.open .ico { transform: rotate(90deg); }
 
 .layer-row .tool-icon { width: 20px; height: 20px; font-size: 11px; flex-shrink: 0; }
 
@@ -821,24 +1129,63 @@ input, select { font-family: inherit; font-size: 12px; }
 
 .layer-detail { color: var(--ink-3); font-size: 11px; }
 
-.layer-locked { color: var(--ink-3); font-size: 11px; flex-shrink: 0; }
+.layer-rename {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--well);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  box-shadow: var(--well-shadow);
+  outline: none;
+}
+
+/* A hidden or locked node says so even when its actions are tucked away. */
+.layer-state { display: inline-flex; gap: 3px; flex: none; color: var(--ink-3); }
+
+/* The actions take no width: the name gets the whole row. They float over
+   its end, on an opaque plate, only under the pointer or keyboard focus, so
+   a selected row still shows its full name. */
+.layer-actions {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  gap: 1px;
+  padding-left: 6px;
+  border-radius: 6px;
+  background: var(--plate);
+  box-shadow: -10px 0 10px -2px var(--plate);
+}
+.layer-row.selected .layer-actions { background: var(--plate-selected); box-shadow: -10px 0 10px -2px var(--plate-selected); }
+.layer-row:is(:hover, :focus-visible, :focus-within) .layer-actions { display: inline-flex; }
 
 .layer-btn {
   flex-shrink: 0;
   width: 22px; height: 22px;
   display: grid; place-items: center;
-  font-size: 11px;
+  padding: 0;
   color: var(--ink-3);
   background: transparent;
   border: none;
   border-radius: 6px;
 }
 
-.layer-btn:hover { color: var(--ink); background: var(--panel-2); }
-
-.layer-btn.off { opacity: 0.45; }
-
+.layer-btn:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); }
+.layer-btn:disabled { opacity: 0.3; }
+.layer-btn.off { color: var(--ink-2); }
 .layer-btn.on { color: var(--accent); }
+
+/* A row under the pointer outlines its node on the canvas. */
+.surface [data-loom-id].layer-hover {
+  outline: calc(1.5px / var(--loom-zoom, 1)) dashed var(--select);
+  outline-offset: calc(1px / var(--loom-zoom, 1));
+}
 
 /* ---------------- canvas zoom + snap guides ---------------- */
 
@@ -866,7 +1213,7 @@ input, select { font-family: inherit; font-size: 12px; }
   position: fixed;
   z-index: 200;
   pointer-events: none;
-  background: #151517;
+  background: var(--panel);
   border: 1px solid var(--line-2);
   border-radius: 6px;
   padding: 3px 8px;
@@ -1037,12 +1384,13 @@ input, select { font-family: inherit; font-size: 12px; }
   padding: 2px;
   margin-bottom: 6px;
   background: var(--well);
+  box-shadow: var(--well-shadow);
   border-radius: 7px;
 }
 
 .state-tab {
   position: relative;
-  height: 22px;
+  height: 24px;
   padding: 0;
   font-size: var(--text-xs);
   color: var(--ink-3);
@@ -1053,7 +1401,7 @@ input, select { font-family: inherit; font-size: 12px; }
 }
 
 .state-tab:hover { color: var(--ink); }
-.state-tab.on { color: var(--ink); background: rgba(255, 255, 255, 0.09); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); }
+.state-tab.on { color: var(--ink); background: var(--raised); box-shadow: var(--raised-shadow); }
 .state-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .state-dot {
@@ -1110,14 +1458,14 @@ input, select { font-family: inherit; font-size: 12px; }
 .list-panel h3 .count { color: var(--ink-3); font-weight: 400; margin-left: 4px; }
 .list-rows { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .list-row { border: 1px solid transparent; border-radius: 8px; }
-.list-row.open { border-color: var(--line-2); background: rgba(0, 0, 0, 0.18); }
+.list-row.open { border-color: var(--line-2); background: var(--sunk); }
 .list-row-head { display: flex; align-items: center; gap: 4px; min-height: 30px; }
 .list-row-title {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 5px 6px;
   background: transparent; border: 0; border-radius: 6px; color: var(--ink); font-size: var(--text-sm);
   text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.list-row-title:hover { background: rgba(255, 255, 255, 0.04); }
+.list-row-title:hover { background: var(--tint-1); }
 .list-row-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .list-row-title .caret { color: var(--ink-3); font-size: 9px; width: 10px; flex-shrink: 0; }
 .list-row-tools { display: flex; gap: 2px; opacity: 0; transition: opacity 120ms ease; }
@@ -1126,7 +1474,7 @@ input, select { font-family: inherit; font-size: 12px; }
   width: 22px; height: 22px; display: inline-grid; place-items: center; padding: 0;
   background: transparent; border: 0; border-radius: 5px; color: var(--ink-2); font-size: 11px; cursor: pointer;
 }
-.icon-mini:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); color: var(--ink); }
+.icon-mini:hover:not(:disabled) { background: var(--tint-2); color: var(--ink); }
 .icon-mini.danger:hover:not(:disabled) { color: var(--danger); }
 .icon-mini:disabled { opacity: 0.3; cursor: default; }
 .icon-mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -1157,3 +1505,172 @@ input, select { font-family: inherit; font-size: 12px; }
 .num input:hover:not(:focus),
 .search:hover:not(:focus),
 .props-search:hover:not(:focus) { background: var(--well-hover); border-color: transparent; }
+
+/* A field's focus is a ring, not just a tinted 1px edge (which, on a dark
+   well, was easy to lose). One rule for every well the Studio draws: they
+   all set `outline: none` for their own look, so the global ring never
+   reached them. */
+.search:focus-visible,
+.props-search:focus-visible,
+.field input[type='text']:focus-visible,
+.field select:focus-visible,
+.num input:focus-visible,
+.select-wrap select:focus-visible,
+.slide-field input[type='number']:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--well-shadow), 0 0 0 2px rgba(91, 140, 255, 0.45);
+}
+
+/* A text value is a well that wraps and grows with what it holds (up to a
+   few lines, then it scrolls). */
+.field textarea.text-value {
+  width: 100%;
+  min-height: 24px;
+  max-height: 120px;
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink);
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  box-shadow: var(--well-shadow);
+  outline: none;
+  resize: none;
+  field-sizing: content;
+  overflow-wrap: anywhere;
+}
+.field textarea.text-value:hover:not(:focus) { background: var(--well-hover); }
+.field textarea.text-value:focus { border-color: rgba(91, 140, 255, 0.65); }
+.field textarea.text-value:focus-visible { border-color: var(--accent); box-shadow: var(--well-shadow), 0 0 0 2px rgba(91, 140, 255, 0.45); }
+
+/* A folding section: the heading is the button. Folded, it is one line with
+   a summary of anything changed inside. */
+.disclosure > h3 { margin: 0; }
+.disclosure.open > h3 { margin-bottom: 6px; }
+.disclosure-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 24px;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.disclosure-head .ico { color: var(--ink-3); transition: transform 120ms ease; }
+.disclosure.open .disclosure-head .ico { transform: rotate(90deg); }
+.disclosure-head:hover .ico { color: var(--ink); }
+.disclosure-sum { margin-left: auto; font-weight: 500; color: var(--ink-3); }
+.field:has(> textarea.text-value) { align-items: start; }
+.field:has(> textarea.text-value) > .field-head { padding-top: 4px; }
+
+/* Several selected: arrange them, act on them. */
+.arrange-row { display: flex; gap: 2px; margin-bottom: 4px; }
+.arrange-row .icon-mini { width: 28px; height: 28px; display: grid; place-items: center; }
+.multi-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.mini.danger:hover:not(:disabled) { color: var(--danger); }
+.insp-scroll p.small { font-size: 11px; margin: 4px 0 0; }
+
+/* Space held: the canvas is grabbed, not the design. */
+.canvas.pan-ready, .canvas.pan-ready .surface [data-loom-id] { cursor: grab; }
+.canvas.panning, .canvas.panning .surface [data-loom-id] { cursor: grabbing; }
+
+/* Typing a component's text in place, over the component. */
+.surface .inline-edit {
+  position: absolute;
+  z-index: 2147483001;
+  padding: calc(4px / var(--loom-zoom, 1)) calc(6px / var(--loom-zoom, 1));
+  font: inherit;
+  font-size: calc(13px / var(--loom-zoom, 1));
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--overlay);
+  border: calc(1.5px / var(--loom-zoom, 1)) solid var(--select);
+  border-radius: calc(6px / var(--loom-zoom, 1));
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.8);
+  outline: none;
+  resize: none;
+  field-sizing: content;
+}
+
+/* The panels' inner edges: drag to resize, double-click to reset. */
+.loom .body { position: relative; }
+.panel-edge {
+  position: absolute;
+  top: 0;
+  bottom: 6px;
+  width: 6px;
+  z-index: 20;
+  cursor: col-resize;
+  touch-action: none;
+}
+.panel-edge::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 2px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.panel-edge:hover::after, .panel-edge:focus-visible::after { background: var(--accent); }
+.panel-edge:focus-visible { outline: none; }
+
+.tb-btn.flip .ico { transform: scaleX(-1); }
+.tb-btn.on { color: var(--ink); }
+
+/* Every Studio control is at least 24px to hit. */
+.layer-btn { width: 24px; height: 24px; }
+.mini { min-height: 24px; }
+.icon-mini { min-width: 24px; min-height: 24px; }
+
+/* Target size (24px) for the inspector's small controls. */
+.props-more { min-height: 24px; }
+.field-head .prop-reset { min-width: 24px; min-height: 24px; display: grid; place-items: center; padding: 0; }
+
+/* The title bar names its groups: which dots are the design's theme, which
+   switch is the build target (the dock's widths are a different thing). */
+.seg-label { font-size: 10.5px; font-weight: 550; color: var(--ink-3); margin-right: -2px; user-select: none; }
+
+/* The inspector's way up: each ancestor, clickable. */
+.insp-path.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.crumb {
+  padding: 0 3px;
+  min-height: 24px;
+  font: inherit;
+  color: var(--ink-3);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.crumb:hover { color: var(--ink); background: var(--tint-2); }
+.insp-path.crumbs .ico { color: var(--ink-4); }
+
+/* A key to the row markers. */
+.props-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0 0; font-size: 10.5px; color: var(--ink-3); }
+.props-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+.props-legend .mod-dot { position: static; display: inline-block; }
+
+/* Reduced motion: the Studio's own transitions and animations stop. The
+   design on the canvas keeps its own rules (the aurora already holds still;
+   what a designer authors is theirs to preview). */
+@media (prefers-reduced-motion: reduce) {
+  .loom *:not(.surface, .surface *),
+  .loom *:not(.surface, .surface *)::before,
+  .loom *:not(.surface, .surface *)::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

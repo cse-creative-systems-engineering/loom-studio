@@ -15,6 +15,8 @@ import React from 'react'
 import { behaviourCss, installBehaviour } from './behaviour'
 import { CONTAINER_NAME } from './responsive'
 import { documentCss } from './document-css'
+import { fontFaceCss } from './fonts'
+import { auroraCss } from './aurora'
 import type { Theme } from './theme'
 import type { Document } from '../model/types'
 
@@ -26,7 +28,10 @@ export function installBehaviourStyles(): void {
   if (styleEl && styleEl.isConnected) return
   const el = document.createElement('style')
   el.setAttribute('data-loom-behaviour', '')
-  el.textContent = behaviourCss()
+  // The output typeface travels with the behaviour layer: every surface that
+  // mounts one shows a design, and a design without its font is a different
+  // design.
+  el.textContent = fontFaceCss() + auroraCss() + behaviourCss()
   document.head.appendChild(el)
   styleEl = el
 }

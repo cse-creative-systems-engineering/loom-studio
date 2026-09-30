@@ -17,7 +17,7 @@ export const MAX_PAGE_BLUR = 60
 export function cleanPage(raw: unknown): PageBackground | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
-  if (r.background !== 'none' && r.background !== 'theme' && r.background !== 'color') return null
+  if (r.background !== 'none' && r.background !== 'theme' && r.background !== 'color' && r.background !== 'aurora') return null
   const out: PageBackground = { background: r.background }
   if (r.color !== undefined) {
     if (!isSafeColor(r.color)) return null
@@ -37,6 +37,7 @@ export function cleanPage(raw: unknown): PageBackground | null {
  */
 export function pageFill(page: PageBackground | undefined, themeBg: string): string | undefined {
   if (!page || page.background === 'none') return undefined
-  if (page.background === 'theme') return themeBg
+  // Aurora's base is the theme's page; its colour is drawn by AuroraBackdrop.
+  if (page.background === 'theme' || page.background === 'aurora') return themeBg
   return page.color
 }

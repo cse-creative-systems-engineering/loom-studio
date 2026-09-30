@@ -185,9 +185,55 @@ export function behaviourCss(): string {
     '[data-loom-b="press"][data-loom-pressed="1"]{filter:brightness(.9);transform:translateY(1px)}',
     '[data-loom-b="press"]:focus-visible,[data-loom-b="toggle"]:focus-visible,',
     '[data-loom-b="tab"]:focus-visible{outline:2px solid var(--loom-accent,#5b8cff);outline-offset:2px}',
+    // --- drawn checkbox / radio (see ControlBox in web.tsx) ---
+    // The native input stays for forms, keyboard and assistive tech, hidden
+    // in place (absolute with no offsets keeps its static position, so
+    // focusing it never scrolls the page); the box after it is drawn from
+    // its state.
+    '[data-loom-ctl]{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}',
+    '[data-loom-box]{flex:none;box-sizing:border-box;width:16px;height:16px;display:inline-grid;place-items:center;border:1.5px solid var(--loom-border-strong);background:var(--loom-well,var(--loom-surface));box-shadow:var(--loom-well-shadow,none);color:var(--loom-on-accent);transition:background-color 120ms ease,border-color 120ms ease,box-shadow 120ms ease}',
+    '[data-loom-box="check"]{border-radius:5px}',
+    '[data-loom-box="radio"]{border-radius:999px}',
+    '[data-loom-box] svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}',
+    '[data-loom-box] path{opacity:0;transition:opacity 120ms ease}',
+    ':checked+[data-loom-box],:indeterminate+[data-loom-box]{background:var(--loom-tick,var(--loom-accent));border-color:var(--loom-tick,var(--loom-accent))}',
+    ':checked:not(:indeterminate)+[data-loom-box] [data-loom-tick],:indeterminate+[data-loom-box] [data-loom-dash]{opacity:1}',
+    // A radio is a ring with a dot: the accent fill shows through a surface ring.
+    ':checked+[data-loom-box="radio"]{box-shadow:inset 0 0 0 3px var(--loom-surface)}',
+    'label:hover>:not(:checked):not(:disabled)+[data-loom-box]{border-color:var(--loom-muted)}',
+    ':focus-visible+[data-loom-box]{outline:2px solid var(--loom-accent);outline-offset:2px}',
+    ':disabled+[data-loom-box]{opacity:.45}',
+    // A part drawn as a well takes the well's inner shadow from here.
+    '[data-loom-well]{box-shadow:var(--loom-well-shadow)}',
+    // --- segmented: the chosen option is RAISED out of the well ---
+    '[data-loom-seg]{color:var(--loom-muted);border:1px solid transparent;transition:background-color 120ms ease,color 120ms ease,box-shadow 120ms ease}',
+    '[data-loom-seg]:hover{color:var(--loom-text)}',
+    '[data-loom-seg][data-loom-on="1"]{background:var(--loom-seg-on,var(--loom-raised));box-shadow:var(--loom-raised-shadow);color:var(--loom-text)}',
+    // --- slider: a well filled to the value, an extruded knob ---
+    'input[data-loom-range]{-webkit-appearance:none;appearance:none;background:transparent;cursor:pointer}',
+    'input[data-loom-range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,var(--loom-tick,var(--loom-accent)) var(--loom-fill,50%),var(--loom-well,rgba(0,0,0,.25)) var(--loom-fill,50%));box-shadow:var(--loom-well-shadow,none)}',
+    'input[data-loom-range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;margin-top:-5px;border-radius:50%;background:var(--loom-knob,#fff);box-shadow:var(--loom-knob-shadow,0 1px 3px rgba(0,0,0,.4))}',
+    'input[data-loom-range]:focus-visible::-webkit-slider-thumb{outline:2px solid var(--loom-accent);outline-offset:2px}',
+    'input[data-loom-range]:disabled{opacity:.45;cursor:not-allowed}',
+    // --- drawn select ---
+    // The OS arrow goes; the chevron is the theme's (a data URL in a custom
+    // property, set with the other theme variables). `!important` is narrow
+    // and deliberate: the select's inline `background` shorthand (its fill)
+    // would otherwise reset the chevron layer, and its inline padding would
+    // run text under it.
+    'select[data-loom-dropdown]{appearance:none;-webkit-appearance:none;background-image:var(--loom-chevron) !important;background-repeat:no-repeat !important;background-position:right 9px center !important;background-size:14px 14px !important;padding-right:30px !important}',
+    // --- native pickers: the browser's icon, in the design's ink ---
+    '::-webkit-calendar-picker-indicator{opacity:.55;cursor:pointer}',
+    '::-webkit-calendar-picker-indicator:hover{opacity:.9}',
+    // A text input with a suggestion list gets the same browser indicator,
+    // beside the control's own chevron: two arrows. The chevron stays.
+    'input[list]::-webkit-calendar-picker-indicator{display:none !important}',
     // --- switch / toggle button ---
-    '[data-loom-b="toggle"] [data-loom-track]{background:var(--loom-off)}',
-    '[data-loom-b="toggle"][data-loom-on="1"] [data-loom-track]{background:var(--loom-on)}',
+    // The track is a well; the knob is extruded from it (soft depth as an
+    // accent: see the theme's well/knob tokens).
+    '[data-loom-b="toggle"] [data-loom-track]{background:var(--loom-well,var(--loom-off));box-shadow:var(--loom-well-shadow,none),inset 0 0 0 1px var(--loom-off);transition:background-color 140ms ease}',
+    '[data-loom-b="toggle"][data-loom-on="1"] [data-loom-track]{background:var(--loom-on);box-shadow:inset 0 1px 2px rgba(0,0,0,.25)}',
+    '[data-loom-knob]{background:var(--loom-knob,#fff);box-shadow:var(--loom-knob-shadow,none)}',
     '[data-loom-b="toggle"] [data-loom-knob]{transform:translateX(0);transition:transform 140ms ease}',
     '[data-loom-b="toggle"][data-loom-on="1"] [data-loom-knob]{transform:translateX(14px)}',
     '[data-loom-b="toggle"][aria-pressed="true"]{background:var(--loom-on-bg);color:var(--loom-on-fg)}',
@@ -199,8 +245,13 @@ export function behaviourCss(): string {
     '[data-loom-b="tab"]{transition:color 90ms ease,background 90ms ease}',
     '[data-loom-b="tab"][data-loom-active="1"]{color:var(--loom-accent) !important;font-weight:600 !important}',
     '[data-loom-b="tab"][data-loom-active="0"]{color:var(--loom-muted) !important;font-weight:500 !important}',
-    '[data-loom-b="panel"]{display:none}',
-    '[data-loom-b="panel"][data-loom-shown="1"]{display:flex}',
+    '[data-loom-b="tab"]{background:transparent;box-shadow:none}',
+    '[data-loom-b="tab"][data-loom-active="1"]{background:var(--loom-tab-on,transparent);box-shadow:var(--loom-tab-shadow,none)}',
+    // A panel's own `display` is inline (it is a flex column), and inline
+    // beats a stylesheet: without `!important` on the hidden state no panel
+    // ever hid, and a tab set drew every page stacked. Only "hidden" is
+    // forced; a shown panel keeps its own display.
+    '[data-loom-b="panel"][data-loom-shown="0"]{display:none !important}',
     // --- disclosure ---
     // A selector with an unterminated quote does not fail alone: the parser
     // keeps consuming until it finds a `]`, so a stray `"` here silently eats
@@ -311,6 +362,16 @@ export function behaviourRuntime(): string {
   return `(${installBehaviour.toString()})()`
 }
 
+/**
+ * The installer as a FUNCTION expression, not a running script: for a module
+ * that installs it when it mounts (the React export). Inlined as the running
+ * form, it touched `window` the moment the module was imported (a crash in
+ * any server render) and left nothing to call on mount.
+ */
+export function behaviourInstaller(): string {
+  return `(${installBehaviour.toString()})`
+}
+
 /** Install the behaviour layer on the current document. Idempotent. */
 export function installBehaviour(): void {
   const w = window as unknown as { __loomBehaviour?: boolean }
@@ -356,6 +417,12 @@ export function installBehaviour(): void {
     'input',
     (e) => {
       const el = target(e)
+      // A drawn slider's track is filled to the value: keep it with the thumb.
+      if (el instanceof HTMLInputElement && el.hasAttribute('data-loom-range')) {
+        const min = Number(el.min) || 0
+        const span = (Number(el.max) || 100) - min
+        el.style.setProperty('--loom-fill', `${span > 0 ? Math.round(((Number(el.value) - min) / span) * 100) : 0}%`)
+      }
       const out = el?.getAttribute('data-loom-output')
       if (!out) return
       const readout = document.getElementById(out)

@@ -87,6 +87,13 @@ export type Capability =
   | 'native-widget'
   | 'native-canvas'
 
+/** One seeded child; it may bring its own (a settings row arrives with its control). */
+export interface SeedSpec {
+  type: string
+  props?: Record<string, PropValue>
+  seed?: SeedSpec[]
+}
+
 export interface ComponentSpec {
   name: string
   category: string
@@ -122,6 +129,18 @@ export interface ComponentSpec {
    * own it means nothing.
    */
   adds?: AddSpec[]
+  /**
+   * What a container arrives WITH when dropped from the toolbox: children it
+   * cannot be recognised without (a tab set with no tabs is an empty box
+   * with a rule across it; a button group with no buttons is nothing). Each
+   * is an ordinary component it accepts, built as a drop builds it, so the
+   * drop is exactly "what you would have dropped in, done for you" and every
+   * seeded child stays an ordinary, deletable node. Only the toolbox drop
+   * seeds (`EditorStore.dropComponent`); a component added by code arrives
+   * bare. Layout containers (Panel, Stack, Grid...) are NOT seeded: they
+   * land empty for you to fill, as in a form designer.
+   */
+  seed?: SeedSpec[]
   /**
    * When set, the only child types this container accepts. A tab set holds
    * tabs; a button dropped on it belongs in the tab, not beside it.
@@ -234,6 +253,13 @@ function grouped(props: Record<string, PropSpec>, spec: ComponentSpec): Record<s
 }
 
 export function defineComponent(spec: ComponentSpec): ComponentSpec {
+  // A seeded child must be one this container ACCEPTS (its childTypes, when
+  // it declares them): a seed is "what you would have dropped in by hand,
+  // done for you", never a child it could not have been given. (Whether the
+  // type exists is checked once every component is registered: selftest §99.)
+  for (const c of spec.seed ?? []) {
+    if (spec.childTypes && !spec.childTypes.includes(c.type)) throw new Error(`${spec.name}: seed type ${c.type} is not one of its childTypes`)
+  }
   const full = withUniversalProps(spec)
   registry.set(full.name, full)
   return full
@@ -472,12 +498,18 @@ export const WEB_CAPABILITIES: Capability[] = [
 ]
 
 /**
- * Conservative: what a GTK/Qt widget tree can faithfully represent. CSS
- * layout mechanisms are NOT native capabilities — `css-grid` used to be
- * listed here, which would have let Grid pass desktop gating without a real
- * native equivalent.
+ * The desktop backend IS Chromium: "Run on desktop" and a packaged desktop
+ * app render the same output in an Electron window, so desktop can express
+ * everything the web can, plus the native affordances.
+ *
+ * (It used to be modelled as a future GTK/Qt widget tree, which gated glass,
+ * blur and the atmosphere effects off the default target. Decided
+ * 2026-09-28: desktop output is Chromium, and the premium look, glass over
+ * animated colour, is available on it. If a native backend ever returns, its
+ * subset belongs to IT, not to the Chromium one.)
  */
 export const DESKTOP_CAPABILITIES: Capability[] = [
+  ...WEB_CAPABILITIES,
   'native-widget',
   'native-canvas',
 ]

@@ -24,6 +24,7 @@
 import { getComponent, unsupportedProps, type ComponentSpec, type PropSpec } from './registry'
 import { REVEAL_OF, ROLE_OF } from '../render/behaviour'
 import type { TargetId } from './types'
+import { propLabel } from './inspector-view'
 
 /** What each role does, in a designer's language rather than the role's name. */
 const ROOT_PHRASE: Record<string, string> = {
@@ -108,7 +109,7 @@ function defaultHint(ps: PropSpec): string {
  */
 const CONTENT_NAMES = /^(columns|rows|items|options|labels?|title|text|value|values|points|steps|tabs|names|trail|links|steps|code|keys|href|placeholder|delta|label)$/
 
-function keyProps(spec: ComponentSpec, limit = 3): string[] {
+function keyPropEntries(spec: ComponentSpec, limit = 3): Array<[string, PropSpec]> {
   const score = ([key, ps]: [string, PropSpec]): number => {
     let s = 0
     if (ps.bindable) s += 100
@@ -124,7 +125,11 @@ function keyProps(spec: ComponentSpec, limit = 3): string[] {
   return Object.entries(spec.props)
     .sort((a, b) => score(b) - score(a))
     .slice(0, limit)
-    .map(([key, ps]) => `${key} (${typeName(ps)}${defaultHint(ps)})`)
+}
+
+/** The properties worth reaching for, with their types (for tests, and the AI). */
+function keyProps(spec: ComponentSpec, limit = 3): string[] {
+  return keyPropEntries(spec, limit).map(([key, ps]) => `${key} (${typeName(ps)}${defaultHint(ps)})`)
 }
 
 export interface Tooltip {
@@ -159,7 +164,10 @@ export function buildTooltip(spec: ComponentSpec, target: TargetId = 'web'): Too
 export function tooltipText(spec: ComponentSpec, target: TargetId = 'web'): string {
   const t = buildTooltip(spec, target)
   const lines = [t.summary, '', t.behaviour]
-  if (t.properties.length > 0) lines.push('', `Set: ${t.properties.join(' · ')}`)
+  // In the inspector's own words. The typed form ("variant (choice =
+  // underline)") read as a schema dump to anyone who is not writing code.
+  const names = keyPropEntries(spec).map(([key, ps]) => propLabel(key, ps).toLowerCase())
+  if (names.length > 0) lines.push('', `You can set its ${names.join(', ')}.`)
   if (t.caveats.length > 0) lines.push('', t.caveats.join('\n'))
   return lines.join('\n')
 }

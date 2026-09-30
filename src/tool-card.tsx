@@ -11,15 +11,26 @@
 
 import React from 'react'
 import type { Document, Node } from './model/types'
-import { instantiate } from './model/registry'
+import { getComponent, instantiate, type SeedSpec } from './model/registry'
 import { dropSize } from './model/drop-size'
 import { buildStarter, getStarter } from './model/starters'
 import { renderNode } from './render/web'
-import { getTheme } from './render/theme'
+import { getTheme, type Theme } from './render/theme'
 
 /** The thumbnail's box, in screen pixels. */
 export const THUMB_W = 232
 export const THUMB_H = 132
+
+/**
+ * What a tool is shown on: the theme's page with a STILL wash of its aurora
+ * colours. Surfaces are glass, and glass over a flat page is just a dark
+ * box: over colour it shows what it will look like on an aurora page.
+ */
+function thumbWash(t: Theme): string {
+  const [a, b, c] = t.aurora
+  const o = Math.round(t.auroraOpacity * 0.55 * 255).toString(16).padStart(2, '0')
+  return `radial-gradient(70% 90% at 15% 10%, ${a}${o}, transparent 70%), radial-gradient(70% 90% at 90% 95%, ${b}${o}, transparent 70%), radial-gradient(50% 60% at 60% 45%, ${c}${o}, transparent 75%), ${t.bg}`
+}
 
 /** A one-node (or one-starter) document holding just this tool, as dropped. */
 export function thumbDoc(tool: { type?: string; starter?: string }, theme?: string): Document {
@@ -37,12 +48,24 @@ export function thumbDoc(tool: { type?: string; starter?: string }, theme?: stri
     const type = tool.type!
     const made = instantiate(type)
     root = 'thumb'
+    // What the drop gives you, children included (a tab set arrives with its
+    // tabs: see ComponentSpec.seed), built the way the drop builds them.
+    let n = 0
+    const grow = (list: SeedSpec[]): string[] => list.map((c) => {
+      const k = instantiate(c.type)
+      const id = `thumb-${n++}`
+      const children = grow(c.seed ?? [])
+      nodes[id] = { id, type: c.type, props: { ...k.props, ...(c.props ?? {}), x: 0, y: 0 }, children, flow: children.length > 0 ? true : k.flow, visible: true, locked: false, opacity: 1 }
+      return id
+    })
+    const kids = grow(getComponent(type)?.seed ?? [])
     nodes[root] = {
       id: root,
       type,
       props: { ...made.props, ...dropSize(type, false), x: 0, y: 0 },
-      children: [],
-      flow: made.flow,
+      children: kids,
+      // Arranged, as the drop arranges it (EditorStore.dropComponent).
+      flow: kids.length > 0 ? true : made.flow,
       visible: true,
       locked: false,
       opacity: 1,
@@ -73,33 +96,35 @@ export function ToolThumb({ tool, theme, width = THUMB_W, height = THUMB_H }: { 
     const el = inner.current?.firstElementChild as HTMLElement | null
     if (!el) return
     // The exact box, rounded UP: offsetWidth truncates (67.4 -> 67), and text
-    // given 0.4px too little wraps onto a second line. The box on screen is
-    // scaled by whatever zoom is applied now (the previous tool's, when the
-    // card switches tools), so it is divided back out.
-    const zoomNow = Number(getComputedStyle(inner.current!).zoom) || 1
+    // given 0.4px too little wraps onto a second line.
+    // Measured before any scale applies (a new tool renders unfitted), so
+    // the box on screen is the layout size.
     const box = el.getBoundingClientRect()
-    const w = screen ? screen.w : Math.max(1, Math.ceil(box.width / zoomNow))
-    const h = screen ? screen.h : Math.max(1, Math.ceil(box.height / zoomNow))
+    const w = screen ? screen.w : Math.max(1, Math.ceil(box.width))
+    const h = screen ? screen.h : Math.max(1, Math.ceil(box.height))
     const z = screen ? width / screen.w : Math.min(1, (width - 16) / w, (height - 16) / h)
     setFit({ z, w, h, doc })
   }, [doc, width, height])
   const t = getTheme(theme)
   return (
-    <div className="thumb" style={{ width, height, background: t.bg, color: t.textPrimary, fontFamily: t.fontFamily }} aria-hidden="true">
+    <div className="thumb" style={{ width, height, background: thumbWash(t), color: t.textPrimary, fontFamily: t.fontFamily }} aria-hidden="true">
       <div
         ref={inner}
         className="thumb-inner"
         inert
         style={{
-          zoom: fit?.z ?? 1,
+          // A tool is zoomed: laid out at its size, crisp, a 1px rule stays a
+          // pixel. A starter is a whole composition shown as a PICTURE, scaled
+          // by a transform after layout: zoomed to a sixth, the minimum font
+          // size made its text taller than it measured and it spilled out.
+          ...(fit && tool.starter
+            ? { transform: `scale(${fit.z})`, transformOrigin: '0 0', left: (width - fit.w * fit.z) / 2, top: (height - fit.h * fit.z) / 2 }
+            : { zoom: fit?.z ?? 1, left: fit ? (width / (fit.z || 1) - fit.w) / 2 : 0, top: fit ? (height / (fit.z || 1) - fit.h) / 2 : 0 }),
           // Measured in a wide box, so a tool with words in it is as wide as
           // its words (a zero-width box wrapped "Learn more" one word a line).
           width: fit ? fit.w : screen?.w ?? 1200,
           height: fit ? fit.h : screen?.h,
-          // Centred in the box once measured; hidden until then so it never
-          // flashes at full size.
-          left: fit ? (width / (fit.z || 1) - fit.w) / 2 : 0,
-          top: fit ? (height / (fit.z || 1) - fit.h) / 2 : 0,
+          // Hidden until measured, so it never flashes at full size.
           visibility: fit ? 'visible' : 'hidden',
         }}
       >

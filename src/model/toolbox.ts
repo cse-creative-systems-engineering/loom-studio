@@ -81,16 +81,16 @@ defineComponent({
     surface: {
       type: 'enum',
       options: ['solid', 'glass', 'gradient'],
-      // Desktop-first: the default surface must be portable to a native
-      // widget tree. Glass stays available as an explicit web-only choice.
-      default: 'solid',
+      // Glass is the default material (desktop output is Chromium, decided
+      // 2026-09-28): over an aurora page it carries the colour through, over
+      // a plain page it reads as a quiet, lit surface. Solid stays a choice.
+      default: 'glass',
       group: 'Style',
     },
     glass: {
       type: 'boolean',
       default: false,
       group: 'Style',
-      requires: ['css-backdrop-filter'],
     },
     // A container is only announced as a group when it is NAMED: `role=group`
     // with no accessible name is noise in a screen reader.
@@ -200,7 +200,9 @@ defineComponent({
     // the size you need. Both are honoured; the scale is what a drop starts on.
     size: { type: 'enum', options: ['xs', 'sm', 'md', 'lg', 'xl'], default: 'md', group: 'Style' },
     weight: { type: 'enum', options: ['400', '500', '600', '700'], default: '500', group: 'Style' },
-    color: { type: 'color', default: '#e6e9ef', group: 'Style' },
+    // Unset: the theme's text colour. A literal near-white here made every
+    // Label dropped on a daylight page all but invisible.
+    color: { type: 'color', default: '', group: 'Style' },
     fontSize: { type: 'number', default: -1, min: -1, max: 96, group: 'Type' },
     uppercase: { type: 'boolean', default: false, group: 'Type' },
     align: { type: 'enum', options: ['left', 'center', 'right', 'justify'], default: 'left', group: 'Type' },

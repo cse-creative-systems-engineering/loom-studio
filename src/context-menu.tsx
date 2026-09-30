@@ -12,6 +12,8 @@ import { getComponent, unsupportedProps } from './model/registry'
 import { isFlowChild } from './render/web'
 import { parentOf } from './model/ops'
 import type { NodeId } from './model/types'
+import { Glyph, Ico } from './ui-primitives'
+import { toolGlyph } from './tool-icons'
 import './context-menu.css'
 
 export interface MenuState {
@@ -87,7 +89,8 @@ export function ContextMenu({ s, state, onClose }: Props) {
       onContextMenu={(e) => e.preventDefault()}
     >
       <div className="ctx-head">
-        <span className="ctx-icon">{spec?.icon ?? '▢'}</span>
+        {/* The tool's own drawing, as the toolbox shows it, not its legacy character. */}
+        <span className="ctx-icon"><Glyph markup={toolGlyph(node.type, spec?.category)} /></span>
         <div>
           <div className="ctx-name">{spec?.name ?? node.type}</div>
           <div className="ctx-sub">{isRoot ? 'root' : parent ? `in ${s.doc.nodes[parent]?.type ?? '?'}` : ''}</div>
@@ -97,11 +100,68 @@ export function ContextMenu({ s, state, onClose }: Props) {
       <div className="ctx-sep" />
 
       <button className="ctx-item" role="menuitem" onClick={run(() => s.select([id]))}>
-        <span className="ctx-k">↵</span> Select
+        <span className="ctx-k"><Ico name="check" size={13} /></span> Select
+      </button>
+
+      {!isRoot && (
+        <button className="ctx-item" role="menuitem" onClick={run(() => s.cut([id]))} disabled={node.locked === true}>
+          <span className="ctx-k"><Ico name="x" size={13} /></span> Cut
+          <span className="ctx-note">Ctrl+X</span>
+        </button>
+      )}
+      <button className="ctx-item" role="menuitem" onClick={run(() => s.copy([id]))}>
+        <span className="ctx-k"><Ico name="copy" size={13} /></span> Copy
+        <span className="ctx-note">Ctrl+C</span>
+      </button>
+      <button
+        className="ctx-item"
+        role="menuitem"
+        onClick={run(() => {
+          s.select([id])
+          s.paste()
+        })}
+        disabled={s.clipboard.length === 0}
+      >
+        <span className="ctx-k"><Ico name="paperclip" size={13} /></span> Paste
+        <span className="ctx-note">Ctrl+V</span>
       </button>
 
       {!isRoot && (
         <>
+          <button className="ctx-item" role="menuitem" onClick={run(() => s.duplicateAll([id]))} disabled={node.locked === true}>
+            <span className="ctx-k"><Ico name="copy" size={13} /></span> Duplicate
+            <span className="ctx-note">Ctrl+D</span>
+          </button>
+
+          <div className="ctx-sep" />
+
+          <button className="ctx-item" role="menuitem" onClick={run(() => s.arrange(id, 'front'))} disabled={!parent || s.doc.nodes[parent].children[0] === id}>
+            <span className="ctx-k"><Ico name="arrow-up" size={13} /></span> Bring to front
+          </button>
+          <button className="ctx-item" role="menuitem" onClick={run(() => s.arrange(id, 'back'))} disabled={!parent || s.doc.nodes[parent].children.at(-1) === id}>
+            <span className="ctx-k"><Ico name="arrow-down" size={13} /></span> Send to back
+          </button>
+          <button className="ctx-item" role="menuitem" onClick={run(() => s.wrap(s.selection.includes(id) ? s.selection : [id]))}>
+            <span className="ctx-k"><Ico name="grid" size={13} /></span> Wrap in Stack
+          </button>
+
+          <div className="ctx-sep" />
+
+          <button
+            className="ctx-item"
+            role="menuitem"
+            onClick={run(() => s.commit({ op: 'setVisible', id, visible: node.visible === false }, node.visible === false ? 'Show' : 'Hide'))}
+          >
+            <span className="ctx-k"><Ico name={node.visible === false ? 'eye' : 'eye-off'} size={13} /></span>
+            {node.visible === false ? 'Show in output' : 'Hide from output'}
+          </button>
+          <button
+            className="ctx-item"
+            role="menuitem"
+            onClick={run(() => s.commit({ op: 'setLocked', id, locked: !node.locked }, node.locked ? 'Unlock' : 'Lock'))}
+          >
+            <span className="ctx-k"><Ico name="lock" size={13} /></span> {node.locked ? 'Unlock' : 'Lock'}
+          </button>
           <button
             className="ctx-item"
             role="menuitem"
@@ -116,25 +176,16 @@ export function ContextMenu({ s, state, onClose }: Props) {
               ),
             )}
           >
-            <span className="ctx-k">⌂</span> Reset geometry
+            <span className="ctx-k"><Ico name="refresh" size={13} /></span> Reset geometry
           </button>
-
           <button
             className="ctx-item"
             role="menuitem"
             onClick={run(() => s.commit({ op: 'setFlow', id, flow: !node.flow }, 'Toggle layout'))}
           >
-            <span className="ctx-k">{node.flow ? '⊞' : '⤢'}</span>
+            <span className="ctx-k"><Ico name={node.flow ? 'grid' : 'list'} size={13} /></span>
             {node.flow ? 'Make free-positioned' : 'Make flow child'}
             {flowChild && <span className="ctx-note">set by parent</span>}
-          </button>
-
-          <button
-            className="ctx-item"
-            role="menuitem"
-            onClick={run(() => s.setProp(id, 'w', 200))}
-          >
-            <span className="ctx-k">↔</span> Set width 200
           </button>
 
           <div className="ctx-sep" />
@@ -147,7 +198,7 @@ export function ContextMenu({ s, state, onClose }: Props) {
             })}
             disabled={!parent}
           >
-            <span className="ctx-k">↑</span> Select parent
+            <span className="ctx-k"><Ico name="arrow-up" size={13} /></span> Select parent
           </button>
 
           <button
@@ -155,7 +206,7 @@ export function ContextMenu({ s, state, onClose }: Props) {
             role="menuitem"
             onClick={run(() => s.remove([id]))}
           >
-            <span className="ctx-k">⌫</span> Delete
+            <span className="ctx-k"><Ico name="trash" size={13} /></span> Delete
             <span className="ctx-note">Del</span>
           </button>
         </>
