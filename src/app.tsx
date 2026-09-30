@@ -31,6 +31,7 @@ import { Assistant } from './ai/assistant'
 import { StatesPanel, ColorInput } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
+import { ActionLinks, ActionsPanel } from './actions-inspector'
 import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
 import { Toggle, Glyph, Ico, Disclosure } from './ui-primitives'
@@ -435,7 +436,9 @@ export function App() {
         e.preventDefault()
         s.remove(s.selection)
       } else if (e.key === 'Escape') {
-        s.select([])
+        // Esc first cancels choosing a target, then clears the selection.
+        if (s.picking) s.endPick()
+        else s.select([])
       } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         // Nudge the selection. Free children move; flow children are
         // repositioned by their parent, so nudge is a no-op for them.
@@ -1790,6 +1793,13 @@ function Canvas({
     e.stopPropagation()
     const node = s.doc.nodes[id]
     if (!node) return
+    // Choosing a control's target: the click answers the pick, and selects
+    // and moves nothing.
+    if (s.picking) {
+      e.preventDefault()
+      s.endPick(id)
+      return
+    }
     if (e.shiftKey) {
       s.select(
         s.selection.includes(id) ? s.selection.filter((x) => x !== id) : [...s.selection, id],
@@ -2085,7 +2095,8 @@ function Canvas({
   const aurora = s.doc.meta.page?.background === 'aurora'
 
   return (
-    <main className="canvas-wrap" ref={wrapRef}>
+    <main className={`canvas-wrap ${s.picking ? 'picking' : ''}`} ref={wrapRef}>
+      {mode !== 'preview' && <ActionLinks s={s} host={wrapRef} scroller={canvasRef} />}
       {mode === 'preview' && (
         <div className="canvas previewing">
           {/* The artifact, running: same viewport, same zoom, real behaviour. */}
@@ -2132,7 +2143,7 @@ function Canvas({
           data-loom-surface={s.doc.root ?? 'empty'}
           data-zoom={Math.round(zoom * 100)}
           data-viewport={viewport}
-          onPointerDown={() => s.select([])}
+          onPointerDown={() => (s.picking ? s.endPick() : s.select([]))}
           // The design's type, not the Studio's: what the export's body sets.
           // Exactly the viewport's width, never squeezed to the canvas: the
           // zoom fits it instead, so positions match the preview.
@@ -2543,6 +2554,9 @@ function Inspector({
             })}
           </section>
         )}
+
+        {/* What it does to OTHER components (and what shows it). */}
+        <ActionsPanel s={s} node={node} />
 
         <StatesPanel s={s} node={node} editing={editState} onEditing={onEditState} />
 

@@ -306,6 +306,8 @@ export function behaviourCss(): string {
     // styles the toast's own box inline, and inline beats any stylesheet.
     '[data-loom-toast][data-loom-gone="1"]{display:none !important}',
     '[data-loom-dismissable][data-loom-gone="1"]{display:none !important}',
+    // Actions (model/actions.ts): a node a control has hidden.
+    '[data-loom-shown="0"]{display:none !important}',
     '[data-loom-toast][data-loom-leaving="1"]{opacity:0}',
 
     // --- pagination: the rows-per-page control re-pages the pager ---
@@ -810,6 +812,21 @@ export function installBehaviour(): void {
       star?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       return
     }
+    // Inside a tab strip, the arrows move between tabs and choose one
+    // (automatic activation), Home and End go to the ends.
+    if (el.matches('[role=tab]') && /^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End)$/.test(k.key)) {
+      const strip = el.closest('[role=tablist]')
+      const tabs = strip ? q('[role=tab]', strip).filter((t) => !(t as HTMLButtonElement).disabled) : []
+      const i = tabs.indexOf(el)
+      if (i < 0) return
+      const n = tabs.length
+      const j = k.key === 'Home' ? 0 : k.key === 'End' ? n - 1 : k.key === 'ArrowLeft' || k.key === 'ArrowUp' ? (i - 1 + n) % n : (i + 1) % n
+      k.preventDefault()
+      const next = tabs[j] as HTMLElement
+      next.focus()
+      next.click()
+      return
+    }
     if (k.key !== 'Enter' && k.key !== ' ') return
     if (/^(BUTTON|A|INPUT|SELECT|TEXTAREA|SUMMARY|LABEL)$/.test(el.tagName) || el.isContentEditable) return
     // Unquoted on purpose: this source ships inside every export, and tests
@@ -1275,6 +1292,83 @@ export function installBehaviour(): void {
       }
     }
   })
+
+  // --- actions: what a control does to OTHER components ---------------------
+  // (model/actions.ts) A pressable runs its `data-loom-do` list; a choice
+  // control shows the view of its current choice and hides the others'. The
+  // targets are found by their output hook within the same design.
+  const targetEl = (from: Element, id: string): HTMLElement | null => {
+    const scope = from.closest('.loom-export, .loom-container, .dw-stage') ?? document
+    const el = scope.querySelector(`[data-loom-node="${CSS.escape(id)}"]`) ?? document.getElementById(id)
+    return el instanceof HTMLElement ? el : null
+  }
+  const isShown = (el: HTMLElement): boolean =>
+    el.hasAttribute('data-loom-reveal') ? el.getAttribute('data-loom-open') === '1' : el.getAttribute('data-loom-shown') !== '0'
+  const setShown = (el: HTMLElement, on: boolean): void => {
+    if (el.hasAttribute('data-loom-reveal')) {
+      if (on) show(el)
+      else hide(el)
+      return
+    }
+    el.setAttribute('data-loom-shown', on ? '1' : '0')
+    el.setAttribute('aria-hidden', on ? 'false' : 'true')
+  }
+  const runActions = (control: HTMLElement): void => {
+    let list: Array<[string, string]> = []
+    try {
+      list = JSON.parse(control.getAttribute('data-loom-do') ?? '[]')
+    } catch {
+      return
+    }
+    let last: HTMLElement | null = null
+    for (const [verb, id] of list) {
+      const t = targetEl(control, id)
+      if (!t) continue
+      const on = verb === 'show' || verb === 'open' ? true : verb === 'hide' || verb === 'close' ? false : !isShown(t)
+      setShown(t, on)
+      fire(t, on ? 'show' : 'hide')
+      last = t
+    }
+    // A control that shows or hides ONE thing says whether it is showing.
+    if (list.length === 1 && last) control.setAttribute('aria-expanded', isShown(last) ? 'true' : 'false')
+  }
+  const currentChoice = (c: Element): string | null => {
+    const sel = c.matches('select') ? c : c.querySelector('select')
+    if (sel instanceof HTMLSelectElement) return sel.value
+    const item = c.querySelector('[data-loom-choice][data-loom-on="1"],[data-loom-choice][data-loom-active="1"],[data-loom-choice][aria-selected="true"]')
+    if (item) return item.getAttribute('data-loom-choice')
+    const box = c.querySelector('input[type=checkbox]')
+    if (box instanceof HTMLInputElement) return box.checked ? 'on' : 'off'
+    return c.getAttribute('data-loom-on') === '1' ? 'on' : c.hasAttribute('data-loom-on') ? 'off' : null
+  }
+  const syncViews = (c: Element): void => {
+    let views: Record<string, string> = {}
+    try {
+      views = JSON.parse(c.getAttribute('data-loom-views') ?? '{}')
+    } catch {
+      return
+    }
+    const cur = currentChoice(c)
+    if (cur === null) return
+    // A node shown by the current choice wins over one hidden by another.
+    const showing = new Set(Object.entries(views).filter(([k]) => k === cur).map(([, id]) => id))
+    for (const id of new Set(Object.values(views))) {
+      const t = targetEl(c, id)
+      if (t) setShown(t, showing.has(id))
+    }
+    fire(c, 'view')
+  }
+  const afterChoice = (e: Event): void => {
+    const c = (e.target as Element | null)?.closest?.('[data-loom-views]')
+    // After the control's own handler (and the browser's) has settled its state.
+    if (c) setTimeout(() => syncViews(c), 0)
+  }
+  document.addEventListener('click', (e) => {
+    const control = closest(e, '[data-loom-do]')
+    if (control instanceof HTMLElement && !control.closest('[inert]')) runActions(control)
+    afterChoice(e)
+  })
+  document.addEventListener('change', afterChoice)
 
   document.addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key !== 'Escape') return

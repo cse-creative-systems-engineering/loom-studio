@@ -19,6 +19,7 @@ import { normalizeEffects } from '../render/effects'
 import { cleanStateStyle } from '../render/states'
 import { cleanPartStyle, partsOf } from '../render/parts'
 import { cleanList } from './lists'
+import { cleanActions } from './actions'
 import { migrateNodes } from './migrate'
 import './toolbox'
 
@@ -323,6 +324,11 @@ export function validate(input: unknown): Validated {
         issues.push({ path: `$.nodes.${id}.opacity`, message: `expected finite number, got ${String(node.opacity)}` })
       }
     }
+    // Actions: well-formed or reported; targets are checked once the whole
+    // tree is known (below).
+    // (Checked as the node it will be: a view switch's choices come from its props and lists.)
+    const acted = cleanActions({ id, type: node.type, props: checked.props, lists, children: [] } as unknown as Node, node.actions)
+    for (const m of acted.issues) issues.push({ path: `$.nodes.${id}.actions`, message: `${m} (dropped)` })
     nodes[id] = {
       id,
       type: node.type,
@@ -339,6 +345,8 @@ export function validate(input: unknown): Validated {
       states,
       parts,
       lists,
+      ...(acted.actions ? { actions: acted.actions } : {}),
+      ...(node.startsHidden === true ? { startsHidden: true } : {}),
     }
   }
 
@@ -459,6 +467,14 @@ export function validate(input: unknown): Validated {
         node.props[key] = ''
       }
     }
+  }
+
+  // A control wired to a node that is not in the file keeps the wiring and
+  // says so: repairing it would mean guessing, and deleting it would lose the
+  // author's intent (standing rule 5). The panel flags it; the output skips it.
+  for (const node of Object.values(nodes)) {
+    const ids = [...(node.actions?.click ?? []).map((a) => a.target), ...Object.values(node.actions?.views ?? {})]
+    for (const t of ids) if (!nodes[t]) issues.push({ path: `$.nodes.${node.id}.actions`, message: `targets missing node "${t}" (kept, flagged)` })
   }
 
   return {

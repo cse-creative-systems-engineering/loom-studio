@@ -18,6 +18,7 @@ import { typeStep, weightStep, resolveTheme, type Theme } from './theme'
 import { applyEffects, normalizeEffects } from './effects'
 import { behaviourAttrs, groupId } from './behaviour'
 import { OUTPUT_HOOK, isResponsive } from './responsive'
+import { hiddenAtStart, targetsOf } from '../model/actions'
 import { FORCE_ATTR, hasStates } from './states'
 import { partAttrs } from './parts'
 import { itemsOf } from '../model/lists'
@@ -1893,7 +1894,7 @@ function renderPreviewNode(
   // sibling wrapper would break the absolute-positioning contract that every
   // free-positioned node depends on.
   const layers = eff.layers
-  const content = withOutputHook(node, renderPreviewBody(node, style, children, t, key, parentId, ctx), ctx.hookAll === true)
+  const content = withActions(node, withOutputHook(node, renderPreviewBody(node, style, children, t, key, parentId, ctx), ctx.hookAll === true), ctx)
 
   if (!layers.length) return content
 
@@ -1915,6 +1916,45 @@ function renderPreviewNode(
     { key },
     ...([layers, existing] as never[]),
   )
+}
+
+const targetCache = new WeakMap<Document, Map<NodeId, NodeId[]>>()
+const targetsIn = (doc: Document): Map<NodeId, NodeId[]> => {
+  let m = targetCache.get(doc)
+  if (!m) {
+    m = targetsOf(doc)
+    targetCache.set(doc, m)
+  }
+  return m
+}
+
+/**
+ * Wire a control to what it acts on (`model/actions.ts`), in output.
+ *
+ * A control carries its actions as data the one runtime reads
+ * (`data-loom-do` for clicks, `data-loom-views` for a choice's views) and
+ * `aria-controls` naming what it changes. A target carries the hook and an id
+ * so it can be found, and a view that is not the control's starting choice
+ * starts hidden, so the static export and the first paint are already right.
+ * On the canvas every view stays visible: that is where each one is edited.
+ */
+function withActions(node: Node, el: React.ReactElement, ctx: RenderCtx): React.ReactElement {
+  if (el.type === React.Fragment) return el
+  const doc = ctx.doc
+  const extra: Record<string, unknown> = {}
+  const live = (id: NodeId) => !!doc.nodes[id]
+  const click = node.actions?.click?.filter((a) => live(a.target))
+  const views = node.actions?.views ? Object.fromEntries(Object.entries(node.actions.views).filter(([, t]) => live(t))) : undefined
+  if (click?.length) extra['data-loom-do'] = JSON.stringify(click.map((a) => [a.verb, a.target]))
+  if (views && Object.keys(views).length) extra['data-loom-views'] = JSON.stringify(views)
+  const controls = [...(click ?? []).map((a) => a.target), ...Object.values(views ?? {})]
+  if (controls.length) extra['aria-controls'] = [...new Set(controls)].join(' ')
+  if (targetsIn(doc).has(node.id)) {
+    extra[OUTPUT_HOOK] = node.id
+    if (!(el.props as { id?: string }).id) extra.id = node.id
+    if (ctx.mode === 'preview' && (node.startsHidden === true || hiddenAtStart(doc, node.id))) extra['data-loom-shown'] = '0'
+  }
+  return Object.keys(extra).length ? React.cloneElement(el, extra) : el
 }
 
 /**
@@ -3260,6 +3300,7 @@ function renderPreviewBody(
                 {...part('option')}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: `${fs}px`, color: t.textPrimary }}
                 {...behaviourAttrs({ role: 'radio', group: node.id, index: i, on: str(p.value) === value })}
+                data-loom-choice={value}
               >
                 <input type="radio" data-loom-ctl="" name={node.id} value={value} defaultChecked={str(p.value) === value} disabled={p.disabled === true || o.disabled === true} required={p.required === true} />
                 <ControlBox kind="radio" />
@@ -3634,6 +3675,7 @@ function renderPreviewBody(
               key={o}
               data-loom-seg=""
               {...behaviourAttrs({ role: 'radio', group: node.id, index: opts.indexOf(o), on: current === o })}
+              data-loom-choice={o}
               style={{
                 fontSize: `${fs}px`,
                 fontWeight: t.weightMedium,
@@ -5166,6 +5208,7 @@ function renderPreviewBody(
               role="tab"
               aria-selected={i === active}
               {...behaviourAttrs({ role: 'tab', group: node.id, index: i, active: i === active })}
+              data-loom-choice={tb}
               style={{
                 border: underlined ? 'none' : 'none',
                 cursor: 'pointer',

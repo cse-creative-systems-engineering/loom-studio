@@ -22,12 +22,13 @@ import { dropSize } from '../model/drop-size'
 import { ANCHORS } from '../model/prop-vocab'
 import { cleanPage } from '../model/page'
 import { THEME_NAMES } from '../render/theme'
-import { descendants, parentOf } from '../model/ops'
+import { descendants, parentOf, remapRefs } from '../model/ops'
 import { itemsOf } from '../model/lists'
 import { cleanPartStyle } from '../render/parts'
 import { cleanStateStyle, isSafeColor } from '../render/states'
 import { DEFAULT_EFFECTS, normalizeEffects } from '../render/effects'
 import { INTERACTION_STATES, type InteractionState } from '../model/types'
+import { cleanActions } from '../model/actions'
 
 /** A JSON-schema'd tool, in the shape MCP `tools/list` returns. */
 export interface ToolDef {
@@ -179,6 +180,20 @@ export const TOOLS: ToolDef[] = [
     name: 'arrange',
     description: 'Paint order among free siblings: "front" draws it above the others, "back" below.',
     inputSchema: obj({ id: str('Node id.'), to: { type: 'string', enum: ['front', 'back'] } }, ['id', 'to']),
+  },
+  {
+    name: 'set_actions',
+    description:
+      'Make controls DO things to other components (standing rule: whatever a UI can do, it does). On a Button, IconButton, Link or BackButton: `click`, a list of {verb, target} run in order — verb show | hide | toggle | open | close (open/close also drive a Modal or Drawer). On a choice control (Segmented, TabBar, RadioGroup, Select, Checkbox, Switch, ToggleButton): `views`, choice -> node id; choosing one shows its node and hides the others\' (a real List/Table switch; on/off controls use the keys "on" and "off"). `starts_hidden`: node ids that start hidden until a control shows them (a filter panel a Filters button toggles). Replaces the control\'s actions; pass {} to clear. The reply lists anything refused.',
+    inputSchema: obj(
+      {
+        id: str('The control.'),
+        click: { type: 'array', items: { type: 'object', properties: { verb: { type: 'string', enum: ['show', 'hide', 'toggle', 'open', 'close'] }, target: { type: 'string' } }, required: ['verb', 'target'] } },
+        views: { type: 'object', description: 'choice -> node id' },
+        starts_hidden: { type: 'array', items: { type: 'string' }, description: 'Node ids that start hidden.' },
+      },
+      ['id'],
+    ),
   },
   {
     name: 'render',
@@ -350,6 +365,8 @@ function tree(s: EditorStore, id: NodeId): unknown {
     ...(spec?.container ? { flow: n.flow } : {}),
     ...(lists ? { lists } : {}),
     ...(n.visible === false ? { visible: false } : {}),
+    ...(n.actions ? { actions: n.actions } : {}),
+    ...(n.startsHidden ? { startsHidden: true } : {}),
     ...(n.children.length ? { children: n.children.map((c) => tree(s, c)) } : {}),
   }
 }
@@ -749,6 +766,28 @@ const HANDLERS: Record<string, Handler> = {
     return { index: s.doc.nodes[parent]!.children.indexOf(id) }
   },
 
+  set_actions: (s, t, a) => {
+    const id = need(a, 'id')
+    const n = nodeOf(s, id)
+    const raw: Record<string, unknown> = {}
+    if (a.click !== undefined) raw.click = a.click
+    if (a.views !== undefined) raw.views = a.views
+    const { actions, issues } = cleanActions(n, raw, s.doc)
+    const missing = [...(actions?.click ?? []).map((x) => x.target), ...Object.values(actions?.views ?? {})].filter((x) => !s.doc.nodes[x])
+    if (missing.length) throw new Error(`no node ${missing.map((m) => `"${m}"`).join(', ')} (get_document lists the ids)`)
+    t.write({ op: 'setActions', id, actions: actions ?? null }, 'Wire actions')
+    const hidden: string[] = []
+    for (const h of Array.isArray(a.starts_hidden) ? a.starts_hidden : []) {
+      if (typeof h !== 'string' || !s.doc.nodes[h]) {
+        issues.push(`starts_hidden: no node "${String(h)}"`)
+        continue
+      }
+      t.write({ op: 'setStartsHidden', id: h, on: true }, 'Starts hidden')
+      hidden.push(h)
+    }
+    return { actions: s.doc.nodes[id]?.actions ?? {}, ...(hidden.length ? { starts_hidden: hidden } : {}), ...(issues.length ? { rejected: issues } : {}) }
+  },
+
   select: (s, _t, a) => {
     const ids = Array.isArray(a.ids) ? a.ids.filter((x): x is string => typeof x === 'string' && !!s.doc.nodes[x]) : []
     s.select(ids)
@@ -801,7 +840,16 @@ function copySubtree(doc: EditorStore['doc'], id: NodeId): { root: Node; tree: R
     })
     return next
   }
-  return { root: copy(doc.nodes[id]!), tree }
+  const root = copy(doc.nodes[id]!)
+  // Wiring inside the copy follows the copy (see ops.remapRefs).
+  const remap = new Map<NodeId, NodeId>()
+  const pair = (orig: Node, dup: Node) => {
+    remap.set(orig.id, dup.id)
+    orig.children.forEach((c, i) => pair(doc.nodes[c]!, tree[dup.children[i]!]!))
+  }
+  pair(doc.nodes[id]!, root)
+  for (const n of [root, ...Object.values(tree)]) remapRefs(n, remap)
+  return { root, tree }
 }
 
 /** A node as a toolbox drop makes it (defaults, drop size), with these props. */
