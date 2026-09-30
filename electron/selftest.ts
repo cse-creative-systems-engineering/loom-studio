@@ -1336,7 +1336,10 @@ export async function runSelfTest(): Promise<string> {
     const selRoot = renderToStaticMarkup(
       renderNode({ doc: s33.doc, selected: new Set([root33]) }, root33),
     )
-    check('the root gets resize handles like any node', selRoot.includes('loom-handle'))
+    // Handles are canvas chrome, drawn over the design by the canvas's
+    // selection layer (§101), not inside the node where its own overflow
+    // clipped them; the node itself carries the selection mark.
+    check('the root is marked selected like any node, and draws no handles of its own', selRoot.includes('data-selected="true"') && !selRoot.includes('loom-handle'))
     check('handles never reach the output', !emitHtml(s33.doc).includes('loom-handle'))
 
     // Move + resize reach the model for the root exactly as for a child.
@@ -3111,7 +3114,8 @@ export async function runSelfTest(): Promise<string> {
       const g = h.querySelector(`[data-loom-id="${grid}"]`) as HTMLElement | null
       return { table: Boolean(g?.querySelector('table')), handles: g?.querySelectorAll('[data-loom-handle]').length ?? 0, selected: g?.getAttribute('data-selected') }
     }, [grid])
-    check('selected, it is the same grid with handles', picked.table && picked.handles === 4 && picked.selected === 'true', JSON.stringify(picked))
+    // Its handles are the canvas's selection layer's (§101), not the grid's.
+    check('selected, it is the same grid, marked selected', picked.table && picked.handles === 0 && picked.selected === 'true', JSON.stringify(picked))
   }
 
   // --- 55. every area of every component can be customized ---------------
@@ -4620,6 +4624,217 @@ export async function runSelfTest(): Promise<string> {
     }
     const layouts = ['Panel', 'Stack', 'Grid', 'Card', 'ScrollView', 'SplitH', 'SplitV', 'FormGrid'].filter((n) => (getComponent(n)?.seed ?? []).length > 0)
     check('layout containers land empty, for you to fill', layouts.length === 0, layouts.join(', '))
+  }
+
+  // --- 101. the editor's basics (UI/UX review, batch A) ----------------------
+  // Read from the live Studio: the keys, the menu, the handles, the file
+  // outcomes, contrast, names and the hover card, each as a person meets it.
+  {
+    const app = window.__loomStore
+    const saved = app.doc
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+    const press = (key: string, init: KeyboardEventInit = {}) =>
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
+    const fixture = () => {
+      app.loadDocument(emptyDocument())
+      const root = app.dropComponent('Stack', null, 0, 0)!
+      app.commit({ op: 'setFlow', id: root, flow: true }, 'flow')
+      const a = app.dropComponent('Caption', root, 0, 0)!
+      const b = app.dropComponent('Label', root, 0, 0)!
+      return { root, a, b }
+    }
+
+    // 1. Ctrl+D duplicates (it deleted), one undo step, the copy selected.
+    {
+      const { root, a, b } = fixture()
+      app.select([a])
+      const before = app.history.length
+      press('d', { ctrlKey: true })
+      await settle()
+      const kids = app.doc.nodes[root].children
+      check('Ctrl+D duplicates the selection, as in every design tool', kids.length === 3 && kids.includes(a) && app.selection.length === 1 && app.selection[0] !== a && app.doc.nodes[app.selection[0]]?.type === 'Caption',
+        `children ${kids.length}, selection ${app.selection.map((id) => app.doc.nodes[id]?.type).join(',')}`)
+      check('the duplicate is one undo step', app.history.length === before + 1)
+      app.select([a, b])
+      const before2 = app.history.length
+      press('d', { ctrlKey: true })
+      await settle()
+      check('Ctrl+D on two nodes copies both in one step, each after its source',
+        app.doc.nodes[root].children.length === 5 && app.history.length === before2 + 1 && app.selection.length === 2 &&
+          app.doc.nodes[root].children.indexOf(app.selection[0]) === app.doc.nodes[root].children.indexOf(a) + 1,
+        app.doc.nodes[root].children.map((id) => app.doc.nodes[id]?.type).join(','))
+      // The context menu offers it too.
+      const el = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${a}"]`)
+      const r = el?.getBoundingClientRect()
+      el?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: (r?.left ?? 0) + 2, clientY: (r?.top ?? 0) + 2 }))
+      await settle()
+      const dupItem = [...document.querySelectorAll<HTMLButtonElement>('.ctx-item')].find((x) => x.textContent?.includes('Duplicate'))
+      check('the context menu offers Duplicate', dupItem !== undefined)
+      press('Escape')
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+      await settle()
+    }
+
+    // 2 + 3. Handles sit on the selected node's own corners, flow child or
+    // free, for every component; and stay 8px on screen at any zoom.
+    {
+      // Zoom out first, so a handle that scales with the zoom shows it.
+      const zoomOut = document.querySelector<HTMLButtonElement>('.loom [aria-label="Zoom out"]')
+      for (let i = 0; i < 6; i++) { zoomOut?.click(); await settle(20) }
+      const zoomPct = Number(document.querySelector<HTMLElement>('.loom .surface')?.dataset.zoom ?? 100)
+      const off: string[] = []
+      const sizes: number[] = []
+      let measured = 0
+      for (const spec of allComponents()) {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Stack', null, 0, 0)!
+        app.commit({ op: 'setFlow', id: root, flow: true }, 'flow')
+        const id = app.dropComponent(spec.name, root, 0, 0)
+        if (!id || !app.doc.nodes[root].children.includes(id)) continue
+        app.select([id])
+        await settle(30)
+        const node = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${id}"]`)
+        const box = document.querySelector<HTMLElement>(`.loom .surface .sel-box[data-for="${id}"]`)
+        const nw = box?.querySelector<HTMLElement>('.loom-handle[data-corner="nw"]')
+        const se = box?.querySelector<HTMLElement>('.loom-handle[data-corner="se"]')
+        if (!node || !nw || !se) { off.push(`${spec.name}: no handles`); continue }
+        // Reachable, not just placed: nothing clips or covers the handle.
+        const sr = se.getBoundingClientRect()
+        if (document.elementFromPoint(sr.left + sr.width / 2, sr.top + sr.height / 2) !== se) off.push(`${spec.name}: handle covered or clipped`)
+        const nr = node.getBoundingClientRect()
+        const a = nw.getBoundingClientRect()
+        const z = se.getBoundingClientRect()
+        measured++
+        sizes.push(a.width)
+        const near = (p: number, q: number) => Math.abs(p - q) <= 1.5
+        if (!(near(a.left + a.width / 2, nr.left) && near(a.top + a.height / 2, nr.top) && near(z.left + z.width / 2, nr.right) && near(z.top + z.height / 2, nr.bottom))) {
+          off.push(`${spec.name}: node ${nr.left.toFixed(0)},${nr.top.toFixed(0)}-${nr.right.toFixed(0)},${nr.bottom.toFixed(0)} handles ${(a.left + a.width / 2).toFixed(0)},${(a.top + a.height / 2).toFixed(0)}-${(z.left + z.width / 2).toFixed(0)},${(z.top + z.height / 2).toFixed(0)}`)
+        }
+      }
+      check('a selected node\'s handles sit on its own corners, reachable, for every component', measured > 80 && off.length === 0,
+        `${measured} measured; ${off.slice(0, 4).join(' | ')}${off.length > 4 ? ` (+${off.length - 4})` : ''}`)
+      // A fixed overlay is fixed to the artboard (the design's viewport), not
+      // to the Studio window it used to cover.
+      {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Stack', null, 0, 0)!
+        const pal = app.dropComponent('CommandPalette', root, 0, 0)!
+        app.select([])
+        await settle(40)
+        const surf = document.querySelector<HTMLElement>('.loom .surface')!.getBoundingClientRect()
+        const pr = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${pal}"]`)?.getBoundingClientRect()
+        check('a fixed overlay on the canvas stays inside the artboard', pr !== undefined && pr.left >= surf.left - 1 && pr.top >= surf.top - 1 && pr.right <= surf.right + 1 && pr.bottom <= surf.bottom + 1,
+          pr ? `overlay ${pr.left.toFixed(0)},${pr.top.toFixed(0)}-${pr.right.toFixed(0)},${pr.bottom.toFixed(0)} artboard ${surf.left.toFixed(0)},${surf.top.toFixed(0)}-${surf.right.toFixed(0)},${surf.bottom.toFixed(0)}` : 'missing')
+      }
+      check('resize handles are 8px on screen at any zoom', zoomPct < 90 && sizes.length > 0 && sizes.every((w) => w > 7 && w < 9.5),
+        `zoom ${zoomPct}%, handle ${Math.min(...sizes).toFixed(1)}-${Math.max(...sizes).toFixed(1)}px`)
+      // Back to fitting the viewport.
+      document.querySelector<HTMLButtonElement>('.loom .zoom-readout, .loom [aria-label^="Zoom "][aria-label*="percent"]')?.click()
+      await settle()
+    }
+
+    // 4. Open asks before discarding unsaved work; every file action reports.
+    {
+      const realHost = app.host
+      const realConfirm = window.confirm
+      let opened = 0
+      let asked = 0
+      let openResult: Awaited<ReturnType<LoomHost['open']>> = { ok: false, canceled: true }
+      app.host = {
+        save: async () => ({ ok: true, path: '/work/Telemetry Console.loom.json' }),
+        open: async () => { opened++; return openResult },
+        autosave: async () => ({ ok: true }),
+        readAutosave: async () => ({ ok: false }),
+        exportHtml: async () => ({ ok: false, error: 'disk full' }),
+      }
+      try {
+        fixture()
+        window.confirm = () => { asked++; return false }
+        const openBtn = document.querySelector<HTMLButtonElement>('.loom button[aria-label="Open"]')
+        openBtn?.click()
+        press('o', { ctrlKey: true })
+        await settle()
+        check('Open asks before discarding unsaved work, and a "no" keeps it', app.dirty && asked === 2 && opened === 0, `asked ${asked}, opened ${opened}`)
+        window.confirm = () => { asked++; return true }
+        openResult = { ok: true, path: '/work/notes.txt', contents: 'plain text, not a document' }
+        openBtn?.click()
+        await settle()
+        const bad = app.notice
+        check('opening a file that is not a Loom document says so', opened === 1 && bad?.tone === 'error' && /isn't a Loom document/.test(bad.text) && app.doc.root !== null,
+          bad?.text ?? 'no notice')
+        await app.save()
+        await settle()
+        const toast = document.querySelector<HTMLElement>('.loom .toast')
+        check('a save says where it went', app.notice?.tone === 'ok' && app.notice.text === 'Saved Telemetry Console.loom.json' && toast?.textContent?.includes('Saved') === true,
+          `${app.notice?.text} / toast ${toast?.textContent ?? 'none'}`)
+        check('the notice is a status region a screen reader announces', document.querySelector('.loom .toast-region')?.getAttribute('role') === 'status')
+        await app.exportHtmlFile()
+        await settle()
+        check('a failed export says why', app.notice?.tone === 'error' && app.notice.text.includes('disk full'), app.notice?.text ?? 'none')
+        const before = app.notice?.id
+        openResult = { ok: false, canceled: true }
+        openBtn?.click()
+        await settle()
+        check('a cancelled dialog leaves no notice', app.notice?.id === before)
+      } finally {
+        app.host = realHost
+        window.confirm = realConfirm
+        if (app.notice) app.dismissNotice(app.notice.id)
+      }
+    }
+
+    // 5. Contrast: the call to action and the tertiary text both read.
+    {
+      const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
+      const lum = ([r, g, b]: number[]) => {
+        const f = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+      }
+      const ratio = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05) }
+      const cta = document.querySelector<HTMLElement>('.loom .tb-primary')
+      const ink = cta ? rgb(getComputedStyle(cta).color) : []
+      const stops = cta ? (getComputedStyle(cta).backgroundImage.match(/rgba?\([^)]*\)/g) ?? []).map(rgb) : []
+      const worst = stops.length ? Math.min(...stops.map((s) => ratio(ink, s))) : 0
+      check('the Export button\'s label reads (4.5:1 on its whole gradient)', worst >= 4.5, `${worst.toFixed(2)}:1`)
+      const root = getComputedStyle(document.documentElement)
+      const hex = (v: string) => { const h = root.getPropertyValue(v).trim().replace('#', ''); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) }
+      const tertiary = Math.min(ratio(hex('--ink-3'), hex('--panel')), ratio(hex('--ink-3'), hex('--panel-2')))
+      check('tertiary text reads on the panels (4.5:1)', tertiary >= 4.5, `${tertiary.toFixed(2)}:1`)
+    }
+
+    // 6. Every inspector control has a name; fields show a focus ring.
+    {
+      const { a } = fixture()
+      app.select([a])
+      await settle()
+      const controls = [...document.querySelectorAll<HTMLElement>('.loom .inspector [role="switch"], .loom .inspector select, .loom .inspector input:not([type="color"])')]
+      const nameOf = (el: HTMLElement) =>
+        el.getAttribute('aria-label') ||
+        (el.getAttribute('aria-labelledby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' ').trim() ||
+        [...((el as HTMLInputElement).labels ?? [])].map((l) => l.textContent).join(' ').trim()
+      const nameless = controls.filter((c) => !nameOf(c)).map((c) => `${c.tagName.toLowerCase()}${c.getAttribute('role') ? `[${c.getAttribute('role')}]` : ''}`)
+      check('every switch, menu and field in the inspector has a name', controls.length > 10 && nameless.length === 0, `${controls.length} controls; nameless: ${nameless.join(', ')}`)
+      const search = document.querySelector<HTMLInputElement>('.loom .props-search')
+      search?.focus()
+      // A hidden test window may not hold the OS focus, and then no field is
+      // :focus-visible; measure the ring when it is, else read the rule.
+      const live = search !== null && document.activeElement === search && search.matches(':focus-visible')
+      const ring = live && search ? getComputedStyle(search).boxShadow : ''
+      const rule = [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules] } catch { return [] } })
+        .some((r) => r instanceof CSSStyleRule && r.selectorText.includes('.props-search:focus-visible') && /0(px)? 0(px)? 0(px)? 2px/.test(r.style.boxShadow))
+      check('a focused field shows a ring, not just a tinted edge', live ? /0px 0px 0px 2px/.test(ring) : rule, live ? `measured: ${ring}` : `rule present: ${rule}`)
+      search?.blur()
+    }
+
+    // 7. The hover card speaks the inspector's language, not the schema's.
+    {
+      const text = tooltipFor('Tabs')
+      check('the hover card names properties in plain words', !/\(choice|\(text|\(number|= /.test(text) && text.includes('You can set its'), text.split('\n').slice(-3).join(' / '))
+    }
+
+    app.loadDocument(saved)
+    app.select([])
+    await settle()
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

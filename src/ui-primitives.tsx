@@ -9,12 +9,14 @@ import { iconMarkup } from './render/icons'
  */
 
 
-export function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+/** A switch. `label` is its accessible name: without one a screen reader heard only "switch". */
+export function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
       type="button"
       className={`toggle ${checked ? 'on' : ''}`}
       role="switch"
+      aria-label={label}
       aria-checked={checked}
       onClick={() => onChange(!checked)}
     >
