@@ -114,6 +114,14 @@ one.
 7. **Output is the promise.** Preview, HTML export and React export run the
    same behaviour and the same layout rules. If the preview lies, it is worse
    than no preview.
+8. **Whatever a UI alone can do, a Loom UI does.** Switching views, opening and
+   closing, showing and hiding, going to another screen, sorting, filtering and
+   searching the data it holds, validating, selecting: if no backend is needed,
+   the output performs it — across components, not only inside one. What needs
+   a backend (sign in, save, send, pay) reacts and hands off a named event; it
+   never looks clickable and silently does nothing. A gap here is a gap in the
+   output, not a limitation of "UI only" (Shane, 2026-09-30). Enforced by the
+   interaction audit (see `docs/plan-of-attack.md`).
 
 ## Build order
 
