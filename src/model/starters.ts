@@ -80,6 +80,135 @@ export const STARTERS: Starter[] = [
       ],
     },
   },
+  {
+    id: 'dashboard',
+    label: 'Dashboard',
+    icon: '▦',
+    description: 'A page of headline numbers, a trend and a table: three KPI cards, a line chart and a sortable grid, laid out in flow.',
+    tree: {
+      type: 'Panel',
+      flow: true,
+      props: { w: 1040, padding: 28, gap: 20, ariaLabel: 'Overview' },
+      children: [
+        {
+          type: 'Stack',
+          flow: true,
+          props: { gap: 4 },
+          children: [
+            { type: 'Heading', props: { text: 'Overview', level: '1' } },
+            { type: 'Caption', props: { text: 'Last 30 days · updated just now', size: 'sm' } },
+          ],
+        },
+        {
+          type: 'Grid',
+          flow: true,
+          props: { columns: 3, gap: 16 },
+          children: [
+            { type: 'KpiCard', props: { width: 317, label: 'Revenue', value: '$48.2k', delta: '+12.4%', trend: 'up' } },
+            { type: 'KpiCard', props: { width: 317, label: 'Active users', value: '12,480', delta: '+3.1%', trend: 'up', points: '40,42,41,45,47,46,50,53' } },
+            { type: 'KpiCard', props: { width: 317, label: 'Churn', value: '2.1', unit: '%', delta: '-0.4%', trend: 'down', goodDirection: 'down', visual: 'bars', points: '30,28,29,26,25,23,22,21' } },
+          ],
+        },
+        {
+          type: 'Panel',
+          flow: true,
+          props: { title: 'Weekly traffic', padding: 18, gap: 10 },
+          children: [{ type: 'LineChart', props: { width: 948, height: 180, points: '420,510,480,620,590,710,760', showArea: true, curve: 'smooth', ariaLabel: 'Weekly traffic' } }],
+        },
+        { type: 'DataGrid', props: { columns: 'Customer,Plan,Seats,Status', rows: 'Northwind|Team|24|Active;Globex|Enterprise|310|Active;Initech|Starter|5|Trial;Umbrella|Team|48|Past due', ariaLabel: 'Customers' } },
+      ],
+    },
+  },
+  {
+    id: 'settings-page',
+    label: 'Settings page',
+    icon: '⚙',
+    description: 'Account settings in sections: profile fields, notification switches, and a save bar at the end.',
+    tree: {
+      type: 'Panel',
+      flow: true,
+      props: { w: 720, padding: 28, gap: 20, ariaLabel: 'Settings' },
+      children: [
+        { type: 'Heading', props: { text: 'Settings', level: '1' } },
+        {
+          type: 'SettingsSection',
+          flow: true,
+          props: { title: 'Profile', description: 'How you appear to your team.' },
+          children: [
+            { type: 'SettingsRow', flow: true, props: { label: 'Display name', align: 'left' }, children: [{ type: 'Input', props: { value: 'Ada Lovelace', ariaLabel: 'Display name' } }] },
+            { type: 'SettingsRow', flow: true, props: { label: 'Email', align: 'left' }, children: [{ type: 'Input', props: { value: 'ada@example.com', type: 'email', ariaLabel: 'Email' } }] },
+          ],
+        },
+        {
+          type: 'SettingsSection',
+          flow: true,
+          props: { title: 'Notifications' },
+          children: [
+            { type: 'SettingsRow', flow: true, props: { label: 'Product updates', description: 'New features, once a month.', align: 'left' }, children: [{ type: 'Switch', props: { label: '', on: true, ariaLabel: 'Product updates' } }] },
+            { type: 'SettingsRow', flow: true, props: { label: 'Weekly digest', align: 'left' }, children: [{ type: 'Switch', props: { label: '', ariaLabel: 'Weekly digest' } }] },
+          ],
+        },
+        {
+          type: 'Stack',
+          flow: true,
+          props: { direction: 'row', justify: 'end', gap: 8 },
+          children: [
+            { type: 'Button', props: { label: 'Cancel', variant: 'secondary' } },
+            { type: 'Button', props: { label: 'Save changes' } },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'sign-in',
+    label: 'Sign-in',
+    icon: '⚿',
+    description: 'A sign-in card: email and password fields, a remember-me box, the primary action and a recovery link.',
+    tree: {
+      type: 'Card',
+      flow: true,
+      props: { w: 380, padding: 28, gap: 14, ariaLabel: 'Sign in' },
+      children: [
+        {
+          type: 'Stack',
+          flow: true,
+          props: { gap: 4 },
+          children: [
+            { type: 'Heading', props: { text: 'Sign in', level: '2' } },
+            { type: 'Caption', props: { text: 'Welcome back. Enter your details to continue.', size: 'sm' } },
+          ],
+        },
+        { type: 'Field', flow: true, props: { label: 'Email' }, children: [{ type: 'Input', props: { width: 324, type: 'email', placeholder: 'you@example.com', ariaLabel: 'Email' } }] },
+        { type: 'Field', flow: true, props: { label: 'Password' }, children: [{ type: 'PasswordInput', props: { width: 324, ariaLabel: 'Password' } }] },
+        { type: 'Checkbox', props: { label: 'Keep me signed in' } },
+        { type: 'Button', props: { label: 'Sign in', fullWidth: true, type: 'submit' } },
+        { type: 'Link', props: { text: 'Forgot your password?', underline: false, size: 'sm' } },
+      ],
+    },
+  },
+  {
+    id: 'landing-hero',
+    label: 'Landing hero',
+    icon: '★',
+    description: 'The top of a landing page: a headline, a supporting line and two calls to action, centred.',
+    tree: {
+      type: 'Hero',
+      flow: true,
+      props: { w: 960, padding: 56, gap: 20, title: 'Interfaces that actually work', subtitle: 'Design it, run it, ship it: every component behaves in the preview exactly as it will in production.' },
+      children: [
+        {
+          type: 'Stack',
+          flow: true,
+          props: { direction: 'row', justify: 'center', gap: 12 },
+          children: [
+            { type: 'Button', props: { label: 'Get started', size: 'lg' } },
+            { type: 'Button', props: { label: 'See it run', variant: 'secondary', size: 'lg' } },
+          ],
+        },
+      ],
+    },
+  },
 ]
 
 export function getStarter(id: string): Starter | undefined {

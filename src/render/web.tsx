@@ -4208,13 +4208,16 @@ function renderPreviewBody(
           {visual === 'sparkline' ? (
             <Sparkline points={points} width={(Number(p.width) || 220) - 2 * ((size === 'sm' ? t.space3 : size === 'lg' ? t.space5 : t.space4) + 1)} height={visH} accent={accent} id={node.id} />
           ) : visual === 'bars' ? (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: visH }}>
+            // Stretched: the card's items align to the start, and a row of
+            // flex:1 bars with no width of its own drew nothing at all.
+            <div style={{ display: 'flex', alignItems: 'flex-end', alignSelf: 'stretch', gap: '3px', height: visH }}>
               {points.map((v, i) => {
                 const max = Math.max(...points, 1)
                 return (
                   <div
                     key={i}
-                    style={{ flex: 1, height: `${Math.max(3, (v / max) * visH)}px`, borderRadius: '2px', background: i === points.length - 1 ? accent : `${accent}66` }}
+                    // color-mix, not a hex suffix: an accent written as rgb() stays valid.
+                    style={{ flex: 1, height: `${Math.max(3, (v / max) * visH)}px`, borderRadius: '2px', background: i === points.length - 1 ? accent : `color-mix(in srgb, ${accent} 40%, transparent)` }}
                   />
                 )
               })}

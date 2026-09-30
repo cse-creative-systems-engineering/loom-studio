@@ -69,6 +69,38 @@ declare global {
  * user backs out of the unsaved-changes confirmation. Shared by the New
  * button and Ctrl+N so the two can never disagree.
  */
+/** The side panels: shown or folded away, and how wide (remembered per machine). */
+interface Panels {
+  left: boolean
+  right: boolean
+  lw: number
+  rw: number
+}
+const PANELS_KEY = 'loom.panels'
+const PANEL_LIMITS = { lw: [180, 420], rw: [240, 480] } as const
+const DEFAULT_PANELS: Panels = { left: true, right: true, lw: 208, rw: 256 }
+function readPanels(): Panels {
+  try {
+    const p = JSON.parse(window.localStorage.getItem(PANELS_KEY) ?? 'null') as Partial<Panels> | null
+    if (!p) return DEFAULT_PANELS
+    const clamp = (v: unknown, [lo, hi]: readonly [number, number], d: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d)
+    return { left: p.left !== false, right: p.right !== false, lw: clamp(p.lw, PANEL_LIMITS.lw, 208), rw: clamp(p.rw, PANEL_LIMITS.rw, 256) }
+  } catch {
+    return DEFAULT_PANELS
+  }
+}
+
+/** "just now", "5 min ago", "3 h ago", "2 days ago". */
+function sinceText(ms: number): string {
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000))
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m} min ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h} h ago`
+  const d = Math.round(h / 24)
+  return `${d} day${d === 1 ? '' : 's'} ago`
+}
+
 function confirmNewWorkspace(s: EditorStore): boolean {
   if (s.dirty && !window.confirm('Start a new empty workspace? Unsaved changes will be lost.')) {
     return false
@@ -113,6 +145,18 @@ export function App() {
   // 'fit' (the default) scales the viewport's true width into the room the
   // canvas has; a number is a zoom the designer chose.
   const [zoomPref, setZoomPref] = React.useState<number | 'fit'>('fit')
+  // The panels fold away and resize: at 1024px wide the canvas had 530px.
+  const [panels, setPanelsState] = React.useState<Panels>(readPanels)
+  const setPanels = (p: Panels) => {
+    setPanelsState(p)
+    try {
+      window.localStorage.setItem(PANELS_KEY, JSON.stringify(p))
+    } catch {
+      // Not remembered; still applied for this session.
+    }
+  }
+  const panelsRef = React.useRef(panels)
+  panelsRef.current = panels
   const [room, setRoom] = React.useState(0)
   // Design or preview, IN PLACE: the canvas becomes the running artifact at
   // the same viewport and zoom, and the panels step aside. A separate window
@@ -120,6 +164,40 @@ export function App() {
   // away ("Pop out") for a second screen.
   const [mode, setMode] = React.useState<'design' | 'preview'>('design')
   const zoom = zoomPref === 'fit' ? fitZoom(room, VIEWPORTS.find((v) => v.id === viewport)?.width ?? 1280) : zoomPref
+  const zoomRef = React.useRef(zoom)
+  zoomRef.current = zoom
+  const setZoom = (z: number) => setZoomPref(Math.min(4, Math.max(0.1, Math.round(z * 100) / 100)))
+  const zoomBy = (f: number) => setZoom(zoomRef.current * f)
+
+  // Where a menu owns the clipboard keys (macOS's Edit roles), the page gets
+  // copy / cut / paste EVENTS rather than the keys: nodes answer them too,
+  // unless a field is where the person is typing.
+  React.useEffect(() => {
+    const inField = () => {
+      const t = document.activeElement as HTMLElement | null
+      return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
+    }
+    const onCopy = (e: ClipboardEvent) => {
+      if (!inField() && s.copy() > 0) e.preventDefault()
+    }
+    const onCut = (e: ClipboardEvent) => {
+      if (!inField() && s.cut() > 0) e.preventDefault()
+    }
+    const onPaste = (e: ClipboardEvent) => {
+      if (!inField() && s.clipboard.length > 0) {
+        e.preventDefault()
+        s.paste()
+      }
+    }
+    document.addEventListener('copy', onCopy)
+    document.addEventListener('cut', onCut)
+    document.addEventListener('paste', onPaste)
+    return () => {
+      document.removeEventListener('copy', onCopy)
+      document.removeEventListener('cut', onCut)
+      document.removeEventListener('paste', onPaste)
+    }
+  }, [s])
   const modeRef = React.useRef(mode)
   modeRef.current = mode
 
@@ -235,6 +313,30 @@ export function App() {
         // In a field, select-all and the clipboard are the field's own: Ctrl+A
         // once selected every NODE while you meant the text you were typing.
         if (typing && ['a', 'c', 'x', 'v'].includes(e.key)) return
+        if (e.key === '\\') {
+          // Ctrl+\: fold both panels away for the canvas, or bring them back.
+          e.preventDefault()
+          const p = panelsRef.current
+          const show = !p.left && !p.right
+          setPanels({ ...p, left: show, right: show })
+          return
+        }
+        // Canvas zoom, as every design tool binds it.
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault()
+          zoomBy(1.25)
+          return
+        }
+        if (e.key === '-' || e.key === '_') {
+          e.preventDefault()
+          zoomBy(1 / 1.25)
+          return
+        }
+        if (e.key === '0') {
+          e.preventDefault()
+          setZoomPref(1)
+          return
+        }
         if (e.key === 'c') {
           if (s.copy() > 0) e.preventDefault()
           return
@@ -294,6 +396,11 @@ export function App() {
       }
 
       // Bare-key shortcuts: the obvious ones a designer reaches for.
+      if (e.key === '!' && e.shiftKey) {
+        // Shift+1: fit the viewport to the canvas.
+        setZoomPref('fit')
+        return
+      }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (s.selection.length === 0) return
         e.preventDefault()
@@ -334,9 +441,12 @@ export function App() {
 
   return (
     <div className={`loom ${mode === 'preview' ? 'previewing' : ''}`}>
-      <TitleBar s={s} mode={mode} onMode={setMode} previewOpen={previewOpen} onTogglePreview={togglePreview} running={running} onToggleRun={() => setRunning((r) => !r)} />
-      <div className="body">
-        {mode === 'design' && <Toolbox s={s} onDragChange={setDragging} zoom={zoom} />}
+      <TitleBar s={s} mode={mode} onMode={setMode} previewOpen={previewOpen} onTogglePreview={togglePreview} running={running} onToggleRun={() => setRunning((r) => !r)} panels={panels} onPanels={setPanels} />
+      <div
+        className="body"
+        style={mode === 'design' ? { gridTemplateColumns: [panels.left ? `${panels.lw}px` : '', 'minmax(0, 1fr)', panels.right ? `${panels.rw}px` : ''].filter(Boolean).join(' ') } : undefined}
+      >
+        {mode === 'design' && panels.left && <Toolbox s={s} onDragChange={setDragging} zoom={zoom} />}
         <Canvas
           viewport={viewport}
           editState={editState}
@@ -346,12 +456,14 @@ export function App() {
           onMenu={setMenu}
           zoom={zoom}
           fit={zoomPref === 'fit'}
-          onZoom={(z) => setZoomPref(z === 'fit' ? 'fit' : Math.min(2, Math.max(0.25, Math.round(z * 100) / 100)))}
+          onZoom={(z) => (z === 'fit' ? setZoomPref('fit') : setZoom(z))}
           onRoom={setRoom}
           mode={mode}
           onMode={setMode}
         />
-        {mode === 'design' && <Inspector s={s} viewport={viewport} editState={editState} onEditState={setEditState} />}
+        {mode === 'design' && panels.right && <Inspector s={s} viewport={viewport} editState={editState} onEditState={setEditState} />}
+        {mode === 'design' && panels.left && <PanelEdge side="left" panels={panels} onPanels={setPanels} />}
+        {mode === 'design' && panels.right && <PanelEdge side="right" panels={panels} onPanels={setPanels} />}
       </div>
       {menu && <ContextMenu s={s} state={menu} onClose={() => setMenu(null)} />}
       <Toast s={s} />
@@ -439,6 +551,55 @@ function SelectionLayer({
 }
 
 /**
+ * A panel's inner edge: drag it to resize the panel, double-click to reset.
+ * It sits in the gap between the panel and the canvas.
+ */
+function PanelEdge({ side, panels, onPanels }: { side: 'left' | 'right'; panels: Panels; onPanels: (p: Panels) => void }) {
+  const key = side === 'left' ? 'lw' : 'rw'
+  const [lo, hi] = PANEL_LIMITS[key]
+  const width = panels[key]
+  const resize = (w: number) => onPanels({ ...panels, [key]: Math.round(Math.min(hi, Math.max(lo, w))) })
+  return (
+    <div
+      className={`panel-edge ${side}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={side === 'left' ? 'Resize the components panel' : 'Resize the inspector'}
+      aria-valuemin={lo}
+      aria-valuemax={hi}
+      aria-valuenow={width}
+      tabIndex={0}
+      style={side === 'left' ? { left: 6 + width } : { right: 6 + width }}
+      onDoubleClick={() => resize(side === 'left' ? DEFAULT_PANELS.lw : DEFAULT_PANELS.rw)}
+      onKeyDown={(e) => {
+        const step = e.shiftKey ? 40 : 10
+        const grow = side === 'left' ? 'ArrowRight' : 'ArrowLeft'
+        const shrink = side === 'left' ? 'ArrowLeft' : 'ArrowRight'
+        if (e.key === grow || e.key === shrink) {
+          e.preventDefault()
+          e.stopPropagation()
+          resize(width + (e.key === grow ? step : -step))
+        }
+      }}
+      onPointerDown={(e) => {
+        e.preventDefault()
+        const x0 = e.clientX
+        const w0 = width
+        const target = e.currentTarget
+        target.setPointerCapture(e.pointerId)
+        const move = (ev: PointerEvent) => resize(w0 + (side === 'left' ? ev.clientX - x0 : x0 - ev.clientX))
+        const up = () => {
+          target.removeEventListener('pointermove', move)
+          target.removeEventListener('pointerup', up)
+        }
+        target.addEventListener('pointermove', move)
+        target.addEventListener('pointerup', up)
+      }}
+    />
+  )
+}
+
+/**
  * The outcome of the last file action (see `EditorStore.notice`). A status
  * region, so a screen reader announces it too; errors stay until dismissed,
  * success fades on its own.
@@ -480,6 +641,8 @@ function TitleBar({
   onTogglePreview,
   running,
   onToggleRun,
+  panels,
+  onPanels,
 }: {
   s: EditorStore
   mode: 'design' | 'preview'
@@ -488,6 +651,8 @@ function TitleBar({
   onTogglePreview: () => void
   running: boolean
   onToggleRun: () => void
+  panels: Panels
+  onPanels: (p: Panels) => void
 }) {
   const [exportOpen, setExportOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
@@ -550,6 +715,14 @@ function TitleBar({
           </button>
           <button className="tb-btn" disabled={!next} onClick={() => s.redo()} title={next ? `Redo ${next.label} (Ctrl+Shift+Z)` : 'Nothing to redo'} aria-label="Redo">
             <Ico name="redo" />
+          </button>
+        </div>
+        <div className="tb-group" role="group" aria-label="Panels">
+          <button className={`tb-btn${panels.left ? ' on' : ''}`} aria-pressed={panels.left} onClick={() => onPanels({ ...panels, left: !panels.left })} title={`${panels.left ? 'Hide' : 'Show'} the components panel (Ctrl+\\ for both)`} aria-label="Components panel">
+            <Ico name="sidebar" />
+          </button>
+          <button className={`tb-btn flip${panels.right ? ' on' : ''}`} aria-pressed={panels.right} onClick={() => onPanels({ ...panels, right: !panels.right })} title={`${panels.right ? 'Hide' : 'Show'} the inspector (Ctrl+\\ for both)`} aria-label="Inspector panel">
+            <Ico name="sidebar" />
           </button>
         </div>
       </div>
@@ -1399,6 +1572,136 @@ function Canvas({
   mode: 'design' | 'preview'
   onMode: (m: 'design' | 'preview') => void
 }) {
+  // What an earlier session left unsaved, offered (never loaded) while the
+  // document is empty.
+  const [recovery, setRecovery] = React.useState<{ doc: Document; name: string; mtime: number } | null>(null)
+  const empty = s.doc.root === null
+  // Double-click a component to type its text where it is (a label, a button,
+  // a heading), instead of finding the field in the inspector.
+  const [textEdit, setTextEdit] = React.useState<{ id: NodeId; key: string; value: string; x: number; y: number; w: number; h: number } | null>(null)
+  const startTextEdit = (e: React.MouseEvent) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-loom-id]')
+    const id = el?.dataset.loomId
+    const node = id ? s.doc.nodes[id] : undefined
+    const spec = node && getComponent(node.type)
+    const key = spec && ['text', 'label', 'title', 'message'].find((k) => spec.props[k]?.type === 'string')
+    const host = surfaceRef.current
+    if (!el || !id || !node || !key || !host || node.locked) return
+    e.stopPropagation()
+    const r = el.getBoundingClientRect()
+    const sr = host.getBoundingClientRect()
+    const z = zoom || 1
+    s.select([id])
+    setTextEdit({ id, key, value: String(node.props[key] ?? ''), x: (r.left - sr.left) / z - host.clientLeft, y: (r.top - sr.top) / z - host.clientTop, w: Math.max(120, r.width / z), h: r.height / z })
+  }
+  const editOpen = React.useRef(false)
+  editOpen.current = textEdit !== null
+  const finishTextEdit = (value: string, keep: boolean) => {
+    const t = textEdit
+    // Once per edit, however it ends (Enter, Escape, leaving the field).
+    if (!t || !editOpen.current) return
+    editOpen.current = false
+    setTextEdit(null)
+    if (keep && value !== t.value) s.commit({ op: 'setProp', id: t.id, key: t.key, value }, `Edit ${t.key}`)
+  }
+
+  // Zoom with Ctrl+wheel (and a trackpad pinch, which arrives as one),
+  // keeping the point under the pointer where it is; pan with Space+drag or
+  // the middle button. The dock's buttons were the only way to zoom.
+  const canvasRef = React.useRef<HTMLDivElement | null>(null)
+  const anchor = React.useRef<{ px: number; py: number; dx: number; dy: number } | null>(null)
+  const zoomNow = React.useRef(zoom)
+  zoomNow.current = zoom
+  const [panReady, setPanReady] = React.useState(false)
+  React.useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      const surface = el.querySelector<HTMLElement>('.surface')
+      if (!surface) return
+      const r = surface.getBoundingClientRect()
+      const z = zoomNow.current
+      // The design point under the pointer, in design units.
+      anchor.current = { px: e.clientX, py: e.clientY, dx: (e.clientX - r.left) / z, dy: (e.clientY - r.top) / z }
+      onZoom(z * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0025)))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [onZoom])
+  // After a wheel zoom, scroll so the anchored design point is under the pointer again.
+  React.useLayoutEffect(() => {
+    const a = anchor.current
+    const el = canvasRef.current
+    const surface = el?.querySelector<HTMLElement>('.surface')
+    if (!a || !el || !surface) return
+    anchor.current = null
+    const r = surface.getBoundingClientRect()
+    el.scrollLeft += r.left + a.dx * zoom - a.px
+    el.scrollTop += r.top + a.dy * zoom - a.py
+  }, [zoom])
+  React.useEffect(() => {
+    const typing = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+    }
+    const down = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat && !typing(e.target) && !(e.target as HTMLElement | null)?.closest?.('button, [role="treeitem"]')) {
+        e.preventDefault()
+        setPanReady(true)
+      }
+    }
+    const up = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setPanReady(false)
+    }
+    const off = () => setPanReady(false)
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', off)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', off)
+    }
+  }, [])
+  React.useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const onDown = (e: PointerEvent) => {
+      if (!(e.button === 1 || (e.button === 0 && panReady))) return
+      e.preventDefault()
+      e.stopPropagation()
+      const x0 = e.clientX
+      const y0 = e.clientY
+      const sl = el.scrollLeft
+      const st = el.scrollTop
+      el.classList.add('panning')
+      const move = (ev: PointerEvent) => {
+        el.scrollLeft = sl - (ev.clientX - x0)
+        el.scrollTop = st - (ev.clientY - y0)
+      }
+      const upp = () => {
+        el.classList.remove('panning')
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', upp)
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', upp)
+    }
+    // Capture: a pan starts over a node too, and must not select or drag it.
+    el.addEventListener('pointerdown', onDown, true)
+    return () => el.removeEventListener('pointerdown', onDown, true)
+  }, [panReady])
+
+  React.useEffect(() => {
+    if (!empty) return
+    let live = true
+    void s.findRecovery().then((r) => live && setRecovery(r))
+    return () => {
+      live = false
+    }
+  }, [s, empty])
   const dragRef = React.useRef<DragState | null>(null)
   const [rulers, setRulers] = React.useState(false)
   // Authoring happens at Desktop by default (the canvas you can see is the
@@ -1762,7 +2065,11 @@ function Canvas({
           </div>
         </div>
       )}
-      <div className={`canvas ${rulers ? 'rulers' : ''} ${dragging ? 'drop-active' : ''}`} hidden={mode === 'preview'}>
+      <div
+        ref={canvasRef}
+        className={`canvas ${rulers ? 'rulers' : ''} ${dragging ? 'drop-active' : ''} ${panReady ? 'pan-ready' : ''}`}
+        hidden={mode === 'preview'}
+      >
         {/* The frame's name above it, as in any design tool: which screen this
             is and how wide, at a glance. */}
         <div className="frame">
@@ -1780,6 +2087,7 @@ function Canvas({
           // Exactly the viewport's width, never squeezed to the canvas: the
           // zoom fits it instead, so positions match the preview.
           ref={surfaceRef}
+          onDoubleClick={(e) => startTextEdit(e)}
           style={{ zoom, ['--loom-zoom' as string]: zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily, isolation: 'isolate', ...(fill ? { backgroundColor: fill } : {}) }}
         >
           {s.doc.root !== null && (
@@ -1796,28 +2104,68 @@ function Canvas({
             )
           )}
           <SelectionLayer s={s} surface={surfaceRef} zoom={zoom} viewport={viewport} onPointerDownNode={onPointerDownNode} />
+          {textEdit && (
+            <textarea
+              className="inline-edit"
+              autoFocus
+              aria-label={`Edit ${textEdit.key}`}
+              defaultValue={textEdit.value}
+              style={{ left: textEdit.x, top: textEdit.y, width: textEdit.w, minHeight: textEdit.h }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  finishTextEdit(e.currentTarget.value, true)
+                }
+                if (e.key === 'Escape') finishTextEdit('', false)
+              }}
+              onBlur={(e) => finishTextEdit(e.currentTarget.value, true)}
+            />
+          )}
           {s.doc.root === null && (
-            <div className="empty-hint">
+            // Chrome, not design: it is drawn at the Studio's own size, whatever
+            // the zoom (inside the zoomed artboard its 15px title read at 10px).
+            <div className="empty-hint" style={{ zoom: 1 / (zoom || 1) }}>
               {/* A card, not a caption: the first thing a new document shows.
-                  The workspace stays genuinely empty; a starter is placed only
-                  when the person asks for one. */}
+                  The workspace stays genuinely empty; a starter (or the work an
+                  earlier session left) is placed only when the person asks. */}
               <div className="empty-card">
                 <span className="mark empty-mark" aria-hidden="true" />
-                <div className="empty-hint-title">Start with a blank canvas</div>
+                <div className="empty-hint-title">Start a new design</div>
                 <div className="empty-hint-body">
                   Click any tool on the left, or drag it onto the canvas. The first one becomes the
-                  root of this document.
+                  root of this document. Or begin from a starter:
                 </div>
+                {recovery && (
+                  <button
+                    type="button"
+                    className="empty-recover"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => {
+                      s.recover(recovery.doc)
+                      setRecovery(null)
+                    }}
+                  >
+                    <Ico name="undo" size={14} />
+                    <span>
+                      Continue where you left off
+                      <span className="dim"> · “{recovery.name}”, {sinceText(recovery.mtime)}</span>
+                    </span>
+                  </button>
+                )}
                 <div className="empty-starts">
                   {STARTERS.map((st) => (
                     <button
                       key={st.id}
                       type="button"
                       className="empty-start"
+                      title={st.description}
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={() => s.addStarter(st.id, null, 0, 0)}
                     >
-                      <Glyph markup={starterGlyph(st.id)} /> Start from {st.label}
+                      <Glyph markup={starterGlyph(st.id)} /> {st.label}
                     </button>
                   ))}
                 </div>

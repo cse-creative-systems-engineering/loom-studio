@@ -93,7 +93,8 @@ try {
 
   // 1. Export the demo and one document per toolbox tool.
   const exports = { demo: await app.ev('window.__loomStore.emitReact()') }
-  const names = await app.ev(`[...document.querySelectorAll('.toolbox .tool .tool-name')].map((e) => e.textContent.trim()).filter((n) => !/ /.test(n))`)
+  // Component tools only: their sections carry a category (the starters' does not).
+  const names = await app.ev(`[...document.querySelectorAll('.toolbox section[data-cat]:not([data-cat="Starters"]) .tool .tool-name')].map((e) => e.textContent.trim())`)
   for (const n of names) {
     exports[n] = await app.ev(`(() => { const s = window.__loomStore;
       s.loadDocument({ version: 1, meta: { name: ${JSON.stringify(n)}, targets: ['web', 'desktop'], created: 0 }, root: null, nodes: {} });

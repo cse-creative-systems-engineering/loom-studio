@@ -96,13 +96,12 @@ export function ToolThumb({ tool, theme, width = THUMB_W, height = THUMB_H }: { 
     const el = inner.current?.firstElementChild as HTMLElement | null
     if (!el) return
     // The exact box, rounded UP: offsetWidth truncates (67.4 -> 67), and text
-    // given 0.4px too little wraps onto a second line. The box on screen is
-    // scaled by whatever zoom is applied now (the previous tool's, when the
-    // card switches tools), so it is divided back out.
-    const zoomNow = Number(getComputedStyle(inner.current!).zoom) || 1
+    // given 0.4px too little wraps onto a second line.
+    // Measured before any scale applies (a new tool renders unfitted), so
+    // the box on screen is the layout size.
     const box = el.getBoundingClientRect()
-    const w = screen ? screen.w : Math.max(1, Math.ceil(box.width / zoomNow))
-    const h = screen ? screen.h : Math.max(1, Math.ceil(box.height / zoomNow))
+    const w = screen ? screen.w : Math.max(1, Math.ceil(box.width))
+    const h = screen ? screen.h : Math.max(1, Math.ceil(box.height))
     const z = screen ? width / screen.w : Math.min(1, (width - 16) / w, (height - 16) / h)
     setFit({ z, w, h, doc })
   }, [doc, width, height])
@@ -114,15 +113,18 @@ export function ToolThumb({ tool, theme, width = THUMB_W, height = THUMB_H }: { 
         className="thumb-inner"
         inert
         style={{
-          zoom: fit?.z ?? 1,
+          // A tool is zoomed: laid out at its size, crisp, a 1px rule stays a
+          // pixel. A starter is a whole composition shown as a PICTURE, scaled
+          // by a transform after layout: zoomed to a sixth, the minimum font
+          // size made its text taller than it measured and it spilled out.
+          ...(fit && tool.starter
+            ? { transform: `scale(${fit.z})`, transformOrigin: '0 0', left: (width - fit.w * fit.z) / 2, top: (height - fit.h * fit.z) / 2 }
+            : { zoom: fit?.z ?? 1, left: fit ? (width / (fit.z || 1) - fit.w) / 2 : 0, top: fit ? (height / (fit.z || 1) - fit.h) / 2 : 0 }),
           // Measured in a wide box, so a tool with words in it is as wide as
           // its words (a zero-width box wrapped "Learn more" one word a line).
           width: fit ? fit.w : screen?.w ?? 1200,
           height: fit ? fit.h : screen?.h,
-          // Centred in the box once measured; hidden until then so it never
-          // flashes at full size.
-          left: fit ? (width / (fit.z || 1) - fit.w) / 2 : 0,
-          top: fit ? (height / (fit.z || 1) - fit.h) / 2 : 0,
+          // Hidden until measured, so it never flashes at full size.
           visibility: fit ? 'visible' : 'hidden',
         }}
       >
