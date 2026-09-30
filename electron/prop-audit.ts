@@ -400,7 +400,9 @@ export function auditProps(): { checked: number; findings: Finding[] } {
   return { checked, findings }
 }
 
-if (process.env.LOOM_AUDIT === '1') {
+// `typeof` guard: the renderer imports this module too, and under the Vite dev
+// server there is no `process` (the production build rewrites it to `{}`).
+if (typeof process !== 'undefined' && process.env.LOOM_AUDIT === '1') {
   const { checked, findings } = auditProps()
   const byName = new Map<string, string[]>()
   for (const f of findings) {
