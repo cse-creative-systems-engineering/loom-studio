@@ -20,13 +20,12 @@
  */
 
 import { renderToStaticMarkup } from 'react-dom/server'
-import { pageFill as pageBackgroundFill } from '../model/page'
 import { renderNode } from '../render/web'
 import { behaviourCss, behaviourRuntime } from '../render/behaviour'
 import { documentCss } from '../render/document-css'
 import { resolveTheme } from '../render/theme'
+import { exportAuroraMarkup, exportPageCss } from './page'
 import type { Document } from '../model/types'
-import { fontFaceCss } from '../render/fonts'
 
 /** `My App / v2.0!` -> `my-app-v2-0.html`. Mirrors `persist.filenameFor`. */
 export function exportFilenameFor(name: string): string {
@@ -62,23 +61,9 @@ export function emitHtml(doc: Document): string {
       ? ''
       : renderToStaticMarkup(renderNode({ doc, selected: new Set(), mode: 'preview', theme }, doc.root))
   const title = escapeHtml(doc.meta.name || 'Untitled')
-  // Page fill applies ONLY to a root the user left untouched: unsized and at
-  // the origin. Such a root is the canvas, so on a real page it must BE the
-  // page. The moment the user sizes or moves it, it is a designed element and
-  // the export honours exactly what they authored — the editor never silently
-  // overrides a decision the user made.
-  const rootNode = doc.root === null ? undefined : doc.nodes[doc.root]
-  const rootUntouched = rootNode
-    ? Number(rootNode.props.w ?? 0) <= 0 &&
-      Number(rootNode.props.h ?? 0) <= 0 &&
-      Number(rootNode.props.x ?? 0) === 0 &&
-      Number(rootNode.props.y ?? 0) === 0
-    : false
-  const pageFill = rootNode && rootUntouched
-    ? '.loom-export>:first-child{position:relative !important;left:auto !important;top:auto !important;width:100% !important;min-height:100vh}'
-    : ''
-  // The page is only painted when the document chose a background.
-  const pageBg = pageBackgroundFill(doc.meta.page, theme.bg)
+  // The page under the design (typeface, fill, aurora, root-as-page): shared
+  // with the React export (export/page.ts), so the two cannot drift apart.
+  const aurora = exportAuroraMarkup(doc, theme)
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -86,13 +71,7 @@ export function emitHtml(doc: Document): string {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${title}</title>
 <style>
-*,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;padding:0}
-/* The output typeface, embedded: the page looks the same on every machine. */
-${fontFaceCss()}
-body{${pageBg ? `background:${pageBg};` : ''}color:${theme.textPrimary};font-family:${theme.fontFamily}}
-.loom-export{position:relative;min-height:100vh;width:100%}
-${pageFill}
+${exportPageCss(doc, theme, 'document')}
 /* Built-in control behaviour: the same state rules the editor preview uses. */
 ${behaviourCss()}
 /* Per-breakpoint layout, part styling and interaction states: the same generated rules the editor authors against. */
@@ -100,7 +79,7 @@ ${documentCss(doc, theme)}
 </style>
 </head>
 <body>
-<div class="loom-export loom-container">${body}</div>
+<div class="loom-export loom-container">${body}${aurora}</div>
 <!-- Built-in control behaviour. Inline and dependency-free on purpose: an
      exported document must work by opening the file, with no network. -->
 <script>${behaviourRuntime()}</script>

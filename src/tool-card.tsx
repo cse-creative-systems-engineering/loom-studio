@@ -11,15 +11,26 @@
 
 import React from 'react'
 import type { Document, Node } from './model/types'
-import { instantiate } from './model/registry'
+import { getComponent, instantiate, type SeedSpec } from './model/registry'
 import { dropSize } from './model/drop-size'
 import { buildStarter, getStarter } from './model/starters'
 import { renderNode } from './render/web'
-import { getTheme } from './render/theme'
+import { getTheme, type Theme } from './render/theme'
 
 /** The thumbnail's box, in screen pixels. */
 export const THUMB_W = 232
 export const THUMB_H = 132
+
+/**
+ * What a tool is shown on: the theme's page with a STILL wash of its aurora
+ * colours. Surfaces are glass, and glass over a flat page is just a dark
+ * box: over colour it shows what it will look like on an aurora page.
+ */
+function thumbWash(t: Theme): string {
+  const [a, b, c] = t.aurora
+  const o = Math.round(t.auroraOpacity * 0.55 * 255).toString(16).padStart(2, '0')
+  return `radial-gradient(70% 90% at 15% 10%, ${a}${o}, transparent 70%), radial-gradient(70% 90% at 90% 95%, ${b}${o}, transparent 70%), radial-gradient(50% 60% at 60% 45%, ${c}${o}, transparent 75%), ${t.bg}`
+}
 
 /** A one-node (or one-starter) document holding just this tool, as dropped. */
 export function thumbDoc(tool: { type?: string; starter?: string }, theme?: string): Document {
@@ -37,12 +48,24 @@ export function thumbDoc(tool: { type?: string; starter?: string }, theme?: stri
     const type = tool.type!
     const made = instantiate(type)
     root = 'thumb'
+    // What the drop gives you, children included (a tab set arrives with its
+    // tabs: see ComponentSpec.seed), built the way the drop builds them.
+    let n = 0
+    const grow = (list: SeedSpec[]): string[] => list.map((c) => {
+      const k = instantiate(c.type)
+      const id = `thumb-${n++}`
+      const children = grow(c.seed ?? [])
+      nodes[id] = { id, type: c.type, props: { ...k.props, ...(c.props ?? {}), x: 0, y: 0 }, children, flow: children.length > 0 ? true : k.flow, visible: true, locked: false, opacity: 1 }
+      return id
+    })
+    const kids = grow(getComponent(type)?.seed ?? [])
     nodes[root] = {
       id: root,
       type,
       props: { ...made.props, ...dropSize(type, false), x: 0, y: 0 },
-      children: [],
-      flow: made.flow,
+      children: kids,
+      // Arranged, as the drop arranges it (EditorStore.dropComponent).
+      flow: kids.length > 0 ? true : made.flow,
       visible: true,
       locked: false,
       opacity: 1,
@@ -85,7 +108,7 @@ export function ToolThumb({ tool, theme, width = THUMB_W, height = THUMB_H }: { 
   }, [doc, width, height])
   const t = getTheme(theme)
   return (
-    <div className="thumb" style={{ width, height, background: t.bg, color: t.textPrimary, fontFamily: t.fontFamily }} aria-hidden="true">
+    <div className="thumb" style={{ width, height, background: thumbWash(t), color: t.textPrimary, fontFamily: t.fontFamily }} aria-hidden="true">
       <div
         ref={inner}
         className="thumb-inner"

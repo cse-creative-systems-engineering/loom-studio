@@ -27,6 +27,18 @@
   --danger: #e2564d;
   --radius: 10px;
   --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.85);
+  /* The Studio's material is the one its designs are made of: glass over
+     colour (render/theme.ts, render/aurora.tsx), calmer. The tool and what it
+     makes read as one product. */
+  --glass: rgba(15, 16, 22, 0.64);
+  --glass-edge: rgba(255, 255, 255, 0.075);
+  --glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glass-blur: blur(24px) saturate(150%);
+  --glass-depth: 0 16px 40px -20px rgba(0, 0, 0, 0.9);
+  /* Soft depth for the Studio's own controls: fields are wells, "on" is raised. */
+  --well-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+  --raised: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.045));
+  --raised-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   /* Bundled, so every machine draws the same Studio. The canvas does NOT use
      it: a design is drawn in its theme's type, which is what exports ship. */
   --font: 'Inter Variable', 'Inter', system-ui, sans-serif;
@@ -54,7 +66,14 @@ html, body, #root {
 }
 
 body {
-  background: var(--bg);
+  /* A quiet, STILL wash of the accent colours behind the whole Studio: the
+     aurora's calm cousin. Still on purpose: a tool keeps still while you
+     work; the moving colour belongs to the design. */
+  background:
+    radial-gradient(1200px 820px at 0% 0%, rgba(91, 140, 255, 0.3), transparent 60%),
+    radial-gradient(1100px 820px at 100% 100%, rgba(160, 107, 255, 0.28), transparent 60%),
+    radial-gradient(800px 560px at 62% 40%, rgba(74, 214, 192, 0.07), transparent 70%),
+    var(--bg);
   color: var(--ink);
   font-family: var(--font);
   font-size: 13px;
@@ -99,6 +118,7 @@ input, select { font-family: inherit; font-size: 12px; }
   background: var(--well);
   border: 1px solid transparent;
   border-radius: 6px;
+  box-shadow: var(--well-shadow);
   color: var(--ink);
   outline: none;
 }
@@ -145,8 +165,8 @@ input, select { font-family: inherit; font-size: 12px; }
 }
 
 .tool:hover {
-  background: var(--panel-2);
-  border-color: var(--line-2);
+  background: linear-gradient(90deg, rgba(91, 140, 255, 0.1), rgba(91, 140, 255, 0.03));
+  border-color: rgba(91, 140, 255, 0.16);
 }
 
 .tool:active { transform: scale(0.985); }
@@ -159,6 +179,28 @@ input, select { font-family: inherit; font-size: 12px; }
   font-size: 11px;
 }
 
+/* Every category has its colour, as a node type does in Blender: the icons
+   carry it, muted at rest and full on hover, so a long toolbox scans by
+   kind before it reads by name. */
+[data-cat] { --cat: var(--accent); }
+[data-cat='Starters'] { --cat: #f5b453; }
+[data-cat='Containers'] { --cat: #6f9bff; }
+[data-cat='Text'] { --cat: #4fd1c5; }
+[data-cat='Controls'] { --cat: #a58bff; }
+[data-cat='Data'] { --cat: #f0a35e; }
+[data-cat='Navigation'] { --cat: #f478b8; }
+[data-cat='Feedback'] { --cat: #5ed49a; }
+[data-cat='Conversation'] { --cat: #7cc4ff; }
+[data-cat] .tool-icon { color: color-mix(in srgb, var(--cat) 62%, var(--ink-3)); }
+[data-cat] .tool:hover .tool-icon {
+  color: var(--cat);
+  background: color-mix(in srgb, var(--cat) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cat) 28%, transparent);
+}
+[data-cat] .tool:hover {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--cat) 11%, transparent), color-mix(in srgb, var(--cat) 3%, transparent));
+  border-color: color-mix(in srgb, var(--cat) 18%, transparent);
+}
 .tool:hover .tool-icon { color: var(--accent); }
 
 .tool-name { flex: 1; font-size: 12px; }
@@ -181,7 +223,8 @@ input, select { font-family: inherit; font-size: 12px; }
   background:
     radial-gradient(1100px 520px at 50% -18%, rgba(120, 140, 255, 0.07), transparent 65%),
     radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.055) 1px, transparent 1.2px) 0 0 / 18px 18px,
-    var(--bg-2);
+    /* Translucent: the Studio's wash tints the work area, faintly. */
+    rgba(12, 13, 17, 0.8);
 }
 
 .chip {
@@ -228,7 +271,8 @@ input, select { font-family: inherit; font-size: 12px; }
   border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.4),
-    0 24px 60px -24px rgba(0, 0, 0, 0.9);
+    0 24px 60px -24px rgba(0, 0, 0, 0.9),
+    0 0 140px -50px rgba(91, 140, 255, 0.35);
 }
 
 /* Rulers: real tick strips along the top and left edges. The previous rule
@@ -300,18 +344,58 @@ input, select { font-family: inherit; font-size: 12px; }
   color: var(--ink-3);
 }
 
+/* The empty document's welcome: a glass card on the artboard. Drops still
+   pass through it; only its buttons take the pointer. */
+.empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 32px 24px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)), var(--glass);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-hi), var(--glass-depth), 0 0 120px -40px rgba(91, 140, 255, 0.35);
+}
+
+.empty-card .empty-mark { width: 28px; height: 28px; border-radius: 9px; margin-bottom: 6px; box-shadow: 0 0 28px -4px rgba(91, 140, 255, 0.8); }
+
 .empty-hint-title {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .empty-hint-body {
   font-size: 12px;
-  line-height: 1.5;
-  max-width: 42ch;
+  line-height: 1.55;
+  max-width: 40ch;
+  color: var(--ink-2);
 }
+
+.empty-starts { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
+
+.empty-start {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 14px 0 11px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 550;
+  transition: border-color 120ms ease, filter 120ms ease;
+}
+
+.empty-start:hover { border-color: rgba(91, 140, 255, 0.45); filter: brightness(1.1); }
+.empty-start .glyph { color: #f5b453; }
 
 /* Manipulation affordance. An unselected element must LOOK grabbable, and
    must not advertise `cursor: pointer` from the designed control it renders. */
@@ -383,9 +467,10 @@ input, select { font-family: inherit; font-size: 12px; }
 .insp-icon {
   width: 28px; height: 28px;
   display: grid; place-items: center;
-  background: rgba(91, 140, 255, 0.14);
+  background: linear-gradient(135deg, rgba(91, 140, 255, 0.24), rgba(160, 107, 255, 0.2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 12px -6px rgba(91, 140, 255, 0.6);
   border-radius: 8px;
-  color: var(--accent);
+  color: #c8d7ff;
 }
 
 .insp-name { font-weight: 600; font-size: 13px; }
@@ -547,6 +632,7 @@ input, select { font-family: inherit; font-size: 12px; }
   background: var(--well);
   border: 1px solid transparent;
   border-radius: 6px;
+  box-shadow: var(--well-shadow);
   color: var(--ink);
   outline: none;
 }
@@ -568,6 +654,7 @@ input, select { font-family: inherit; font-size: 12px; }
   background: var(--well);
   border: 1px solid transparent;
   border-radius: 6px;
+  box-shadow: var(--well-shadow);
   color: var(--ink);
   outline: none;
   cursor: pointer;
@@ -663,7 +750,10 @@ input, select { font-family: inherit; font-size: 12px; }
 .toggle {
   width: 28px; height: 16px;
   padding: 2px;
-  background: rgba(255, 255, 255, 0.1);
+  /* A well that still reads as a track on dark glass: black alone vanished
+     there, and an off switch looked like a stray dot. */
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: var(--well-shadow), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
   border: 0;
   border-radius: 999px;
   display: flex;
@@ -673,13 +763,13 @@ input, select { font-family: inherit; font-size: 12px; }
 .toggle .knob {
   width: 12px; height: 12px;
   border-radius: 50%;
-  background: #c9cfdb;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  background: linear-gradient(180deg, #e9edf5, #b9c0cf);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.7);
   transition: transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1), background 140ms ease;
 }
 
-.toggle.on { background: var(--accent); }
-.toggle.on .knob { transform: translateX(12px); background: #fff; }
+.toggle.on { background: var(--accent); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3); }
+.toggle.on .knob { transform: translateX(12px); background: linear-gradient(180deg, #ffffff, #e3e8f2); }
 
 .empty { padding: 28px 18px; color: var(--ink-2); }
 .empty .dim { color: var(--ink-3); font-size: 11.5px; line-height: 1.5; }
@@ -1046,6 +1136,7 @@ input, select { font-family: inherit; font-size: 12px; }
   padding: 2px;
   margin-bottom: 6px;
   background: var(--well);
+  box-shadow: var(--well-shadow);
   border-radius: 7px;
 }
 
@@ -1062,7 +1153,7 @@ input, select { font-family: inherit; font-size: 12px; }
 }
 
 .state-tab:hover { color: var(--ink); }
-.state-tab.on { color: var(--ink); background: rgba(255, 255, 255, 0.09); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); }
+.state-tab.on { color: var(--ink); background: var(--raised); box-shadow: var(--raised-shadow); }
 .state-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .state-dot {

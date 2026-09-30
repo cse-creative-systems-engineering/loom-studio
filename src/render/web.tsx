@@ -421,7 +421,15 @@ function applyCommonStyle(
     s.border = `${bw >= 0 ? bw : 1}px solid ${bd || t.border}`
   }
   const shadow = str(p.shadow)
-  if (shadow && shadow !== 'none') s.boxShadow = t[`shadow${shadow.charAt(0).toUpperCase()}${shadow.slice(1)}` as keyof Theme] as string
+  if (shadow && shadow !== 'none') {
+    const chosen = t[`shadow${shadow.charAt(0).toUpperCase()}${shadow.slice(1)}` as keyof Theme] as string
+    // On glass the default elevation IS the material's own shadow, and any
+    // other elevation keeps the lit top edge: replacing the whole shadow
+    // turned every glass panel back into a flat box.
+    const glass = nodeType === 'Panel' ? p.glass === true || p.surface === 'glass' : GLASS_SURFACES.has(nodeType)
+    if (!glass) s.boxShadow = chosen
+    else if (shadow !== 'md') s.boxShadow = `${t.glassHighlight}, ${chosen}`
+  }
 
   // --- spacing: `padding` is the shorthand, X/Y are the override ---
   const pad = num(p.padding, UNSET)
@@ -464,8 +472,12 @@ function applyCommonStyle(
   // item alignment only, handled above: a row aligned to the end used to
   // right-align every line of text inside it, down to a chat bubble.
   const align = str(p.align)
-  const alignOptions = getComponent(nodeType)?.props.align?.options ?? []
-  const textual = alignOptions.includes('left') || alignOptions.includes('right') || alignOptions.includes('justify')
+  const alignSpec = getComponent(nodeType)?.props.align
+  const alignOptions = alignSpec?.options ?? []
+  // An `align` filed under Layout is geometry (where a part sits: a settings
+  // row's control), never text alignment, even when its words are left/right:
+  // read as text it right-aligned every settings label.
+  const textual = alignSpec?.group !== 'Layout' && (alignOptions.includes('left') || alignOptions.includes('right') || alignOptions.includes('justify'))
   const flexBox = s.display === 'flex' || s.display === 'inline-flex'
   if (align && (textual || !flexBox)) {
     s.textAlign = align as React.CSSProperties['textAlign']
@@ -539,7 +551,44 @@ function applyCommonStyle(
   else if (str(p.overflow) === 'hidden') s.overflow = 'hidden'
 }
 
-function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties {
+/**
+ * Components whose body is a SURFACE, drawn in the theme's glass material.
+ * Panel only when its `surface` is glass (the default); the rest always.
+ */
+const GLASS_SURFACES = new Set([
+  'Card', 'Tabs', 'Modal', 'Drawer', 'Toolbar', 'StatusBar', 'HeaderBar', 'FooterBar',
+  'SettingsSection', 'SidebarPanel', 'KpiCard', 'DataCard', 'Menu', 'CommandBar', 'ConfirmDialog',
+  'AccordionItem',
+])
+
+function isGlass(node: Node): boolean {
+  if (node.type === 'Panel') return node.props.glass === true || node.props.surface === 'glass'
+  return GLASS_SURFACES.has(node.type)
+}
+
+/** True when a glass surface encloses `id`: its own glass is then the raised kind. */
+function onGlass(doc: Document, id: NodeId): boolean {
+  for (let p = parentOf(doc, id); p; p = parentOf(doc, p)) {
+    const n = doc.nodes[p]
+    if (n && isGlass(n)) return true
+  }
+  return false
+}
+
+/**
+ * Dress `s` in the theme's glass. `raised` is a surface on a surface: the
+ * lighter fill, no second blur (the outer glass is the backdrop root, so a
+ * nested blur would only blur its siblings) and no second drop shadow.
+ * `edge: false` leaves the border to the caller (a bar keeps its one rule).
+ */
+function glassSurface(s: React.CSSProperties, t: Theme, raised: boolean, opts: { edge?: boolean; shadow?: boolean } = {}): void {
+  s.background = raised ? t.glassFillRaised : t.glassFill
+  if (!raised) s.backdropFilter = `blur(${t.glassBlur}px) saturate(160%)`
+  if (opts.edge !== false) s.border = `1px solid ${t.glassEdge}`
+  s.boxShadow = raised || opts.shadow === false ? t.glassHighlight : `${t.glassHighlight}, ${t.glassShadow}`
+}
+
+function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): React.CSSProperties {
   const p = node.props
   const spec = getComponent(node.type)
   if (!spec) throw new Error(`unknown component: ${node.type}`)
@@ -572,14 +621,12 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.display = 'flex'
       s.flexDirection = p.direction === 'row' ? 'row' : 'column'
       s.gap = px(p.gap, t.space3)
-      s.background = glass
-        ? t.surfaceGlass
-        : p.surface === 'gradient'
-          ? `linear-gradient(140deg, ${t.surface}, ${t.bg})`
-          : t.surface
-      s.border = `1px solid ${t.border}`
-      s.backdropFilter = glass ? 'blur(18px) saturate(140%)' : undefined
-      s.boxShadow = t.shadowMd
+      if (glass) glassSurface(s, t, raised)
+      else {
+        s.background = p.surface === 'gradient' ? `linear-gradient(140deg, ${t.surface}, ${t.bg})` : t.surface
+        s.border = `1px solid ${t.border}`
+        s.boxShadow = t.shadowMd
+      }
       // The generic pass treats `shadow: 'none'` as "not set", because for most
       // components no shadow IS the default. A panel defaults to `md`, so
       // 'none' has to be said out loud here or the elevation could never be
@@ -672,7 +719,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       // The treatments a text field actually comes in. `default` is the
       // outlined surface the component has always drawn.
       const variants: Record<string, React.CSSProperties> = {
-        default: { background: t.surface, border: `1px solid ${t.borderStrong}` },
+        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
+        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
         primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
         secondary: { background: t.bg, border: 'none' },
         ghost: { background: 'transparent', border: `1px solid ${t.border}` },
@@ -727,20 +775,21 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'Card': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space3)
       s.padding = px(p.padding, t.space4); s.borderRadius = px(p.radius, t.radiusLg)
-      s.background = t.surface; s.border = `1px solid ${t.border}`
-      s.boxShadow = p.elevation === 'none' ? undefined : p.elevation === 'sm' ? t.shadowSm : p.elevation === 'lg' ? t.shadowLg : t.shadowMd
+      glassSurface(s, t, raised, { shadow: p.elevation !== 'none' })
+      if (!raised && p.elevation === 'lg') s.boxShadow = `${t.glassHighlight}, ${t.shadowLg}`
       break
     }
     case 'Tabs': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space2)
       s.padding = `${t.space3}px`; s.borderRadius = `${t.radiusLg}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`
+      glassSurface(s, t, raised)
       break
     }
     case 'TabPanel': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = `${t.space2}px`
+      // A page OF its tab set, not a surface of its own: the Tabs is the
+      // frame (a black box inside the glass read as a hole in it).
       s.padding = px(p.padding, t.space3); s.borderRadius = `${t.radiusMd}px`
-      s.background = t.bg; s.border = `1px solid ${t.border}`
       break
     }
     case 'Accordion': {
@@ -749,8 +798,10 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     }
     case 'AccordionItem': {
       s.display = 'flex'; s.flexDirection = 'column'
-      s.borderRadius = `${t.radiusMd}px`; s.background = t.surface
-      s.border = `1px solid ${t.border}`
+      s.borderRadius = `${t.radiusMd}px`
+      // Each section is a surface: glass, raised on a glass parent, and no
+      // drop shadow of its own so a stack of them stays calm.
+      glassSurface(s, t, raised, { shadow: false })
       break
     }
     case 'Modal': {
@@ -765,14 +816,19 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const [mpad, mgap] = mSizes[str(p.size)] ?? mSizes.md
       s.gap = `${mgap}px`
       s.width = px(p.width, 480); s.padding = `${mpad}px`
-      s.borderRadius = `${t.radiusLg}px`; s.background = t.surface
-      s.border = `1px solid ${t.borderStrong}`; s.boxShadow = t.shadowLg
+      s.borderRadius = `${t.radiusLg}px`
+      glassSurface(s, t, raised)
+      // A dialog sits over its own scrim so it can be READ: translucent over a
+      // darkened page it went muddy grey. It keeps the lit edge and depth, on an
+      // opaque fill.
+      s.background = t.surface
+      if (!raised) s.boxShadow = `${t.glassHighlight}, ${t.shadowLg}`
       break
     }
     case 'Drawer': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = `${t.space3}px`
       s.width = px(p.width, 320); s.padding = `${t.space4}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`
+      glassSurface(s, t, raised)
       break
     }
     case 'Section': {
@@ -825,8 +881,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const [tpy, tpxv, tfs] = tSizes[str(p.size)] ?? tSizes.md
       s.gap = px(p.gap, t.space2); s.padding = `${tpy}px ${tpxv}px`
       s.fontSize = `${tfs}px`
-      s.borderRadius = `${t.radiusMd}px`; s.background = t.surface
-      s.border = `1px solid ${t.border}`
+      s.borderRadius = `${t.radiusMd}px`
+      glassSurface(s, t, raised, { shadow: false })
       break
     }
     case 'StatusBar': {
@@ -836,8 +892,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       // A status bar reports a condition, so `tone` colours it and `neutral`
       // stays the quiet default it has always been.
       s.color = p.tone === 'neutral' ? t.textSecondary : toneColor(t, str(p.tone))
-      s.background = t.surface
-      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.border}`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.glassEdge}`
       break
     }
     case 'Hero': {
@@ -851,16 +907,17 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'HeaderBar': {
       s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'
       s.gap = px(p.gap, t.space3); s.height = px(p.height, 56)
-      s.padding = `0 ${t.space4}px`; s.background = t.surface
-      s.borderBottom = p.divider === false ? 'none' : `1px solid ${t.border}`
+      s.padding = `0 ${t.space4}px`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderBottom = p.divider === false ? 'none' : `1px solid ${t.glassEdge}`
       break
     }
     case 'FooterBar': {
       s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'
       s.height = px(p.height, 48); s.padding = `0 ${t.space4}px`
       s.fontSize = `${t.textXs}px`; s.color = t.textMuted
-      s.background = t.surface
-      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.border}`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.glassEdge}`
       break
     }
     case 'SettingsSection': {
@@ -869,8 +926,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.gap = px(p.gap, t.space2)
       s.padding = `${t.space4}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.border = `1px solid ${p.danger === true ? t.danger : t.border}`
-      s.background = t.surface
+      glassSurface(s, t, raised)
+      if (p.danger === true) s.border = `1px solid ${t.danger}`
       s.width = px(p.width, 640)
       break
     }
@@ -906,7 +963,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'SidebarPanel': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space2)
       s.width = px(p.width, 240); s.padding = `${t.space4}px`
-      s.background = t.surface; s.borderRight = `1px solid ${t.border}`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderRight = `1px solid ${t.glassEdge}`
       break
     }
     // --- conversation ---------------------------------------------------
@@ -1008,7 +1066,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.padding = `${ipy}px ${ipx}px`; s.borderRadius = `${t.radiusMd}px`
       // The treatments a field actually comes in, named as they are elsewhere.
       const iVariants: Record<string, React.CSSProperties> = {
-        default: { background: t.surface, border: `1px solid ${t.borderStrong}` },
+        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
+        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
         primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
         secondary: { background: t.bg, border: `1px solid ${t.border}` },
         ghost: { background: 'transparent', border: `1px solid ${t.border}` },
@@ -1029,7 +1088,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.width = px(p.width, 280); s.padding = `${apy}px ${apx}px`
       s.borderRadius = `${t.radiusMd}px`
       const aVariants: Record<string, React.CSSProperties> = {
-        default: { background: t.surface, border: `1px solid ${t.borderStrong}` },
+        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
+        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
         primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
         secondary: { background: t.bg, border: `1px solid ${t.border}` },
         ghost: { background: 'transparent', border: `1px solid ${t.border}` },
@@ -1102,8 +1162,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'Segmented': {
       s.display = 'inline-flex'; s.gap = '2px'
       s.padding = str(p.size) === 'sm' ? '2px' : str(p.size) === 'lg' ? '4px' : '3px'
-      s.borderRadius = `${t.radiusMd}px`; s.background = t.bg
-      s.border = `1px solid ${t.border}`
+      s.borderRadius = `${t.radiusMd}px`; s.background = t.wellFill
+      s.border = `1px solid ${t.wellEdge}`; s.boxShadow = t.wellShadow
       break
     }
     case 'TagInput': case 'OtpInput': {
@@ -1115,7 +1175,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       }
       const [vpy, vpx, vfs] = vSizes[str(p.size)] ?? vSizes.md
       s.padding = `${vpy}px ${vpx}px`; s.borderRadius = `${t.radiusMd}px`
-      s.border = `1px solid ${t.borderStrong}`; s.background = t.surface
+      s.border = `1px solid ${t.wellEdge}`; s.background = t.wellFill; s.boxShadow = t.wellShadow
       s.fontSize = `${vfs}px`; s.color = t.textPrimary
       break
     }
@@ -1292,8 +1352,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.gap = `${t.space2}px`
       s.padding = size === 'sm' ? `${t.space3}px` : size === 'lg' ? `${t.space5}px` : `${t.space4}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.border = `1px solid ${t.border}`
-      s.background = t.surface
+      glassSurface(s, t, raised)
       s.width = px(p.width, 220)
       break
     }
@@ -1403,7 +1462,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const size = str(p.size) || 'md'
       s.padding = size === 'sm' ? `${t.space3}px` : size === 'lg' ? `${t.space5}px` : `${t.space4}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`; s.boxShadow = t.shadowSm
+      glassSurface(s, t, raised)
       s.fontSize = `${size === 'sm' ? t.textSm : size === 'lg' ? t.textLg : t.textMd}px`
       break
     }
@@ -1453,8 +1512,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     }
     case 'Menu': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, 2)
-      s.padding = `${t.space2}px`; s.background = t.surface
-      s.border = `1px solid ${t.border}`; s.borderRadius = `${t.radiusMd}px`
+      s.padding = `${t.space2}px`; s.borderRadius = `${t.radiusMd}px`
+      glassSurface(s, t, raised)
       // A context menu is as wide as its longest row; a designer who knows the
       // width sets it, and the rest keep hugging their content.
       const w = num(p.width, -1)
@@ -1465,8 +1524,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'CommandBar': {
       s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'
       s.gap = px(p.gap, 8); s.padding = `${t.space2}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`
       s.borderRadius = `${t.radiusMd}px`
+      glassSurface(s, t, raised, { shadow: false })
       break
     }
     case 'TabBar': {
@@ -1638,8 +1697,10 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const size = str(p.size) || 'md'
       s.padding = size === 'sm' ? `${t.space4}px` : size === 'lg' ? `${t.space6}px` : `${t.space5}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.background = t.surface; s.border = `1px solid ${t.borderStrong}`
-      s.boxShadow = t.shadowLg; s.width = px(p.width, 400)
+      glassSurface(s, t, raised)
+      s.background = t.surface // over a scrim: opaque, as Modal
+      if (!raised) s.boxShadow = `${t.glassHighlight}, ${t.shadowLg}`
+      s.width = px(p.width, 400)
       s.fontSize = `${size === 'sm' ? t.textSm : t.textMd}px`
       break
     }
@@ -1733,6 +1794,12 @@ function themeVars(t: Theme): React.CSSProperties {
     '--loom-off': t.borderStrong,
     '--loom-on-bg': `${t.accent}1f`,
     '--loom-on-accent': t.textOnAccent,
+    '--loom-well': t.wellFill,
+    '--loom-well-shadow': t.wellShadow,
+    '--loom-knob': t.knobFill,
+    '--loom-knob-shadow': t.knobShadow,
+    '--loom-raised': t.raisedFill,
+    '--loom-raised-shadow': t.raisedShadow,
     '--loom-chevron': chevronUrl(t.textMuted),
     colorScheme: t.colorScheme,
     '--loom-on-fg': t.accent,
@@ -1765,7 +1832,7 @@ function renderPreviewNode(
   // Where a control sits among its siblings is what makes a group work: the
   // Nth TabPanel belongs to the Nth tab.
   const parentId = parentOf(ctx.doc, node.id)
-  const style = styleFor(node, flowChild, t)
+  const style = styleFor(node, flowChild, t, onGlass(ctx.doc, node.id))
   // Theme colours reach the behaviour stylesheet as custom properties, so the
   // rules that draw a pressed/toggled/active state can reference them without
   // the renderer hard-coding a second copy of the theme. Inherited, so one
@@ -2264,19 +2331,19 @@ function renderPreviewBody(
           cursor: 'pointer',
           ...(full ? { flex: 1 } : {}),
         }
-        if (variant === 'enclosed') {
-          return { ...base, padding: '5px 12px', background: on ? t.surface : 'transparent', boxShadow: on ? t.shadowSm : 'none' }
-        }
-        if (variant === 'pills') {
-          return { ...base, padding: '5px 12px', background: on ? `${t.accent}1f` : 'transparent' }
-        }
-        return { ...base, padding: '4px 10px', background: on ? `${t.accent}14` : 'transparent' }
+        // The chosen tab's FILL is the state stylesheet's (data-loom-active,
+        // from --loom-tab-on below), so it moves with a click; inline, it
+        // stayed on the authored tab while the colour moved.
+        return { ...base, padding: variant === 'underline' ? '4px 10px' : '5px 12px' }
       }
+      const tabOn: Record<string, string> = variant === 'enclosed'
+        ? { '--loom-tab-on': t.raisedFill, '--loom-tab-shadow': t.raisedShadow }
+        : { '--loom-tab-on': `${t.accent}${variant === 'pills' ? '1f' : '14'}` }
       // The strip owns the group; each tab is a real button so it is
       // clickable, focusable, and reports its selected state to assistive tech.
       return (
         <div key={key} style={style} data-loom-tabs={node.id} data-loom-active={String(active)}>
-          <div role="tablist" style={strip}>
+          <div role="tablist" style={{ ...strip, ...tabOn }}>
             {tabs.map((tb, i) => (
               <button
                 key={i}
@@ -2295,11 +2362,14 @@ function renderPreviewBody(
       )
     }
     case 'TabPanel': {
-      // The Nth TabPanel is the Nth tab's content. It ships SHOWN so a panel
-      // dropped on its own is never invisible, and hidden the moment its tab
-      // is switched away from.
+      // The Nth TabPanel is the Nth tab's content. Inside a Tabs, only the
+      // ACTIVE tab's panel is shown (the runtime switches it on click); every
+      // panel used to ship shown, so a tab set drew all its pages stacked.
+      // A panel on its own is shown, never invisible.
       const owner = parentId ? ctx.doc.nodes[parentId] : undefined
-      const index = owner?.type === 'Tabs' ? Math.max(0, tabPanelsOf(ctx.doc, owner, ctx.mode === 'preview').indexOf(node.id)) : 0
+      const inTabs = owner?.type === 'Tabs'
+      const index = inTabs ? Math.max(0, tabPanelsOf(ctx.doc, owner, ctx.mode === 'preview').indexOf(node.id)) : 0
+      const shown = !inTabs || index === num(owner.props.active, 0)
       const aria = str(p.ariaLabel)
       return (
         <div
@@ -2307,10 +2377,12 @@ function renderPreviewBody(
           style={style}
           role="tabpanel"
           aria-label={aria || str(p.title) || undefined}
-          data-loom-shown="1"
+          data-loom-shown={shown ? '1' : '0'}
           {...behaviourAttrs({ role: 'panel', group: parentId, index })}
         >
-          {str(p.title) ? (
+          {/* In a tab set the tab's label IS the title: repeating it inside
+              the page was noise. A lone panel keeps its heading. */}
+          {str(p.title) && !inTabs ? (
             <div
               style={{
                 fontSize: num(p.fontSize, -1) > 0 ? 'inherit' : `${t.textSm}px`,
@@ -3156,7 +3228,7 @@ function renderPreviewBody(
               lines up. */}
           <input type="checkbox" defaultChecked={on} disabled={p.disabled === true} tabIndex={-1} aria-hidden="true" style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }} />
           <span data-loom-track style={{ width: '34px', height: '20px', borderRadius: '999px', display: 'inline-flex', alignItems: 'center', padding: '2px' }}>
-            <span data-loom-knob style={{ width: '14px', height: '14px', borderRadius: '999px', background: '#fff', display: 'block' }} />
+            <span data-loom-knob style={{ width: '14px', height: '14px', borderRadius: '999px', display: 'block' }} />
           </span>
           <span>{str(p.label)}</span>
         </label>
@@ -3183,7 +3255,11 @@ function renderPreviewBody(
             disabled={off}
             aria-label={str(p.ariaLabel) || undefined}
             data-loom-output={showValue ? readoutId : undefined}
-            style={{ accentColor: accent, height: str(p.size) === 'sm' ? 16 : str(p.size) === 'lg' ? 28 : 20 }}
+            data-loom-range=""
+            // The track is a well, filled with the tone up to the value
+            // (--loom-fill, kept current by the runtime as it moves), and the
+            // thumb is an extruded knob: see the state stylesheet.
+            style={{ '--loom-tick': accent, '--loom-fill': `${max > min ? Math.round(((v - min) / (max - min)) * 100) : 0}%`, height: str(p.size) === 'sm' ? 16 : str(p.size) === 'lg' ? 28 : 20 } as React.CSSProperties}
           />
           {showValue ? <span id={readoutId} data-loom-readout>{v}</span> : null}
         </label>
@@ -3484,24 +3560,24 @@ function renderPreviewBody(
       return (
         <div
           key={key}
-          style={{ ...style, width: full ? '100%' : style.width }}
+          // `tone` tints the SELECTED option; `inherit` leaves it the raised
+          // neutral. The selected look itself lives in the state stylesheet
+          // (data-loom-seg), so it FOLLOWS the choice when one is clicked: as
+          // inline style it stayed on the authored option forever.
+          style={{ ...style, width: full ? '100%' : style.width, ...(str(p.tone) === 'inherit' ? {} : { '--loom-seg-on': `${tint}24` }) } as React.CSSProperties}
           role="radiogroup"
           aria-label={str(p.ariaLabel) || undefined}
         >
           {opts.map((o) => (
             <label
               key={o}
+              data-loom-seg=""
               {...behaviourAttrs({ role: 'radio', group: node.id, index: opts.indexOf(o), on: current === o })}
               style={{
                 fontSize: `${fs}px`,
                 fontWeight: t.weightMedium,
                 padding: str(p.size) === 'sm' ? '3px 9px' : str(p.size) === 'lg' ? '7px 15px' : '5px 12px',
                 borderRadius: `${t.radiusSm}px`,
-                // `tone` tints the SELECTED option; `inherit` leaves it the
-                // neutral surface it has always been.
-                background: current === o ? (str(p.tone) === 'inherit' ? t.surface : `${tint}1f`) : 'transparent',
-                color: current === o ? t.textPrimary : t.textMuted,
-                border: `1px solid ${current === o ? t.borderStrong : 'transparent'}`,
                 cursor: 'pointer',
                 textAlign: 'center',
                 // `fullWidth` means the options SHARE the control's width — the
@@ -3634,7 +3710,8 @@ function renderPreviewBody(
               defaultValue={str(p.value)[i] ?? ''}
               disabled={p.disabled === true}
               aria-label={`digit ${i + 1}`}
-              style={{ width: `${box}px`, height: `${tall}px`, textAlign: 'center', fontSize: str(p.size) === 'sm' ? `${t.textMd}px` : `${t.textLg}px`, fontFamily: t.fontMono, borderRadius: `${t.radiusMd}px`, border: `1px solid ${t.borderStrong}`, background: t.surface, color: t.textPrimary }}
+              data-loom-well=""
+              style={{ width: `${box}px`, height: `${tall}px`, textAlign: 'center', fontSize: str(p.size) === 'sm' ? `${t.textMd}px` : `${t.textLg}px`, fontFamily: t.fontMono, borderRadius: `${t.radiusMd}px`, border: `1px solid ${t.wellEdge}`, background: t.wellFill, color: t.textPrimary }}
             />
           ))}
         </div>
@@ -4129,7 +4206,7 @@ function renderPreviewBody(
             </span>
           ) : null}
           {visual === 'sparkline' ? (
-            <Sparkline points={points} width={Number(p.width) || 220} height={visH} accent={accent} id={node.id} />
+            <Sparkline points={points} width={(Number(p.width) || 220) - 2 * ((size === 'sm' ? t.space3 : size === 'lg' ? t.space5 : t.space4) + 1)} height={visH} accent={accent} id={node.id} />
           ) : visual === 'bars' ? (
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: visH }}>
               {points.map((v, i) => {
@@ -5388,7 +5465,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     return renderPreviewNode(node, flowChild, children, key, t, ctx)
   }
 
-  const authored = styleFor(node, flowChild, t)
+  const authored = styleFor(node, flowChild, t, onGlass(ctx.doc, id))
 
   // The atmosphere layer: grain / glass / aurora / spotlight / shimmer / glow
   // / tilt / chromatic, declared in render/effects.tsx and gated by target

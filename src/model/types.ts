@@ -221,7 +221,8 @@ export interface DocMeta {
 }
 
 export interface PageBackground {
-  background: 'none' | 'theme' | 'color'
+  /** `aurora`: the theme's page colour with its colours wandering through it (render/aurora.tsx). */
+  background: 'none' | 'theme' | 'color' | 'aurora'
   color?: string
   blur?: number
 }

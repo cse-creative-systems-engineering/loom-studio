@@ -13,7 +13,7 @@
 import { buildStarter, getStarter } from '../model/starters'
 import { dropSize } from '../model/drop-size'
 import { apply, duplicateSubtree, parentOf } from '../model/ops'
-import { instantiate } from '../model/registry'
+import { getComponent, instantiate, type SeedSpec } from '../model/registry'
 import type { Document, Node, NodeId, Op, PropValue, TargetId } from '../model/types'
 import { serialize, validate, filenameFor } from '../model/persist'
 import { emitHtml, exportFilenameFor } from '../export/html'
@@ -242,18 +242,11 @@ export class EditorStore {
    * any future AI operation all funnel here, so schema normalisation and
    * history bookkeeping cannot be bypassed.
    */
-  addComponent(
-    name: string,
-    parent: NodeId | null,
-    x = 0,
-    y = 0,
-    overrides: Record<string, PropValue> = {},
-    opts: { flow?: boolean } = {},
-  ): NodeId | undefined {
-    const id = `n${Math.random().toString(36).slice(2, 9)}`
+  /** A fresh node of `name`, schema defaults applied, not yet in the document. */
+  private buildNode(name: string, x: number, y: number, overrides: Record<string, PropValue> = {}, opts: { flow?: boolean } = {}): Node {
     const built = instantiate(name)
-    const node: Node = {
-      id,
+    return {
+      id: `n${Math.random().toString(36).slice(2, 9)}`,
       type: name,
       props: { ...built.props, ...overrides, x, y },
       children: [],
@@ -262,6 +255,18 @@ export class EditorStore {
       locked: false,
       opacity: 1,
     }
+  }
+
+  addComponent(
+    name: string,
+    parent: NodeId | null,
+    x = 0,
+    y = 0,
+    overrides: Record<string, PropValue> = {},
+    opts: { flow?: boolean } = {},
+  ): NodeId | undefined {
+    const node = this.buildNode(name, x, y, overrides, opts)
+    const id = node.id
     const ok = this.commit({ op: 'insert', parent, node }, `Add ${name}`)
     if (ok) this.select([id])
     return ok ? id : undefined
@@ -274,7 +279,29 @@ export class EditorStore {
    */
   dropComponent(name: string, parent: NodeId | null, x: number, y: number): NodeId | undefined {
     const intoFlow = parent !== null && this.doc.nodes[parent]?.flow === true
-    return this.addComponent(name, parent, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow))
+    const seed = getComponent(name)?.seed
+    if (!seed || seed.length === 0) return this.addComponent(name, parent, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow))
+    // A container that arrives with its first children (Tabs with its tabs):
+    // one insert for it and one per child, as ONE undo step, built exactly
+    // as its own "Add ..." button builds them.
+    // It arrives ARRANGED: its parts flow (a row of buttons, a column of
+    // cards). Free-positioned they all sat at 0,0 on top of each other. It
+    // stays an ordinary container: the Layout toggle switches it to free.
+    const node = this.buildNode(name, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow), { flow: true })
+    // Depth first, parents before children, so every insert has its parent.
+    // A seeded child that brings its own children arranges them too.
+    const ops: Op[] = [{ op: 'insert', parent, node }]
+    const place = (under: NodeId, list: SeedSpec[]) => {
+      for (const c of list) {
+        const k = this.buildNode(c.type, 0, 0, c.props ?? {}, c.seed?.length ? { flow: true } : {})
+        ops.push({ op: 'insert', parent: under, node: k })
+        if (c.seed?.length) place(k.id, c.seed)
+      }
+    }
+    place(node.id, seed)
+    const ok = this.commitAll(ops, `Add ${name}`)
+    if (ok) this.select([node.id])
+    return ok ? node.id : undefined
   }
 
   /**

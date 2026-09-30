@@ -115,6 +115,13 @@ defineComponent({
   // where a separate "tabs" list used to disagree with the panels it named.
   childTypes: ['TabPanel'],
   adds: [{ type: 'TabPanel', label: 'Add tab', props: { title: 'Tab {n}' } }],
+  // Dropped with three tabs: without them the strip had nothing to draw and
+  // the tab set landed as an empty box.
+  seed: [
+    { type: 'TabPanel', props: { title: 'Overview' } },
+    { type: 'TabPanel', props: { title: 'Activity' } },
+    { type: 'TabPanel', props: { title: 'Settings' } },
+  ],
   props: {
     ...insetProps(),
     ...flowProps(),
@@ -156,6 +163,13 @@ defineComponent({
   description: 'Stack of collapsible sections. Add sections from its panel.',
   childTypes: ['AccordionItem'],
   adds: [{ type: 'AccordionItem', label: 'Add section', props: { title: 'Section {n}' } }],
+  // Dropped with three sections, as an FAQ (the canonical accordion):
+  // empty, it drew nothing at all.
+  seed: [
+    { type: 'AccordionItem', props: { title: 'What is included?' } },
+    { type: 'AccordionItem', props: { title: 'How does billing work?' } },
+    { type: 'AccordionItem', props: { title: 'Can I cancel at any time?' } },
+  ],
   props: {
     ...insetProps(),
     ...flowProps(),
@@ -331,9 +345,18 @@ defineComponent({
   container: true,
   icon: '⛭',
   description: "A strip of grouped actions above a surface. Use it for per-view actions, not navigation.",
+  seed: [
+    { type: 'IconButton', props: { icon: 'plus', variant: 'ghost' } },
+    { type: 'IconButton', props: { icon: 'copy', variant: 'ghost' } },
+    { type: 'IconButton', props: { icon: 'trash', variant: 'ghost' } },
+    { type: 'IconButton', props: { icon: 'more', variant: 'ghost' } },
+  ],
   props: {
     ...insetProps(),
     ...flowProps(),
+    // A bar reads across: its tools in a row. The shared flow default (a
+    // column) stacked them out of the bar.
+    direction: en(['row', 'column'], 'row', 'Layout'),
     ...barProps(),
     ...typeProps(),
     // One scale for the whole strip: padding and type together, the way a size
@@ -472,6 +495,12 @@ defineComponent({
   icon: '⚙',
   description: 'Settings section: title, description, rows, optional save bar. Add rows from its panel.',
   adds: [{ type: 'SettingsRow', label: 'Add row', props: { label: 'Setting {n}' } }],
+  seed: [
+    // A row is a label AND its control: without one it is a floating caption.
+    { type: 'SettingsRow', props: { label: 'Email notifications', description: 'A summary of activity, once a day.' }, seed: [{ type: 'Switch', props: { label: '', on: true } }] },
+    { type: 'SettingsRow', props: { label: 'Two-factor authentication', description: 'Ask for a code when signing in.' }, seed: [{ type: 'Switch', props: { label: '' } }] },
+    { type: 'SettingsRow', props: { label: 'Language' }, seed: [{ type: 'Select', props: { options: 'English,Deutsch,Français,Español', value: 'English' } }] },
+  ],
   props: {
     title: str('Section'),
     description: str(''),
@@ -609,6 +638,10 @@ defineComponent({
     icon: str('megaphone'),
     ...insetProps(),
     ...flowProps(),
+    // A banner reads across: its icon BESIDE its message, centred on it. The
+    // shared flow default (a column) stacked the icon above the text.
+    direction: en(['row', 'column'], 'row', 'Layout'),
+    align: en(['stretch', 'start', 'center', 'end', 'baseline'], 'center', 'Layout'),
     ...surfaceProps(),
     ...typeProps(),
     tone: en(['info', 'success', 'warning', 'danger'], 'info', 'State'),
@@ -919,6 +952,11 @@ defineComponent({
   container: true,
   icon: '⋯',
   description: 'Grouped buttons.',
+  seed: [
+    { type: 'Button', props: { label: 'Left', variant: 'secondary' } },
+    { type: 'Button', props: { label: 'Center', variant: 'secondary' } },
+    { type: 'Button', props: { label: 'Right', variant: 'secondary' } },
+  ],
   props: {
     ...insetProps(),
     ...flowProps(),

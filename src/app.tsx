@@ -1,4 +1,5 @@
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { EditorStore, emptyDocument } from './state/store'
 import type { Breakpoint, Document, InteractionState, Node, NodeId, PageBackground, PropValue } from './model/types'
 import { ancestry, descendants, parentOf } from './model/ops'
@@ -17,11 +18,11 @@ import { tooltipText } from './model/tooltip'
 import { inspectorView, propLabel } from './model/inspector-view'
 import { GROUP_ORDER } from './model/prop-groups'
 import { pageFill, MAX_PAGE_BLUR } from './model/page'
+import { AuroraBackdrop } from './render/aurora'
 import type { RunTarget } from './model/desktop-run'
 import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { STARTERS, getStarter } from './model/starters'
-import { iconMarkup } from './render/icons'
 import { starterGlyph, toolGlyph } from './tool-icons'
 import { PreviewStage } from './preview'
 import { ToolCard, type CardTarget } from './tool-card'
@@ -30,7 +31,7 @@ import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
 import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
-import { Toggle } from './ui-primitives'
+import { Toggle, Glyph, Ico } from './ui-primitives'
 import { VIEWPORTS, fitZoom, nodeBreakpoints } from './render/responsive'
 import { installBehaviourStyles, installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import { ContextMenu, type MenuState } from './context-menu'
@@ -328,48 +329,6 @@ export function App() {
       </div>
       {menu && <ContextMenu s={s} state={menu} onClose={() => setMenu(null)} />}
     </div>
-  )
-}
-
-/** A tool's own drawing (toolbox, layers, inspector header). */
-function Glyph({ markup, size = 14 }: { markup: string; size?: number }) {
-  return (
-    <svg
-      className="ico glyph"
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      // Compile-time constants from tool-icons.ts, never user input.
-      dangerouslySetInnerHTML={{ __html: markup }}
-    />
-  )
-}
-
-/** One icon from Loom's own set, for the chrome: the same family the output uses. */
-function Ico({ name, size = 14 }: { name: string; size?: number }) {
-  const markup = iconMarkup(name)
-  if (!markup) throw new Error(`chrome icon missing from the set: ${name}`)
-  return (
-    <svg
-      className="ico"
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.75}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      // Compile-time constants from icons.ts, never user input.
-      dangerouslySetInnerHTML={{ __html: markup }}
-    />
   )
 }
 
@@ -688,7 +647,10 @@ function Toolbox({
 
   return (
     <aside className="toolbox" onPointerLeave={hideCard}>
-      {card && <ToolCard target={card} theme={s.doc.meta.theme} />}
+      {/* Portaled: a glass panel (backdrop-filter) is the containing block of
+          any fixed-position child, so inside the toolbox the card was placed
+          against the panel and clipped by it: present, and invisible. */}
+      {card && createPortal(<ToolCard target={card} theme={s.doc.meta.theme} />, document.body)}
       {tab === 'components' && (
         <input
           className="search"
@@ -718,15 +680,20 @@ function Toolbox({
       </div>
       {tab === 'components' ? (
         <>
-          <div className="legend">
-            <span className="tool-gate" aria-hidden="true" />
-            limited on {s.target === 'web' ? 'Desktop' : 'Web'}
-          </div>
+          {/* The key to the tool dots, only while some tool carries one: with
+              desktop rendered by Chromium nothing does, and a key to nothing
+              is noise. */}
+          {[...componentsByCategory().values()].flat().some((c) => unsupportedProps(c, s.target).length > 0) && (
+            <div className="legend">
+              <span className="tool-gate" aria-hidden="true" />
+              limited on {s.target === 'web' ? 'Desktop' : 'Web'}
+            </div>
+          )}
           <div className="scroll">
             {/* Starters first: a finished arrangement of real tools is the
                 fastest way in, and everything it drops stays editable. */}
             {STARTERS.some((st) => st.label.toLowerCase().includes(filter.toLowerCase())) && (
-              <section>
+              <section data-cat="Starters">
                 <h3>Starters</h3>
                 {STARTERS.filter((st) => st.label.toLowerCase().includes(filter.toLowerCase())).map((st) => (
                   <button
@@ -750,7 +717,7 @@ function Toolbox({
               const items = list.filter((c) => !added.has(c.name) && c.name.toLowerCase().includes(filter.toLowerCase()))
               if (items.length === 0) return null
               return (
-                <section key={cat}>
+                <section key={cat} data-cat={cat}>
                   <h3>{cat}</h3>
                   {items.map((c) => {
                     const gated = unsupportedProps(c, s.target)
@@ -1397,6 +1364,7 @@ function Canvas({
   // What is behind the UI (Page, in the inspector with nothing selected).
   const fill = pageFill(s.doc.meta.page, getTheme(s.doc.meta.theme).bg)
   const blur = s.doc.meta.page?.blur ?? 0
+  const aurora = s.doc.meta.page?.background === 'aurora'
 
   return (
     <main className="canvas-wrap" ref={wrapRef}>
@@ -1420,10 +1388,12 @@ function Canvas({
               backdropFilter: blur ? `blur(${blur}px)` : undefined,
               color: getTheme(s.doc.meta.theme).textPrimary,
               fontFamily: getTheme(s.doc.meta.theme).fontFamily,
+              isolation: 'isolate',
             }}
             data-viewport={viewport}
           >
             <PreviewStage s={s} />
+            {aurora && <AuroraBackdrop theme={getTheme(s.doc.meta.theme)} />}
           </div>
         </div>
       )}
@@ -1445,7 +1415,7 @@ function Canvas({
           // Exactly the viewport's width, never squeezed to the canvas: the
           // zoom fits it instead, so positions match the preview.
           ref={surfaceRef}
-          style={{ zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily, ...(fill ? { backgroundColor: fill } : {}) }}
+          style={{ zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily, isolation: 'isolate', ...(fill ? { backgroundColor: fill } : {}) }}
         >
           {s.doc.root !== null && (
             renderNode(
@@ -1462,13 +1432,33 @@ function Canvas({
           )}
           {s.doc.root === null && (
             <div className="empty-hint">
-              <div className="empty-hint-title">Empty workspace</div>
-              <div className="empty-hint-body">
-                Drag a component from the left panel onto the canvas to create the first node —
-                it becomes the root of this document.
+              {/* A card, not a caption: the first thing a new document shows.
+                  The workspace stays genuinely empty; a starter is placed only
+                  when the person asks for one. */}
+              <div className="empty-card">
+                <span className="mark empty-mark" aria-hidden="true" />
+                <div className="empty-hint-title">Start with a blank canvas</div>
+                <div className="empty-hint-body">
+                  Drag any tool from the left onto the canvas. The first one becomes the root of this
+                  document.
+                </div>
+                <div className="empty-starts">
+                  {STARTERS.map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      className="empty-start"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => s.addStarter(st.id, null, 0, 0)}
+                    >
+                      <Glyph markup={starterGlyph(st.id)} /> Start from {st.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
+          {aurora && <AuroraBackdrop theme={getTheme(s.doc.meta.theme)} />}
           {guides.x !== null && <div className="snap-guide-v" style={{ left: guides.x }} aria-hidden="true" />}
           {guides.y !== null && <div className="snap-guide-h" style={{ top: guides.y }} aria-hidden="true" />}
           {slot &&
@@ -2003,10 +1993,10 @@ function PagePanel({ s }: { s: EditorStore }) {
   return (
     <section className="page-panel">
       <h3>Page</h3>
-      <div className="field">
+      <div className="field stack">
         <label title="What is drawn behind the UI">Background</label>
         <div className="seg page-seg" role="group" aria-label="Page background">
-          {(['none', 'theme', 'color'] as const).map((m) => (
+          {(['none', 'theme', 'aurora', 'color'] as const).map((m) => (
             <button
               key={m}
               type="button"
@@ -2016,7 +2006,7 @@ function PagePanel({ s }: { s: EditorStore }) {
                 set(m === 'none' ? (page?.blur ? { background: 'none', blur: page.blur } : null) : { background: m, color: m === 'color' ? joinColour(hex, alpha) : page?.color, blur: page?.blur }, `Page: ${m}`)
               }
             >
-              {m === 'none' ? 'None' : m === 'theme' ? 'Theme' : 'Colour'}
+              {m === 'none' ? 'None' : m === 'theme' ? 'Theme' : m === 'aurora' ? 'Aurora' : 'Colour'}
             </button>
           ))}
         </div>
@@ -2046,7 +2036,9 @@ function PagePanel({ s }: { s: EditorStore }) {
             ? blurNative
               ? 'See-through. Blur softens what shows behind it, including your desktop in the popped-out preview.'
               : 'See-through. Your desktop shows behind it in the popped-out preview; blurring the desktop needs Windows or macOS.'
-            : 'Painted behind the whole UI, in exports too.'}
+            : mode === 'aurora'
+              ? "The theme's colours drift slowly behind the UI. Glass surfaces show them through. Still for anyone who asks their system for less motion."
+              : 'Painted behind the whole UI, in exports too.'}
       </p>
     </section>
   )

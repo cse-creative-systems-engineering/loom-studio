@@ -11,7 +11,8 @@
   align-items: center;
   gap: 12px;
   padding: 0 8px 0 12px;
-  background: var(--bg);
+  /* On the Studio's wash, not a band over it. */
+  background: transparent;
   border-bottom: 1px solid var(--line);
   -webkit-app-region: drag;
 }
@@ -98,7 +99,8 @@
 .mode-switch button.on { background: var(--panel-2); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2), 0 1px 2px rgba(0, 0, 0, 0.4); }
 
 /* Small segmented groups: theme swatches, target. */
-.seg { display: flex; padding: 2px; gap: 1px; border: 1px solid var(--line); border-radius: 7px; }
+/* A segmented switch is a well; the chosen segment is raised out of it. */
+.seg { display: flex; padding: 2px; gap: 1px; border: 1px solid var(--line); border-radius: 7px; background: rgba(0, 0, 0, 0.22); box-shadow: var(--well-shadow); }
 
 .seg button {
   height: 22px;
@@ -115,7 +117,7 @@
 }
 
 .seg button:hover { color: var(--ink); }
-.seg button.on { background: var(--panel-2); color: var(--ink); }
+.seg button.on { background: var(--raised); box-shadow: var(--raised-shadow); color: var(--ink); }
 
 .theme-swatch {
   width: 9px;
@@ -157,10 +159,11 @@
   display: flex;
   flex-direction: column;
   padding: 4px;
-  background: var(--panel);
-  border: 1px solid var(--line-2);
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
   border-radius: 9px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--glass-hi), var(--shadow);
 }
 
 .export-menu button {
@@ -193,11 +196,11 @@
   align-items: center;
   gap: 2px;
   padding: 3px;
-  background: rgba(20, 24, 36, 0.86);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--line-2);
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
   border-radius: 10px;
-  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.8);
+  box-shadow: var(--glass-hi), 0 10px 30px -12px rgba(0, 0, 0, 0.8);
 }
 
 .dock-group { display: flex; align-items: center; gap: 1px; }
@@ -248,7 +251,7 @@
 /* The panels float as cards on the backdrop, with the work between them.
    Borders between regions became space and elevation: the shell reads as
    three objects, not a spreadsheet of rules. */
-.loom .body { gap: 6px; padding: 0 6px 6px; background: var(--bg); }
+.loom .body { gap: 6px; padding: 0 6px 6px; background: transparent; }
 .titlebar { border-bottom-color: transparent; }
 
 .loom .toolbox,
@@ -259,11 +262,17 @@
   overflow: hidden;
 }
 
+/* The side panels are glass over the Studio's wash: lit along the top, the
+   colour faintly through them. The canvas between them stays nearly opaque:
+   the design is the subject, not the chrome. */
 .loom .toolbox,
 .loom .inspector {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 120px), var(--panel);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 32px -18px rgba(0, 0, 0, 0.9);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 140px), var(--glass);
+  backdrop-filter: var(--glass-blur);
+  border-color: var(--glass-edge);
+  box-shadow: var(--glass-hi), var(--glass-depth);
 }
+.loom .canvas-wrap { border-color: var(--glass-edge); box-shadow: var(--glass-hi), var(--glass-depth); }
 
 /* Previewing is the running app: edge to edge, nothing floating around it. */
 .loom.previewing .body { padding: 0; gap: 0; }
@@ -426,10 +435,12 @@
   z-index: 60;
   width: 256px;
   padding: 10px 12px 12px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 60px), var(--panel-2);
-  border: 1px solid var(--line-2);
+  /* The Studio's glass, denser: it floats over the design and must read. */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 60px), rgba(15, 16, 22, 0.88);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
   border-radius: 12px;
-  box-shadow: 0 18px 44px -14px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--glass-hi), 0 18px 44px -14px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.4);
   pointer-events: none;
   animation: card-in 120ms ease-out;
 }
@@ -493,3 +504,8 @@
 .tb-run:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); }
 .tb-run:disabled { opacity: 0.4; cursor: default; }
 .tb-run.on { color: #fff; background: #d6433b; border-color: transparent; }
+
+/* Page background: four choices on their own row, sharing it evenly. */
+.field.stack { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
+.field.stack > :nth-child(n + 2) { grid-column: 1; }
+.page-seg button { flex: 1; min-width: 0; }

@@ -1,5 +1,7 @@
+import { iconMarkup } from './render/icons'
+
 /**
- * Shared inspector primitives.
+ * Shared Studio primitives.
  *
  * Extracted so the effects panel can reuse the same controls the property
  * inspector already uses, rather than growing a second look-alike switch that
@@ -18,5 +20,47 @@ export function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: 
     >
       <span className="knob" />
     </button>
+  )
+}
+
+/** A tool's own drawing (toolbox, layers, inspector header, context menu). */
+export function Glyph({ markup, size = 14 }: { markup: string; size?: number }) {
+  return (
+    <svg
+      className="ico glyph"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      // Compile-time constants from tool-icons.ts, never user input.
+      dangerouslySetInnerHTML={{ __html: markup }}
+    />
+  )
+}
+
+/** One icon from Loom's own set, for the chrome: the same family the output uses. A missing name throws. */
+export function Ico({ name, size = 14 }: { name: string; size?: number }) {
+  const markup = iconMarkup(name)
+  if (!markup) throw new Error(`chrome icon missing from the set: ${name}`)
+  return (
+    <svg
+      className="ico"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      // Compile-time constants from icons.ts, never user input.
+      dangerouslySetInnerHTML={{ __html: markup }}
+    />
   )
 }
