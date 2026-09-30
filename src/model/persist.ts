@@ -168,6 +168,12 @@ export function validate(input: unknown): Validated {
     if ('locked' in node && typeof node.locked !== 'boolean') {
       issues.push({ path: `$.nodes.${id}.locked`, message: `expected boolean, got ${typeof node.locked}` })
     }
+    // The author's name for the node (Layers): a short string, or nothing.
+    let name: string | undefined
+    if ('name' in node && node.name !== undefined) {
+      if (typeof node.name === 'string' && node.name.trim() !== '') name = node.name.trim().slice(0, 80)
+      else if (typeof node.name !== 'string') issues.push({ path: `$.nodes.${id}.name`, message: `expected string, got ${typeof node.name} (dropped)` })
+    }
     // Atmosphere + paint order survive the round trip: effects are
     // re-normalized (renderer would anyway), z is clamped to range.
     // Without this, styling work silently vanishes on every save/load.
@@ -325,6 +331,7 @@ export function validate(input: unknown): Validated {
       flow: node.flow === true,
       visible: node.visible !== false,
       locked: node.locked === true,
+      ...(name ? { name } : {}),
       opacity,
       effects,
       z,

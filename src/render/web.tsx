@@ -421,7 +421,15 @@ function applyCommonStyle(
     s.border = `${bw >= 0 ? bw : 1}px solid ${bd || t.border}`
   }
   const shadow = str(p.shadow)
-  if (shadow && shadow !== 'none') s.boxShadow = t[`shadow${shadow.charAt(0).toUpperCase()}${shadow.slice(1)}` as keyof Theme] as string
+  if (shadow && shadow !== 'none') {
+    const chosen = t[`shadow${shadow.charAt(0).toUpperCase()}${shadow.slice(1)}` as keyof Theme] as string
+    // On glass the default elevation IS the material's own shadow, and any
+    // other elevation keeps the lit top edge: replacing the whole shadow
+    // turned every glass panel back into a flat box.
+    const glass = nodeType === 'Panel' ? p.glass === true || p.surface === 'glass' : GLASS_SURFACES.has(nodeType)
+    if (!glass) s.boxShadow = chosen
+    else if (shadow !== 'md') s.boxShadow = `${t.glassHighlight}, ${chosen}`
+  }
 
   // --- spacing: `padding` is the shorthand, X/Y are the override ---
   const pad = num(p.padding, UNSET)
@@ -464,8 +472,12 @@ function applyCommonStyle(
   // item alignment only, handled above: a row aligned to the end used to
   // right-align every line of text inside it, down to a chat bubble.
   const align = str(p.align)
-  const alignOptions = getComponent(nodeType)?.props.align?.options ?? []
-  const textual = alignOptions.includes('left') || alignOptions.includes('right') || alignOptions.includes('justify')
+  const alignSpec = getComponent(nodeType)?.props.align
+  const alignOptions = alignSpec?.options ?? []
+  // An `align` filed under Layout is geometry (where a part sits: a settings
+  // row's control), never text alignment, even when its words are left/right:
+  // read as text it right-aligned every settings label.
+  const textual = alignSpec?.group !== 'Layout' && (alignOptions.includes('left') || alignOptions.includes('right') || alignOptions.includes('justify'))
   const flexBox = s.display === 'flex' || s.display === 'inline-flex'
   if (align && (textual || !flexBox)) {
     s.textAlign = align as React.CSSProperties['textAlign']
@@ -539,7 +551,44 @@ function applyCommonStyle(
   else if (str(p.overflow) === 'hidden') s.overflow = 'hidden'
 }
 
-function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties {
+/**
+ * Components whose body is a SURFACE, drawn in the theme's glass material.
+ * Panel only when its `surface` is glass (the default); the rest always.
+ */
+const GLASS_SURFACES = new Set([
+  'Card', 'Tabs', 'Modal', 'Drawer', 'Toolbar', 'StatusBar', 'HeaderBar', 'FooterBar',
+  'SettingsSection', 'SidebarPanel', 'KpiCard', 'DataCard', 'Menu', 'CommandBar', 'ConfirmDialog',
+  'AccordionItem',
+])
+
+function isGlass(node: Node): boolean {
+  if (node.type === 'Panel') return node.props.glass === true || node.props.surface === 'glass'
+  return GLASS_SURFACES.has(node.type)
+}
+
+/** True when a glass surface encloses `id`: its own glass is then the raised kind. */
+function onGlass(doc: Document, id: NodeId): boolean {
+  for (let p = parentOf(doc, id); p; p = parentOf(doc, p)) {
+    const n = doc.nodes[p]
+    if (n && isGlass(n)) return true
+  }
+  return false
+}
+
+/**
+ * Dress `s` in the theme's glass. `raised` is a surface on a surface: the
+ * lighter fill, no second blur (the outer glass is the backdrop root, so a
+ * nested blur would only blur its siblings) and no second drop shadow.
+ * `edge: false` leaves the border to the caller (a bar keeps its one rule).
+ */
+function glassSurface(s: React.CSSProperties, t: Theme, raised: boolean, opts: { edge?: boolean; shadow?: boolean } = {}): void {
+  s.background = raised ? t.glassFillRaised : t.glassFill
+  if (!raised) s.backdropFilter = `blur(${t.glassBlur}px) saturate(160%)`
+  if (opts.edge !== false) s.border = `1px solid ${t.glassEdge}`
+  s.boxShadow = raised || opts.shadow === false ? t.glassHighlight : `${t.glassHighlight}, ${t.glassShadow}`
+}
+
+function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): React.CSSProperties {
   const p = node.props
   const spec = getComponent(node.type)
   if (!spec) throw new Error(`unknown component: ${node.type}`)
@@ -572,14 +621,12 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.display = 'flex'
       s.flexDirection = p.direction === 'row' ? 'row' : 'column'
       s.gap = px(p.gap, t.space3)
-      s.background = glass
-        ? t.surfaceGlass
-        : p.surface === 'gradient'
-          ? `linear-gradient(140deg, ${t.surface}, ${t.bg})`
-          : t.surface
-      s.border = `1px solid ${t.border}`
-      s.backdropFilter = glass ? 'blur(18px) saturate(140%)' : undefined
-      s.boxShadow = t.shadowMd
+      if (glass) glassSurface(s, t, raised)
+      else {
+        s.background = p.surface === 'gradient' ? `linear-gradient(140deg, ${t.surface}, ${t.bg})` : t.surface
+        s.border = `1px solid ${t.border}`
+        s.boxShadow = t.shadowMd
+      }
       // The generic pass treats `shadow: 'none'` as "not set", because for most
       // components no shadow IS the default. A panel defaults to `md`, so
       // 'none' has to be said out loud here or the elevation could never be
@@ -672,7 +719,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       // The treatments a text field actually comes in. `default` is the
       // outlined surface the component has always drawn.
       const variants: Record<string, React.CSSProperties> = {
-        default: { background: t.surface, border: `1px solid ${t.borderStrong}` },
+        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
+        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
         primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
         secondary: { background: t.bg, border: 'none' },
         ghost: { background: 'transparent', border: `1px solid ${t.border}` },
@@ -727,20 +775,21 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'Card': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space3)
       s.padding = px(p.padding, t.space4); s.borderRadius = px(p.radius, t.radiusLg)
-      s.background = t.surface; s.border = `1px solid ${t.border}`
-      s.boxShadow = p.elevation === 'none' ? undefined : p.elevation === 'sm' ? t.shadowSm : p.elevation === 'lg' ? t.shadowLg : t.shadowMd
+      glassSurface(s, t, raised, { shadow: p.elevation !== 'none' })
+      if (!raised && p.elevation === 'lg') s.boxShadow = `${t.glassHighlight}, ${t.shadowLg}`
       break
     }
     case 'Tabs': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space2)
       s.padding = `${t.space3}px`; s.borderRadius = `${t.radiusLg}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`
+      glassSurface(s, t, raised)
       break
     }
     case 'TabPanel': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = `${t.space2}px`
+      // A page OF its tab set, not a surface of its own: the Tabs is the
+      // frame (a black box inside the glass read as a hole in it).
       s.padding = px(p.padding, t.space3); s.borderRadius = `${t.radiusMd}px`
-      s.background = t.bg; s.border = `1px solid ${t.border}`
       break
     }
     case 'Accordion': {
@@ -749,8 +798,10 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     }
     case 'AccordionItem': {
       s.display = 'flex'; s.flexDirection = 'column'
-      s.borderRadius = `${t.radiusMd}px`; s.background = t.surface
-      s.border = `1px solid ${t.border}`
+      s.borderRadius = `${t.radiusMd}px`
+      // Each section is a surface: glass, raised on a glass parent, and no
+      // drop shadow of its own so a stack of them stays calm.
+      glassSurface(s, t, raised, { shadow: false })
       break
     }
     case 'Modal': {
@@ -765,14 +816,19 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const [mpad, mgap] = mSizes[str(p.size)] ?? mSizes.md
       s.gap = `${mgap}px`
       s.width = px(p.width, 480); s.padding = `${mpad}px`
-      s.borderRadius = `${t.radiusLg}px`; s.background = t.surface
-      s.border = `1px solid ${t.borderStrong}`; s.boxShadow = t.shadowLg
+      s.borderRadius = `${t.radiusLg}px`
+      glassSurface(s, t, raised)
+      // A dialog sits over its own scrim so it can be READ: translucent over a
+      // darkened page it went muddy grey. It keeps the lit edge and depth, on an
+      // opaque fill.
+      s.background = t.surface
+      if (!raised) s.boxShadow = `${t.glassHighlight}, ${t.shadowLg}`
       break
     }
     case 'Drawer': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = `${t.space3}px`
       s.width = px(p.width, 320); s.padding = `${t.space4}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`
+      glassSurface(s, t, raised)
       break
     }
     case 'Section': {
@@ -825,8 +881,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const [tpy, tpxv, tfs] = tSizes[str(p.size)] ?? tSizes.md
       s.gap = px(p.gap, t.space2); s.padding = `${tpy}px ${tpxv}px`
       s.fontSize = `${tfs}px`
-      s.borderRadius = `${t.radiusMd}px`; s.background = t.surface
-      s.border = `1px solid ${t.border}`
+      s.borderRadius = `${t.radiusMd}px`
+      glassSurface(s, t, raised, { shadow: false })
       break
     }
     case 'StatusBar': {
@@ -836,8 +892,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       // A status bar reports a condition, so `tone` colours it and `neutral`
       // stays the quiet default it has always been.
       s.color = p.tone === 'neutral' ? t.textSecondary : toneColor(t, str(p.tone))
-      s.background = t.surface
-      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.border}`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.glassEdge}`
       break
     }
     case 'Hero': {
@@ -851,16 +907,17 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'HeaderBar': {
       s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'
       s.gap = px(p.gap, t.space3); s.height = px(p.height, 56)
-      s.padding = `0 ${t.space4}px`; s.background = t.surface
-      s.borderBottom = p.divider === false ? 'none' : `1px solid ${t.border}`
+      s.padding = `0 ${t.space4}px`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderBottom = p.divider === false ? 'none' : `1px solid ${t.glassEdge}`
       break
     }
     case 'FooterBar': {
       s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'
       s.height = px(p.height, 48); s.padding = `0 ${t.space4}px`
       s.fontSize = `${t.textXs}px`; s.color = t.textMuted
-      s.background = t.surface
-      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.border}`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderTop = p.divider === false ? 'none' : `1px solid ${t.glassEdge}`
       break
     }
     case 'SettingsSection': {
@@ -869,8 +926,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.gap = px(p.gap, t.space2)
       s.padding = `${t.space4}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.border = `1px solid ${p.danger === true ? t.danger : t.border}`
-      s.background = t.surface
+      glassSurface(s, t, raised)
+      if (p.danger === true) s.border = `1px solid ${t.danger}`
       s.width = px(p.width, 640)
       break
     }
@@ -906,7 +963,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'SidebarPanel': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, t.space2)
       s.width = px(p.width, 240); s.padding = `${t.space4}px`
-      s.background = t.surface; s.borderRight = `1px solid ${t.border}`
+      glassSurface(s, t, raised, { edge: false, shadow: false })
+      s.borderRight = `1px solid ${t.glassEdge}`
       break
     }
     // --- conversation ---------------------------------------------------
@@ -1008,7 +1066,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.padding = `${ipy}px ${ipx}px`; s.borderRadius = `${t.radiusMd}px`
       // The treatments a field actually comes in, named as they are elsewhere.
       const iVariants: Record<string, React.CSSProperties> = {
-        default: { background: t.surface, border: `1px solid ${t.borderStrong}` },
+        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
+        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
         primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
         secondary: { background: t.bg, border: `1px solid ${t.border}` },
         ghost: { background: 'transparent', border: `1px solid ${t.border}` },
@@ -1029,7 +1088,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.width = px(p.width, 280); s.padding = `${apy}px ${apx}px`
       s.borderRadius = `${t.radiusMd}px`
       const aVariants: Record<string, React.CSSProperties> = {
-        default: { background: t.surface, border: `1px solid ${t.borderStrong}` },
+        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
+        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
         primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
         secondary: { background: t.bg, border: `1px solid ${t.border}` },
         ghost: { background: 'transparent', border: `1px solid ${t.border}` },
@@ -1102,8 +1162,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'Segmented': {
       s.display = 'inline-flex'; s.gap = '2px'
       s.padding = str(p.size) === 'sm' ? '2px' : str(p.size) === 'lg' ? '4px' : '3px'
-      s.borderRadius = `${t.radiusMd}px`; s.background = t.bg
-      s.border = `1px solid ${t.border}`
+      s.borderRadius = `${t.radiusMd}px`; s.background = t.wellFill
+      s.border = `1px solid ${t.wellEdge}`; s.boxShadow = t.wellShadow
       break
     }
     case 'TagInput': case 'OtpInput': {
@@ -1115,7 +1175,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       }
       const [vpy, vpx, vfs] = vSizes[str(p.size)] ?? vSizes.md
       s.padding = `${vpy}px ${vpx}px`; s.borderRadius = `${t.radiusMd}px`
-      s.border = `1px solid ${t.borderStrong}`; s.background = t.surface
+      s.border = `1px solid ${t.wellEdge}`; s.background = t.wellFill; s.boxShadow = t.wellShadow
       s.fontSize = `${vfs}px`; s.color = t.textPrimary
       break
     }
@@ -1292,8 +1352,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       s.gap = `${t.space2}px`
       s.padding = size === 'sm' ? `${t.space3}px` : size === 'lg' ? `${t.space5}px` : `${t.space4}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.border = `1px solid ${t.border}`
-      s.background = t.surface
+      glassSurface(s, t, raised)
       s.width = px(p.width, 220)
       break
     }
@@ -1403,7 +1462,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const size = str(p.size) || 'md'
       s.padding = size === 'sm' ? `${t.space3}px` : size === 'lg' ? `${t.space5}px` : `${t.space4}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`; s.boxShadow = t.shadowSm
+      glassSurface(s, t, raised)
       s.fontSize = `${size === 'sm' ? t.textSm : size === 'lg' ? t.textLg : t.textMd}px`
       break
     }
@@ -1453,8 +1512,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     }
     case 'Menu': {
       s.display = 'flex'; s.flexDirection = 'column'; s.gap = px(p.gap, 2)
-      s.padding = `${t.space2}px`; s.background = t.surface
-      s.border = `1px solid ${t.border}`; s.borderRadius = `${t.radiusMd}px`
+      s.padding = `${t.space2}px`; s.borderRadius = `${t.radiusMd}px`
+      glassSurface(s, t, raised)
       // A context menu is as wide as its longest row; a designer who knows the
       // width sets it, and the rest keep hugging their content.
       const w = num(p.width, -1)
@@ -1465,8 +1524,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
     case 'CommandBar': {
       s.display = 'flex'; s.flexDirection = 'row'; s.alignItems = 'center'
       s.gap = px(p.gap, 8); s.padding = `${t.space2}px`
-      s.background = t.surface; s.border = `1px solid ${t.border}`
       s.borderRadius = `${t.radiusMd}px`
+      glassSurface(s, t, raised, { shadow: false })
       break
     }
     case 'TabBar': {
@@ -1638,8 +1697,10 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
       const size = str(p.size) || 'md'
       s.padding = size === 'sm' ? `${t.space4}px` : size === 'lg' ? `${t.space6}px` : `${t.space5}px`
       s.borderRadius = `${t.radiusLg}px`
-      s.background = t.surface; s.border = `1px solid ${t.borderStrong}`
-      s.boxShadow = t.shadowLg; s.width = px(p.width, 400)
+      glassSurface(s, t, raised)
+      s.background = t.surface // over a scrim: opaque, as Modal
+      if (!raised) s.boxShadow = `${t.glassHighlight}, ${t.shadowLg}`
+      s.width = px(p.width, 400)
       s.fontSize = `${size === 'sm' ? t.textSm : t.textMd}px`
       break
     }
@@ -1696,12 +1757,51 @@ function styleFor(node: Node, flowChild: boolean, t: Theme): React.CSSProperties
  * colours they need come from here, so there is exactly one source of truth
  * for both.
  */
+/** A select's chevron, as a data URL in the theme's muted ink. */
+function chevronUrl(ink: string): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='${ink}' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><path d='M4.5 6.5 8 10l3.5-3.5'/></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+}
+
+/**
+ * The drawn box beside a visually hidden native checkbox or radio.
+ *
+ * The OS-drawn control (a white square on a dark design, a different one on
+ * every platform) was one of the loudest "home made" tells. The native input
+ * stays, for forms, keyboard and assistive tech; it is hidden by the
+ * behaviour stylesheet (`data-loom-ctl`) and this box is drawn from its
+ * state with `:checked + [data-loom-box]`, so it is right in the canvas, the
+ * preview and an export with no script at all. MUST directly follow its
+ * input. Its look lives in the stylesheet, driven by theme variables.
+ */
+function ControlBox({ kind }: { kind: 'check' | 'radio' }) {
+  return (
+    <span data-loom-box={kind} aria-hidden="true">
+      {kind === 'check' ? (
+        <svg viewBox="0 0 16 16">
+          <path data-loom-tick="" d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+          <path data-loom-dash="" d="M4 8h8" />
+        </svg>
+      ) : null}
+    </span>
+  )
+}
+
 function themeVars(t: Theme): React.CSSProperties {
   return {
     '--loom-accent': t.accent,
     '--loom-on': t.accent,
     '--loom-off': t.borderStrong,
     '--loom-on-bg': `${t.accent}1f`,
+    '--loom-on-accent': t.textOnAccent,
+    '--loom-well': t.wellFill,
+    '--loom-well-shadow': t.wellShadow,
+    '--loom-knob': t.knobFill,
+    '--loom-knob-shadow': t.knobShadow,
+    '--loom-raised': t.raisedFill,
+    '--loom-raised-shadow': t.raisedShadow,
+    '--loom-chevron': chevronUrl(t.textMuted),
+    colorScheme: t.colorScheme,
     '--loom-on-fg': t.accent,
     '--loom-surface': t.surface,
     '--loom-text': t.textPrimary,
@@ -1732,7 +1832,7 @@ function renderPreviewNode(
   // Where a control sits among its siblings is what makes a group work: the
   // Nth TabPanel belongs to the Nth tab.
   const parentId = parentOf(ctx.doc, node.id)
-  const style = styleFor(node, flowChild, t)
+  const style = styleFor(node, flowChild, t, onGlass(ctx.doc, node.id))
   // Theme colours reach the behaviour stylesheet as custom properties, so the
   // rules that draw a pressed/toggled/active state can reference them without
   // the renderer hard-coding a second copy of the theme. Inherited, so one
@@ -1974,7 +2074,7 @@ function renderPreviewBody(
                   aria-label={status}
                   style={{ color: status === 'read' ? t.accent : t.textMuted }}
                 >
-                  {status === 'sending' ? '○' : status === 'sent' ? '✓' : '✓✓'}
+                  <IconGlyph value={status === 'sending' ? 'circle' : status === 'sent' ? 'check' : 'check-double'} size={12} />
                 </span>
               ) : null}
             </span>
@@ -2231,19 +2331,19 @@ function renderPreviewBody(
           cursor: 'pointer',
           ...(full ? { flex: 1 } : {}),
         }
-        if (variant === 'enclosed') {
-          return { ...base, padding: '5px 12px', background: on ? t.surface : 'transparent', boxShadow: on ? t.shadowSm : 'none' }
-        }
-        if (variant === 'pills') {
-          return { ...base, padding: '5px 12px', background: on ? `${t.accent}1f` : 'transparent' }
-        }
-        return { ...base, padding: '4px 10px', background: on ? `${t.accent}14` : 'transparent' }
+        // The chosen tab's FILL is the state stylesheet's (data-loom-active,
+        // from --loom-tab-on below), so it moves with a click; inline, it
+        // stayed on the authored tab while the colour moved.
+        return { ...base, padding: variant === 'underline' ? '4px 10px' : '5px 12px' }
       }
+      const tabOn: Record<string, string> = variant === 'enclosed'
+        ? { '--loom-tab-on': t.raisedFill, '--loom-tab-shadow': t.raisedShadow }
+        : { '--loom-tab-on': `${t.accent}${variant === 'pills' ? '1f' : '14'}` }
       // The strip owns the group; each tab is a real button so it is
       // clickable, focusable, and reports its selected state to assistive tech.
       return (
         <div key={key} style={style} data-loom-tabs={node.id} data-loom-active={String(active)}>
-          <div role="tablist" style={strip}>
+          <div role="tablist" style={{ ...strip, ...tabOn }}>
             {tabs.map((tb, i) => (
               <button
                 key={i}
@@ -2262,11 +2362,14 @@ function renderPreviewBody(
       )
     }
     case 'TabPanel': {
-      // The Nth TabPanel is the Nth tab's content. It ships SHOWN so a panel
-      // dropped on its own is never invisible, and hidden the moment its tab
-      // is switched away from.
+      // The Nth TabPanel is the Nth tab's content. Inside a Tabs, only the
+      // ACTIVE tab's panel is shown (the runtime switches it on click); every
+      // panel used to ship shown, so a tab set drew all its pages stacked.
+      // A panel on its own is shown, never invisible.
       const owner = parentId ? ctx.doc.nodes[parentId] : undefined
-      const index = owner?.type === 'Tabs' ? Math.max(0, tabPanelsOf(ctx.doc, owner, ctx.mode === 'preview').indexOf(node.id)) : 0
+      const inTabs = owner?.type === 'Tabs'
+      const index = inTabs ? Math.max(0, tabPanelsOf(ctx.doc, owner, ctx.mode === 'preview').indexOf(node.id)) : 0
+      const shown = !inTabs || index === num(owner.props.active, 0)
       const aria = str(p.ariaLabel)
       return (
         <div
@@ -2274,10 +2377,12 @@ function renderPreviewBody(
           style={style}
           role="tabpanel"
           aria-label={aria || str(p.title) || undefined}
-          data-loom-shown="1"
+          data-loom-shown={shown ? '1' : '0'}
           {...behaviourAttrs({ role: 'panel', group: parentId, index })}
         >
-          {str(p.title) ? (
+          {/* In a tab set the tab's label IS the title: repeating it inside
+              the page was noise. A lone panel keeps its heading. */}
+          {str(p.title) && !inTabs ? (
             <div
               style={{
                 fontSize: num(p.fontSize, -1) > 0 ? 'inherit' : `${t.textSm}px`,
@@ -2352,7 +2457,7 @@ function renderPreviewBody(
           <div data-loom-summary role="button" tabIndex={0} aria-expanded={open} style={summaryStyle}>
             <span>{str(p.title)}</span>
             {icon === 'none' ? null : (
-              <span data-loom-caret style={{ color: t.textMuted }}>{icon === 'plus' ? '+' : '▸'}</span>
+              <span data-loom-caret style={{ color: t.textMuted }}><IconGlyph value={icon === 'plus' ? 'plus' : 'chevron-right'} size={14} /></span>
             )}
           </div>
           <div data-loom-body style={{ padding: `0 ${t.space3}px ${t.space3}px` }}>{children}</div>
@@ -2395,9 +2500,9 @@ function renderPreviewBody(
                 data-loom-b="press"
                 data-loom-close={node.id}
                 aria-label="close"
-                style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: `${t.textLg}px`, lineHeight: 1 }}
+                style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', display: 'inline-flex', padding: '2px', lineHeight: 1 }}
               >
-                ×
+                <IconGlyph value="x" size={16} />
               </button>
             ) : null}
           </div>
@@ -2805,7 +2910,7 @@ function renderPreviewBody(
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: `${t.space2}px`, padding: `${t.space3}px ${t.space4}px`, borderBottom: `1px solid ${t.border}` }}>
-              <span aria-hidden="true" style={{ color: t.textMuted }}>⌕</span>
+              <span aria-hidden="true" style={{ color: t.textMuted }}><IconGlyph value="search" size={16} /></span>
               <input
                 type="text"
                 data-loom-palette-input
@@ -3013,7 +3118,7 @@ function renderPreviewBody(
           role={live ? (str(p.tone) === 'danger' ? 'alert' : 'status') : undefined}
           aria-live={live ? 'polite' : undefined}
         >
-          {icon ? <span aria-hidden="true">{icon}</span> : null}
+          {icon ? <span aria-hidden="true" style={{ display: 'inline-flex' }}><IconGlyph value={icon} size={16} /></span> : null}
           <span>{str(p.text)}</span>
           {children}
         </div>
@@ -3053,15 +3158,16 @@ function renderPreviewBody(
       // than a repaint that the browser undoes.
       const accent = str(p.tone) === 'inherit' ? t.accent : toneColor(t, str(p.tone))
       return (
-        <label key={key} style={style} {...behaviourAttrs({ role: 'check', on })}>
+        <label key={key} style={{ ...style, '--loom-tick': accent } as React.CSSProperties} {...behaviourAttrs({ role: 'check', on })}>
           <input
             type="checkbox"
+            data-loom-ctl=""
             defaultChecked={on}
             disabled={off}
             required={p.required === true}
             aria-label={str(p.ariaLabel) || undefined}
-            style={{ accentColor: accent, width: 16, height: 16 }}
           />
+          <ControlBox kind="check" />
           <span>{str(p.label)}</span>
         </label>
       )
@@ -3094,7 +3200,8 @@ function renderPreviewBody(
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: `${fs}px`, color: t.textPrimary }}
                 {...behaviourAttrs({ role: 'radio', group: node.id, index: i, on: str(p.value) === value })}
               >
-                <input type="radio" name={node.id} value={value} defaultChecked={str(p.value) === value} disabled={p.disabled === true || o.disabled === true} required={p.required === true} />
+                <input type="radio" data-loom-ctl="" name={node.id} value={value} defaultChecked={str(p.value) === value} disabled={p.disabled === true || o.disabled === true} required={p.required === true} />
+                <ControlBox kind="radio" />
                 <span>{str(o.label)}</span>
               </label>
             )
@@ -3121,7 +3228,7 @@ function renderPreviewBody(
               lines up. */}
           <input type="checkbox" defaultChecked={on} disabled={p.disabled === true} tabIndex={-1} aria-hidden="true" style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }} />
           <span data-loom-track style={{ width: '34px', height: '20px', borderRadius: '999px', display: 'inline-flex', alignItems: 'center', padding: '2px' }}>
-            <span data-loom-knob style={{ width: '14px', height: '14px', borderRadius: '999px', background: '#fff', display: 'block' }} />
+            <span data-loom-knob style={{ width: '14px', height: '14px', borderRadius: '999px', display: 'block' }} />
           </span>
           <span>{str(p.label)}</span>
         </label>
@@ -3148,7 +3255,11 @@ function renderPreviewBody(
             disabled={off}
             aria-label={str(p.ariaLabel) || undefined}
             data-loom-output={showValue ? readoutId : undefined}
-            style={{ accentColor: accent, height: str(p.size) === 'sm' ? 16 : str(p.size) === 'lg' ? 28 : 20 }}
+            data-loom-range=""
+            // The track is a well, filled with the tone up to the value
+            // (--loom-fill, kept current by the runtime as it moves), and the
+            // thumb is an extruded knob: see the state stylesheet.
+            style={{ '--loom-tick': accent, '--loom-fill': `${max > min ? Math.round(((v - min) / (max - min)) * 100) : 0}%`, height: str(p.size) === 'sm' ? 16 : str(p.size) === 'lg' ? 28 : 20 } as React.CSSProperties}
           />
           {showValue ? <span id={readoutId} data-loom-readout>{v}</span> : null}
         </label>
@@ -3163,6 +3274,7 @@ function renderPreviewBody(
       return (
         <select
           key={key}
+          data-loom-dropdown={multi ? undefined : ''}
           style={multi ? { ...style, height: 'auto' } : style}
           defaultValue={multi ? opts.filter((o) => o === str(p.value)) : str(p.value)}
           multiple={multi}
@@ -3192,7 +3304,7 @@ function renderPreviewBody(
             style={{ background: 'transparent', border: 'none', outline: 'none', color: t.textPrimary, fontSize: `${fs}px`, width: '140px' }}
           />
           <datalist id={`${node.id}-dl`}>{opts.map((o) => <option key={o} value={o} />)}</datalist>
-          <span aria-hidden="true" style={{ color: t.textMuted }}>▾</span>
+          <span aria-hidden="true" style={{ color: t.textMuted }}><IconGlyph value="chevron-down" size={14} /></span>
         </div>
       )
     }
@@ -3218,7 +3330,7 @@ function renderPreviewBody(
       const fs = str(p.size) === 'sm' ? t.textXs : str(p.size) === 'lg' ? t.textMd : t.textSm
       return (
         <label key={key} style={style}>
-          {str(p.icon) ? <span aria-hidden="true">{str(p.icon)}</span> : null}
+          {str(p.icon) ? <span aria-hidden="true" style={{ display: 'inline-flex' }}><IconGlyph value={str(p.icon)} size={14} /></span> : null}
           <input
             type="search"
             placeholder={str(p.placeholder)}
@@ -3335,7 +3447,7 @@ function renderPreviewBody(
             disabled={off}
             style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
           />
-          <span aria-hidden="true">⤴</span>
+          <span aria-hidden="true"><IconGlyph value="upload" size={18} /></span>
           <span>{str(p.label)}</span>
           {str(p.hint) ? <span style={{ fontSize: `${t.textXs}px`, color: t.textMuted }}>{str(p.hint)}</span> : null}
           {str(p.accept) ? <span style={{ fontSize: `${t.textXs}px`, color: t.textMuted }}>{str(p.accept)}</span> : null}
@@ -3373,7 +3485,7 @@ function renderPreviewBody(
             style={{ background: 'transparent', border: 'none', color: 'inherit', font: 'inherit', cursor: off ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', padding: 0 }}
           >
             <span>{str(p.label)}</span>
-            <span aria-hidden="true">▾</span>
+            <span aria-hidden="true"><IconGlyph value="chevron-down" size={14} /></span>
           </button>
           <div role="menu" data-loom-menu-panel={menuId} data-loom-open={open ? '1' : '0'} style={{ display: open ? 'flex' : 'none', flexDirection: 'column', gap: '2px', marginTop: '6px', padding: '4px', borderRadius: `${t.radiusMd}px`, background: t.surface, border: `1px solid ${t.border}`, boxShadow: t.shadowMd }}>
             {items.map((it) => (
@@ -3409,7 +3521,7 @@ function renderPreviewBody(
               data-loom-lit={i < v ? '1' : '0'}
               style={{ display: 'inline-block', color: i < v ? tone : t.textMuted }}
             >
-              ★
+              <StarShape />
             </span>
           ))}
           {p.showValue !== false ? (
@@ -3448,24 +3560,24 @@ function renderPreviewBody(
       return (
         <div
           key={key}
-          style={{ ...style, width: full ? '100%' : style.width }}
+          // `tone` tints the SELECTED option; `inherit` leaves it the raised
+          // neutral. The selected look itself lives in the state stylesheet
+          // (data-loom-seg), so it FOLLOWS the choice when one is clicked: as
+          // inline style it stayed on the authored option forever.
+          style={{ ...style, width: full ? '100%' : style.width, ...(str(p.tone) === 'inherit' ? {} : { '--loom-seg-on': `${tint}24` }) } as React.CSSProperties}
           role="radiogroup"
           aria-label={str(p.ariaLabel) || undefined}
         >
           {opts.map((o) => (
             <label
               key={o}
+              data-loom-seg=""
               {...behaviourAttrs({ role: 'radio', group: node.id, index: opts.indexOf(o), on: current === o })}
               style={{
                 fontSize: `${fs}px`,
                 fontWeight: t.weightMedium,
                 padding: str(p.size) === 'sm' ? '3px 9px' : str(p.size) === 'lg' ? '7px 15px' : '5px 12px',
                 borderRadius: `${t.radiusSm}px`,
-                // `tone` tints the SELECTED option; `inherit` leaves it the
-                // neutral surface it has always been.
-                background: current === o ? (str(p.tone) === 'inherit' ? t.surface : `${tint}1f`) : 'transparent',
-                color: current === o ? t.textPrimary : t.textMuted,
-                border: `1px solid ${current === o ? t.borderStrong : 'transparent'}`,
                 cursor: 'pointer',
                 textAlign: 'center',
                 // `fullWidth` means the options SHARE the control's width — the
@@ -3508,11 +3620,11 @@ function renderPreviewBody(
           data-loom-value-step={String(stepBy)}
         >
           {buttons ? (
-            <button type="button" {...stepRole} data-loom-nav="prev" disabled={off} aria-label="decrease" style={{ background: 'transparent', border: 'none', color: t.textSecondary, cursor: off ? 'not-allowed' : 'pointer' }}>−</button>
+            <button type="button" {...stepRole} data-loom-nav="prev" disabled={off} aria-label="decrease" style={{ background: 'transparent', border: 'none', color: t.textSecondary, cursor: off ? 'not-allowed' : 'pointer', display: 'inline-flex' }}><IconGlyph value="minus" size={14} /></button>
           ) : null}
           <span data-loom-spin style={{ fontFamily: t.fontMono }}>{start}</span>
           {buttons ? (
-            <button type="button" {...stepRole} data-loom-nav="next" disabled={off} aria-label="increase" style={{ background: 'transparent', border: 'none', color: t.textSecondary, cursor: off ? 'not-allowed' : 'pointer' }}>+</button>
+            <button type="button" {...stepRole} data-loom-nav="next" disabled={off} aria-label="increase" style={{ background: 'transparent', border: 'none', color: t.textSecondary, cursor: off ? 'not-allowed' : 'pointer', display: 'inline-flex' }}><IconGlyph value="plus" size={14} /></button>
           ) : null}
         </div>
       )
@@ -3534,7 +3646,8 @@ function renderPreviewBody(
               style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: `${fs}px`, color: t.textPrimary, cursor: 'pointer' }}
               {...behaviourAttrs({ role: 'check', group: node.id, index: items.indexOf(it) })}
             >
-              <input type="checkbox" disabled={p.disabled === true} />
+              <input type="checkbox" data-loom-ctl="" disabled={p.disabled === true} />
+              <ControlBox kind="check" />
               <span>{it}</span>
             </label>
           ))}
@@ -3597,7 +3710,8 @@ function renderPreviewBody(
               defaultValue={str(p.value)[i] ?? ''}
               disabled={p.disabled === true}
               aria-label={`digit ${i + 1}`}
-              style={{ width: `${box}px`, height: `${tall}px`, textAlign: 'center', fontSize: str(p.size) === 'sm' ? `${t.textMd}px` : `${t.textLg}px`, fontFamily: t.fontMono, borderRadius: `${t.radiusMd}px`, border: `1px solid ${t.borderStrong}`, background: t.surface, color: t.textPrimary }}
+              data-loom-well=""
+              style={{ width: `${box}px`, height: `${tall}px`, textAlign: 'center', fontSize: str(p.size) === 'sm' ? `${t.textMd}px` : `${t.textLg}px`, fontFamily: t.fontMono, borderRadius: `${t.radiusMd}px`, border: `1px solid ${t.wellEdge}`, background: t.wellFill, color: t.textPrimary }}
             />
           ))}
         </div>
@@ -3763,7 +3877,7 @@ function renderPreviewBody(
       )
     }
     case 'Tag':
-      return <span key={key} style={style}>{str(p.text)}{p.removable === true ? <span aria-hidden="true"> ×</span> : null}</span>
+      return <span key={key} style={style}>{str(p.text)}{p.removable === true ? <span aria-hidden="true" style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: '4px' }}><IconGlyph value="x" size={12} /></span> : null}</span>
     case 'Kbd': {
       // A chord is a LIST of keys, not a string: "Ctrl,K" is two caps with a
       // gap between them, and a single item stays a single cap.
@@ -3845,7 +3959,7 @@ function renderPreviewBody(
         >
           {searching && (
             <div style={{ display: 'flex', alignItems: 'center', gap: `${t.space2}px`, padding: `${t.space2}px ${t.space3}px`, borderBottom: line }}>
-              <span aria-hidden="true" style={{ color: t.textMuted }}>⌕</span>
+              <span aria-hidden="true" style={{ color: t.textMuted, display: 'inline-flex' }}><IconGlyph value="search" size={14} /></span>
               <input
                 type="search"
                 data-loom-filter={node.id}
@@ -3875,12 +3989,15 @@ function renderPreviewBody(
                 <tr>
                   {selectable && (
                     <th scope="col" {...part('header')} style={{ width: '38px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, textAlign: 'left', padding: rowPad, borderBottom: line }}>
-                      <input
-                        type="checkbox"
-                        data-loom-select-all={node.id}
-                        aria-label="Select all rows"
-                        style={{ accentColor: t.accent }}
-                      />
+                      <label style={{ display: 'inline-flex', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          data-loom-ctl=""
+                          data-loom-select-all={node.id}
+                          aria-label="Select all rows"
+                        />
+                        <ControlBox kind="check" />
+                      </label>
                     </th>
                   )}
                   {cols.map((c, ci) => (
@@ -3930,12 +4047,15 @@ function renderPreviewBody(
                 >
                   {selectable && (
                     <td {...part('cell')} style={{ padding: rowPad, borderBottom: line, width: '38px' }}>
-                      <input
-                        type="checkbox"
-                        data-loom-select={node.id}
-                        aria-label={`Select row ${i + 1}`}
-                        style={{ accentColor: t.accent }}
-                      />
+                      <label style={{ display: 'inline-flex', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          data-loom-ctl=""
+                          data-loom-select={node.id}
+                          aria-label={`Select row ${i + 1}`}
+                        />
+                        <ControlBox kind="check" />
+                      </label>
                     </td>
                   )}
                   {cols.map((c, ci) => (
@@ -3968,9 +4088,9 @@ function renderPreviewBody(
                           type="button"
                           aria-label={`Row actions for row ${i + 1}`}
                           data-loom-menu-trigger={rowMenu(i)}
-                          style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', padding: '2px 6px' }}
+                          style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', padding: '2px 6px', display: 'inline-flex' }}
                         >
-                          ⋯
+                          <IconGlyph value="more" size={16} />
                         </button>
                         <div
                           role="menu"
@@ -4008,7 +4128,7 @@ function renderPreviewBody(
       const risingIsGood = str(p.goodDirection) !== 'down'
       const good = tone === 'flat' ? null : (tone === 'up') === risingIsGood
       const deltaToneColour = good === null ? t.textMuted : good ? t.success : t.danger
-      const arrow = tone === 'up' ? '▲' : tone === 'down' ? '▼' : '■'
+      const arrow = <TrendMark trend={tone} />
       const deltaStyle = str(p.trendStyle) || 'plain'
       // A value that does not PARSE as a number is shown exactly as typed:
       // "$48.2k" is shorthand a designer chose, not something to reformat.
@@ -4031,11 +4151,11 @@ function renderPreviewBody(
               </span>
             ) : deltaStyle === 'badge' ? (
               <span {...part('delta')} style={{ alignSelf: 'flex-start', fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour, background: `${deltaToneColour}1e`, border: `1px solid ${deltaToneColour}44`, borderRadius: `${t.radiusFull}px`, padding: '1px 8px' }}>
-                {tone !== 'flat' ? <span aria-hidden="true">{arrow} </span> : null}{delta}
+                {tone !== 'flat' ? arrow : null}{delta}
               </span>
             ) : (
               <span {...part('delta')} style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightSemibold, color: deltaToneColour }}>
-                {deltaStyle === 'arrow' ? <span aria-hidden="true">{arrow} </span> : null}{delta}
+                {deltaStyle === 'arrow' ? arrow : null}{delta}
               </span>
             )
           ) : null}
@@ -4052,7 +4172,7 @@ function renderPreviewBody(
       const risingIsGood = str(p.goodDirection) !== 'down'
       const good = trend === 'flat' ? null : (trend === 'up') === risingIsGood
       const tone = good === null ? t.textMuted : good ? t.success : t.danger
-      const arrow = trend === 'up' ? '▲' : trend === 'down' ? '▼' : '■'
+      const arrow = <TrendMark trend={trend} />
       const points = numericList(p.points, p.pointsSep)
       const valueSize = size === 'sm' ? t.textXl : size === 'lg' ? t.textXxl : t.textXl
       const visual = str(p.visual) || 'sparkline'
@@ -4078,7 +4198,7 @@ function renderPreviewBody(
               {...part('delta')}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: `${t.textSm}px`, fontWeight: t.weightSemibold, color: tone }}
             >
-              <span aria-hidden="true">{arrow}</span>
+              {arrow}
               <span>{str(p.delta)}</span>
               {str(p.deltaLabel) ? (
                 <span {...part('caption')} style={{ fontWeight: t.weightNormal, color: t.textMuted, fontSize: `${t.textXs}px` }}>{str(p.deltaLabel)}</span>
@@ -4086,15 +4206,18 @@ function renderPreviewBody(
             </span>
           ) : null}
           {visual === 'sparkline' ? (
-            <Sparkline points={points} width={Number(p.width) || 220} height={visH} accent={accent} id={node.id} />
+            <Sparkline points={points} width={(Number(p.width) || 220) - 2 * ((size === 'sm' ? t.space3 : size === 'lg' ? t.space5 : t.space4) + 1)} height={visH} accent={accent} id={node.id} />
           ) : visual === 'bars' ? (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: visH }}>
+            // Stretched: the card's items align to the start, and a row of
+            // flex:1 bars with no width of its own drew nothing at all.
+            <div style={{ display: 'flex', alignItems: 'flex-end', alignSelf: 'stretch', gap: '3px', height: visH }}>
               {points.map((v, i) => {
                 const max = Math.max(...points, 1)
                 return (
                   <div
                     key={i}
-                    style={{ flex: 1, height: `${Math.max(3, (v / max) * visH)}px`, borderRadius: '2px', background: i === points.length - 1 ? accent : `${accent}66` }}
+                    // color-mix, not a hex suffix: an accent written as rgb() stays valid.
+                    style={{ flex: 1, height: `${Math.max(3, (v / max) * visH)}px`, borderRadius: '2px', background: i === points.length - 1 ? accent : `color-mix(in srgb, ${accent} 40%, transparent)` }}
                   />
                 )
               })}
@@ -4501,7 +4624,7 @@ function renderPreviewBody(
                   {...behaviourAttrs({ role: 'expand', group: node.id, index: i })}
                   style={{ color: t.textMuted, cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}
                 >
-                  {depth > 0 ? '└' : '▾'}
+                  {depth > 0 ? '└' : <IconGlyph value="chevron-down" size={12} />}
                 </span>
                 <span style={{ minWidth: 0, ...(truncate ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } : {}) }}>{leaf}</span>
               </div>
@@ -4841,6 +4964,7 @@ function renderPreviewBody(
               <span>Rows</span>
               <select
                 data-loom-pagesize-select=""
+                data-loom-dropdown=""
                 defaultValue={String(pageSize)}
                 aria-label="rows per page"
                 style={{
@@ -4907,7 +5031,7 @@ function renderPreviewBody(
                     border: `1px solid ${state === 'todo' ? t.borderStrong : t.accent}`,
                   }}
                 >
-                  {state === 'done' ? '✓' : p.showNumbers === false ? '' : n}
+                  {state === 'done' ? <IconGlyph value="check" size={12} /> : p.showNumbers === false ? '' : n}
                 </span>
                 <span style={{ fontSize: `${size === 'sm' ? t.textXs : size === 'lg' ? t.textMd : t.textSm}px`, color: state === 'todo' ? t.textMuted : t.textPrimary, fontWeight: state === 'now' ? t.weightSemibold : t.weightNormal, textAlign: vertical ? 'left' : 'center' }}>
                   {st}
@@ -5071,7 +5195,7 @@ function renderPreviewBody(
             )}
             <strong style={{ fontSize: size === 'sm' ? `${t.textXs}px` : `${t.textSm}px`, color: ink }}>{str(p.title)}</strong>
             {p.dismissible === true ? (
-              <button type="button" aria-label="dismiss" style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: bodyInk, cursor: 'pointer', padding: 0, lineHeight: 1 }}>×</button>
+              <button type="button" aria-label="dismiss" style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: bodyInk, cursor: 'pointer', padding: 0, lineHeight: 1, display: 'inline-flex' }}><IconGlyph value="x" size={14} /></button>
             ) : null}
           </div>
           <div style={{ fontSize: size === 'sm' ? `${t.textXs}px` : `${t.textSm}px`, color: bodyInk }}>{str(p.body)}</div>
@@ -5117,7 +5241,7 @@ function renderPreviewBody(
           {feedbackIcon(p, toneName, size === 'sm' ? 14 : 16, tone)}
           <span style={{ flex: 1, minWidth: 0 }}>{str(p.message)}</span>
           {p.dismissible === true ? (
-            <button type="button" data-loom-dismiss="" aria-label="dismiss" style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', padding: 0, lineHeight: 1 }}>×</button>
+            <button type="button" data-loom-dismiss="" aria-label="dismiss" style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', padding: 0, lineHeight: 1, display: 'inline-flex' }}><IconGlyph value="x" size={14} /></button>
           ) : null}
         </div>
       )
@@ -5221,7 +5345,7 @@ function renderPreviewBody(
       return (
         <div key={key} style={style}>
           <span style={{ width: `${size}px`, height: `${size}px`, borderRadius: '999px', background: `${tone}1a`, border: `1px solid ${tone}66`, color: tone, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: `${Math.round(size * 0.5)}px`, fontWeight: t.weightBold, flexShrink: 0 }}>
-            <IconGlyph value={str(p.icon) || '✓'} size={Math.round(size * 0.5)} color={tone} />
+            <IconGlyph value={str(p.icon) || 'check'} size={Math.round(size * 0.5)} />
           </span>
           {p.showLabel !== false && str(p.label) ? <span style={{ fontWeight: t.weightSemibold, color: t.textPrimary }}>{str(p.label)}</span> : null}
         </div>
@@ -5344,7 +5468,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     return renderPreviewNode(node, flowChild, children, key, t, ctx)
   }
 
-  const authored = styleFor(node, flowChild, t)
+  const authored = styleFor(node, flowChild, t, onGlass(ctx.doc, id))
 
   // The atmosphere layer: grain / glass / aurora / spotlight / shimmer / glow
   // / tilt / chromatic, declared in render/effects.tsx and gated by target
@@ -5367,8 +5491,17 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     'data-selected': ctx.selected.has(id) ? 'true' : 'false',
     // Marks a drop target, so a component can be dropped INTO a container.
     'data-loom-container': isContainer ? 'true' : 'false',
+    // An empty container that paints no surface of its own (a split, a
+    // button group, an accordion) is invisible once dropped, so the canvas
+    // outlines it until something is inside, as a form designer does.
+    // Authoring only: the output never carries this.
+    'data-loom-vacant': isContainer && node.children.length === 0 ? 'true' : 'false',
     'data-loom-hidden': node.visible === false ? 'true' : 'false',
     'data-loom-locked': node.locked === true ? 'true' : 'false',
+    // On the canvas the design is edited, not used: its own buttons and links
+    // are not tab stops (Tab walked into the design's Apply and Reset before
+    // the Studio's controls). Layers is the keyboard's way to its nodes.
+    tabIndex: -1,
     ...(ctx.forceState?.id === id ? { [FORCE_ATTR]: ctx.forceState.state } : {}),
     style: authored,
     onPointerDown: (e: React.PointerEvent) => ctx.onPointerDownNode?.(id, e),
@@ -5397,14 +5530,15 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
       : React.Children.map(own.children, (c) =>
           React.isValidElement(c) && typeof c.type === 'string' ? React.cloneElement(c as React.ReactElement<{ inert?: boolean }>, { inert: true }) : c,
         )
-    const handles = ctx.selected.has(id)
-      ? CORNERS.map((corner) => <span key={corner} className="loom-handle" data-corner={corner} data-loom-handle={corner} />)
-      : null
+    // Resize handles are NOT drawn here: inside the node they were positioned
+    // against its padding box and clipped by its own overflow (a scrolling
+    // list's sat a scrollbar in; a clipped card's were cut off). The canvas
+    // draws them in one layer over the whole design (app.tsx, SelectionLayer).
     if (body.type === LabelledDivider) {
       // A labelled divider is drawn by a small component; it takes the editor
       // attributes and chrome through its own props.
       const { style: _s, ...attrs } = common
-      return React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { attrs, extra: [eff.layers, handles] })
+      return React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { attrs, extra: eff.layers })
     }
     if (typeof body.type !== 'string') throw new Error(`${node.type}: the canvas can only draw an element or LabelledDivider as a body`)
     if (CHILDLESS.has(body.type)) {
@@ -5422,14 +5556,13 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
         <div key={key} {...common} style={outer}>
           {eff.layers}
           {React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { style: fill, inert: true, tabIndex: -1 })}
-          {handles}
         </div>
       )
     }
     return React.cloneElement(
       body,
       { ...common, style: own.style, key } as Record<string, unknown>,
-      ...([eff.layers, inner, handles] as never[]),
+      ...([eff.layers, inner] as never[]),
     )
   }
 
@@ -5568,6 +5701,23 @@ function iconTone(tone: PropValue | undefined, t: Theme): string | undefined {
  * a name is used — which is the only way "never mix icon styles" is achievable
  * when the icon is a property rather than a drawn asset.
  */
+/**
+ * A trend's direction as a drawn mark (it was ▲ ▼ ■ from whatever font the
+ * machine had). Decorative: the delta beside it carries the meaning.
+ */
+function TrendMark({ trend }: { trend: string }) {
+  return (
+    <span data-loom-trend="" aria-hidden="true" style={{ display: 'inline-flex', verticalAlign: '-0.15em', marginRight: '3px' }}>
+      <IconGlyph value={trend === 'up' ? 'trending' : trend === 'down' ? 'trending-down' : 'minus'} size={13} />
+    </span>
+  )
+}
+
+/** A filled star from the icon set, sized by the font (a Rating's `size`). */
+function StarShape() {
+  return <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" style={{ display: 'block' }} dangerouslySetInnerHTML={{ __html: iconMarkup('star') ?? '' }} />
+}
+
 function IconGlyph({
   value,
   size = 16,

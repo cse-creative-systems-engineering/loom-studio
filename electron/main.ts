@@ -6,7 +6,7 @@
  * the GPU paint strategies; the plain-DOM path does not need it.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, screen, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { desktopBounds, type RunTarget } from '../src/model/desktop-run'
 import { startAiSocket, type AiSocket } from './ai-socket'
 import { detectProviders, providerKeyEnv, saveKey, type ProviderInfo } from './ai-providers'
@@ -416,6 +416,16 @@ export function mcpServerConfig(): { command: string; args: string[]; env: Recor
 }
 
 app.whenReady().then(() => {
+  // The Studio owns its shortcuts. Electron's default menu took them first:
+  // Ctrl+R reloaded the editor instead of exporting React, and Ctrl+plus,
+  // minus and 0 zoomed the whole UI instead of the canvas. Off macOS there is
+  // no menu (fields still cut, copy and paste natively); on macOS a field
+  // needs the menu's edit roles for Cmd+C/V, so they stay, and nothing else.
+  Menu.setApplicationMenu(
+    process.platform === 'darwin'
+      ? Menu.buildFromTemplate([{ role: 'appMenu' }, { label: 'Edit', submenu: [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] }])
+      : null,
+  )
   createWindow()
   try {
     aiSocket = startAiSocket(() => editorWin, { names: new Set(['render', 'check_layout']), run: runLocalTool })
@@ -635,6 +645,27 @@ app.whenReady().then(() => {
       return { ok: true, path: file }
     } catch (e) {
       return { ok: false, error: String(e) }
+    }
+  })
+
+  // The newest autosave, whatever its document was called, for the welcome
+  // card to OFFER ("continue where you left off"). Read-only, editor-only,
+  // bare autosave names only, and never restored unless the person asks.
+  ipcMain.handle('doc:latest-recent', async (e) => {
+    if (!fromEditor(e)) return FORBIDDEN
+    try {
+      const dir = path.join(app.getPath('userData'), 'autosave')
+      const names = (await fs.readdir(dir)).filter((n) => autosaveFileName(n) !== null)
+      let best: { name: string; mtime: number } | null = null
+      for (const name of names) {
+        const st = await fs.stat(path.join(dir, name))
+        if (st.isFile() && st.size < 5_000_000 && (!best || st.mtimeMs > best.mtime)) best = { name, mtime: st.mtimeMs }
+      }
+      if (!best) return { ok: false }
+      const contents = await fs.readFile(path.join(dir, best.name), 'utf8')
+      return { ok: true, name: best.name, mtime: best.mtime, contents }
+    } catch {
+      return { ok: false }
     }
   })
 

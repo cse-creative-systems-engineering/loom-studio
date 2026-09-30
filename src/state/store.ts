@@ -12,8 +12,8 @@
 
 import { buildStarter, getStarter } from '../model/starters'
 import { dropSize } from '../model/drop-size'
-import { apply, duplicateSubtree, parentOf } from '../model/ops'
-import { instantiate } from '../model/registry'
+import { apply, captureSubtree, duplicateSubtree, parentOf, reidentify } from '../model/ops'
+import { acceptsChild, getComponent, instantiate, type SeedSpec } from '../model/registry'
 import type { Document, Node, NodeId, Op, PropValue, TargetId } from '../model/types'
 import { serialize, validate, filenameFor } from '../model/persist'
 import { emitHtml, exportFilenameFor } from '../export/html'
@@ -25,6 +25,8 @@ export interface LoomHost {
   open: () => Promise<{ ok: boolean; path?: string; contents?: string; error?: string; canceled?: boolean }>
   autosave: (name: string, contents: string) => Promise<{ ok: boolean; path?: string }>
   readAutosave: (name: string) => Promise<{ ok: boolean; path?: string; contents?: string }>
+  /** The newest autosave of any document (current hosts only). */
+  latestAutosave?: () => Promise<{ ok: boolean; name?: string; mtime?: number; contents?: string }>
   /** Present on current hosts; older hosts fall back to `save`. */
   exportHtml?: (name: string, contents: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean }>
   exportReact?: (name: string, contents: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean }>
@@ -76,6 +78,34 @@ export class EditorStore {
   /** Unsaved changes exist. */
   dirty = false
   lastSavedPath: string | null = null
+
+  /**
+   * The outcome of the last file action (save, open, export), for the Studio
+   * to show. Every such action used to finish silently: a failed save, or an
+   * opened file that was not a Loom document, looked exactly like success. A
+   * cancelled dialog is not an outcome and leaves no notice.
+   */
+  notice: { id: number; tone: 'ok' | 'error'; text: string } | null = null
+  private noticeSeq = 0
+
+  notify(tone: 'ok' | 'error', text: string) {
+    this.notice = { id: ++this.noticeSeq, tone, text }
+    this.emit()
+  }
+
+  dismissNotice(id: number) {
+    if (this.notice?.id !== id) return
+    this.notice = null
+    this.emit()
+  }
+
+  /** Report a host file action: success names the file, failure says why. */
+  private report(res: { ok: boolean; path?: string; error?: string; canceled?: boolean }, done: string, failed: string) {
+    if (res.canceled) return
+    const file = res.path ? res.path.split(/[\\/]/).pop() : undefined
+    if (res.ok) this.notify('ok', file ? `${done} ${file}` : done)
+    else this.notify('error', `${failed}${res.error ? `: ${res.error}` : ''}`)
+  }
 
   /**
    * The document as it exists on disk (last save or open), or null when this
@@ -242,18 +272,11 @@ export class EditorStore {
    * any future AI operation all funnel here, so schema normalisation and
    * history bookkeeping cannot be bypassed.
    */
-  addComponent(
-    name: string,
-    parent: NodeId | null,
-    x = 0,
-    y = 0,
-    overrides: Record<string, PropValue> = {},
-    opts: { flow?: boolean } = {},
-  ): NodeId | undefined {
-    const id = `n${Math.random().toString(36).slice(2, 9)}`
+  /** A fresh node of `name`, schema defaults applied, not yet in the document. */
+  private buildNode(name: string, x: number, y: number, overrides: Record<string, PropValue> = {}, opts: { flow?: boolean } = {}): Node {
     const built = instantiate(name)
-    const node: Node = {
-      id,
+    return {
+      id: `n${Math.random().toString(36).slice(2, 9)}`,
       type: name,
       props: { ...built.props, ...overrides, x, y },
       children: [],
@@ -262,6 +285,18 @@ export class EditorStore {
       locked: false,
       opacity: 1,
     }
+  }
+
+  addComponent(
+    name: string,
+    parent: NodeId | null,
+    x = 0,
+    y = 0,
+    overrides: Record<string, PropValue> = {},
+    opts: { flow?: boolean } = {},
+  ): NodeId | undefined {
+    const node = this.buildNode(name, x, y, overrides, opts)
+    const id = node.id
     const ok = this.commit({ op: 'insert', parent, node }, `Add ${name}`)
     if (ok) this.select([id])
     return ok ? id : undefined
@@ -274,7 +309,224 @@ export class EditorStore {
    */
   dropComponent(name: string, parent: NodeId | null, x: number, y: number): NodeId | undefined {
     const intoFlow = parent !== null && this.doc.nodes[parent]?.flow === true
-    return this.addComponent(name, parent, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow))
+    const seed = getComponent(name)?.seed
+    if (!seed || seed.length === 0) return this.addComponent(name, parent, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow))
+    // A container that arrives with its first children (Tabs with its tabs):
+    // one insert for it and one per child, as ONE undo step, built exactly
+    // as its own "Add ..." button builds them.
+    // It arrives ARRANGED: its parts flow (a row of buttons, a column of
+    // cards). Free-positioned they all sat at 0,0 on top of each other. It
+    // stays an ordinary container: the Layout toggle switches it to free.
+    const node = this.buildNode(name, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow), { flow: true })
+    // Depth first, parents before children, so every insert has its parent.
+    // A seeded child that brings its own children arranges them too.
+    const ops: Op[] = [{ op: 'insert', parent, node }]
+    const place = (under: NodeId, list: SeedSpec[]) => {
+      for (const c of list) {
+        const k = this.buildNode(c.type, 0, 0, c.props ?? {}, c.seed?.length ? { flow: true } : {})
+        ops.push({ op: 'insert', parent: under, node: k })
+        if (c.seed?.length) place(k.id, c.seed)
+      }
+    }
+    place(node.id, seed)
+    const ok = this.commitAll(ops, `Add ${name}`)
+    if (ok) this.select([node.id])
+    return ok ? node.id : undefined
+  }
+
+  /**
+   * The Studio's clipboard: captured subtrees, so a paste works after a cut
+   * removed the originals, and pastes any number of times. In memory, for
+   * this window.
+   */
+  clipboard: Array<{ id: NodeId; tree: Record<NodeId, Node> }> = []
+  private pastes = 0
+
+  /** The selection without the nodes already inside another selected node. */
+  private topLevel(ids: NodeId[]): NodeId[] {
+    const picked = new Set(ids)
+    return ids.filter((id) => {
+      if (!this.doc.nodes[id]) return false
+      for (let p = parentOf(this.doc, id); p; p = parentOf(this.doc, p)) if (picked.has(p)) return false
+      return true
+    })
+  }
+
+  copy(ids: NodeId[] = this.selection): number {
+    const top = this.topLevel(ids)
+    if (top.length === 0) return 0
+    this.clipboard = top.map((id) => ({ id, tree: captureSubtree(this.doc, id) }))
+    this.pastes = 0
+    return top.length
+  }
+
+  cut(ids: NodeId[] = this.selection): number {
+    const top = this.topLevel(ids).filter((id) => !this.doc.nodes[id].locked)
+    const n = this.copy(top)
+    if (n > 0) this.remove(top)
+    return n
+  }
+
+  /**
+   * Paste the clipboard: into the selected container when it takes every
+   * item, else beside the selection (just after it), else into the root; as
+   * the root of an empty document. One undo step; the pasted nodes selected.
+   * In a free-positioned parent each paste lands a step further in.
+   */
+  paste(): NodeId[] {
+    if (this.clipboard.length === 0) return []
+    const types = this.clipboard.map((c) => c.tree[c.id]?.type).filter((t): t is string => !!t)
+    const takesAll = (id: NodeId) => {
+      const n = this.doc.nodes[id]
+      const spec = n && getComponent(n.type)
+      return !!spec?.container && !n.locked && types.every((t) => !spec.childTypes || acceptsChild(n.type, t))
+    }
+    this.pastes++
+    const shift = 16 * this.pastes
+    if (this.doc.root === null) {
+      const first = reidentify(this.clipboard[0].tree, this.clipboard[0].id, 0, 0)
+      if (!first || !this.commit({ op: 'insert', parent: null, node: first.node, tree: first.tree }, 'Paste')) return []
+      this.select([first.node.id])
+      return [first.node.id]
+    }
+    const sel = this.selection[0]
+    let parent: NodeId | undefined
+    let index: number | undefined
+    if (sel && takesAll(sel)) {
+      parent = sel
+    } else {
+      for (let at = sel ? parentOf(this.doc, sel) : this.doc.root; at; at = parentOf(this.doc, at)) {
+        if (takesAll(at)) { parent = at; break }
+      }
+      if (parent && sel && this.doc.nodes[parent].children.includes(sel)) index = this.doc.nodes[parent].children.indexOf(sel) + 1
+    }
+    if (!parent) return []
+    const free = !this.doc.nodes[parent].flow
+    const ops: Op[] = []
+    const ids: NodeId[] = []
+    for (const [k, c] of this.clipboard.entries()) {
+      const copy = reidentify(c.tree, c.id, free ? shift : 0, free ? shift : 0)
+      if (!copy) continue
+      ops.push({ op: 'insert', parent, index: index === undefined ? undefined : index + k, node: copy.node, tree: copy.tree })
+      ids.push(copy.node.id)
+    }
+    if (ops.length === 0 || !this.commitAll(ops, ops.length > 1 ? `Paste ${ops.length} items` : 'Paste')) return []
+    this.select(ids)
+    return ids
+  }
+
+  /** Bring to the front of its siblings (the first child paints on top) or send to the back. */
+  arrange(id: NodeId, to: 'front' | 'back'): boolean {
+    const parent = parentOf(this.doc, id)
+    if (!parent) return false
+    const kids = this.doc.nodes[parent].children
+    const index = to === 'front' ? 0 : kids.length - 1
+    if (kids.indexOf(id) === index) return false
+    return this.commit({ op: 'reparent', id, parent, index }, to === 'front' ? 'Bring to front' : 'Send to back')
+  }
+
+  /**
+   * Wrap nodes that share a parent in a new flowing container, where the
+   * first of them was: the everyday way to group things. One undo step; the
+   * new container selected.
+   */
+  wrap(ids: NodeId[], type = 'Stack'): NodeId | undefined {
+    const top = this.topLevel(ids).filter((id) => id !== this.doc.root)
+    const parent = top.length ? parentOf(this.doc, top[0]) : undefined
+    if (!parent || top.some((id) => parentOf(this.doc, id) !== parent)) return undefined
+    const kids = this.doc.nodes[parent].children
+    const ordered = [...top].sort((a, b) => kids.indexOf(a) - kids.indexOf(b))
+    const first = this.doc.nodes[ordered[0]]
+    const box = this.buildNode(type, Number(first.props.x) || 0, Number(first.props.y) || 0, {}, { flow: true })
+    const ops: Op[] = [{ op: 'insert', parent, index: kids.indexOf(ordered[0]), node: box }]
+    for (const [i, id] of ordered.entries()) ops.push({ op: 'reparent', id, parent: box.id, index: i })
+    if (!this.commitAll(ops, `Wrap in ${type}`)) return undefined
+    this.select([box.id])
+    return box.id
+  }
+
+  /**
+   * Align free-positioned siblings on one edge or centre line, given each
+   * one's drawn size in design units (the canvas measures it; a prop may be
+   * unset). One undo step. Flow children are placed by their parent and are
+   * left alone.
+   */
+  align(ids: NodeId[], edge: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom', size: (id: NodeId) => { w: number; h: number }): boolean {
+    const boxes = this.freeBoxes(ids, size)
+    if (boxes.length < 2) return false
+    const horizontal = edge === 'left' || edge === 'center' || edge === 'right'
+    const lo = Math.min(...boxes.map((b) => (horizontal ? b.x : b.y)))
+    const hi = Math.max(...boxes.map((b) => (horizontal ? b.x + b.w : b.y + b.h)))
+    const ops: Op[] = boxes.map((b) => {
+      const extent = horizontal ? b.w : b.h
+      const at = edge === 'left' || edge === 'top' ? lo : edge === 'right' || edge === 'bottom' ? hi - extent : Math.round((lo + hi) / 2 - extent / 2)
+      return { op: 'move', id: b.id, x: horizontal ? at : b.x, y: horizontal ? b.y : at }
+    })
+    return this.commitAll(ops, `Align ${edge}`)
+  }
+
+  /** Space three or more free-positioned siblings evenly between the outer two. One undo step. */
+  distribute(ids: NodeId[], axis: 'horizontal' | 'vertical', size: (id: NodeId) => { w: number; h: number }): boolean {
+    const h = axis === 'horizontal'
+    const boxes = this.freeBoxes(ids, size).sort((a, b) => (h ? a.x - b.x : a.y - b.y))
+    if (boxes.length < 3) return false
+    const first = boxes[0]
+    const last = boxes[boxes.length - 1]
+    const span = (h ? last.x + last.w : last.y + last.h) - (h ? first.x : first.y)
+    const filled = boxes.reduce((n, b) => n + (h ? b.w : b.h), 0)
+    const gap = (span - filled) / (boxes.length - 1)
+    let at = h ? first.x : first.y
+    const ops: Op[] = []
+    for (const b of boxes) {
+      ops.push({ op: 'move', id: b.id, x: h ? Math.round(at) : b.x, y: h ? b.y : Math.round(at) })
+      at += (h ? b.w : b.h) + gap
+    }
+    return this.commitAll(ops, `Distribute ${axis}ly`)
+  }
+
+  /** The unlocked, free-positioned nodes among `ids` that share one parent, with their boxes. */
+  private freeBoxes(ids: NodeId[], size: (id: NodeId) => { w: number; h: number }) {
+    const parent = ids.length ? parentOf(this.doc, ids[0]) : undefined
+    return ids
+      .filter((id) => {
+        const n = this.doc.nodes[id]
+        return n && !n.locked && parent && parentOf(this.doc, id) === parent && !this.doc.nodes[parent].flow
+      })
+      .map((id) => {
+        const n = this.doc.nodes[id]
+        return { id, x: Number(n.props.x) || 0, y: Number(n.props.y) || 0, ...size(id) }
+      })
+  }
+
+  /**
+   * Add a tool without dragging it (a click, or Enter on the toolbox button):
+   * into the selected container when it takes this type, else into the
+   * nearest container above the selection that does, else into the root; into
+   * nothing when there is no document yet (it becomes the root). Adding was
+   * drag-only, so the keyboard could not build anything at all.
+   *
+   * In a free-positioned parent each new child lands a step further in, so
+   * several clicks do not stack exactly on top of each other.
+   */
+  insertTool(type: string, starterId?: string): NodeId | undefined {
+    const childType = starterId ? getStarter(starterId)?.tree.type : type
+    if (!childType) return undefined
+    const place = (parent: NodeId | null, x: number, y: number) =>
+      starterId ? this.addStarter(starterId, parent, x, y) : this.dropComponent(type, parent, x, y)
+    if (this.doc.root === null) return place(null, 0, 0)
+    const takes = (id: NodeId) => {
+      const n = this.doc.nodes[id]
+      const spec = n && getComponent(n.type)
+      return !!spec?.container && !n.locked && (!spec.childTypes || acceptsChild(n.type, childType))
+    }
+    let parent: NodeId | undefined
+    for (let at: NodeId | undefined = this.selection[0] ?? this.doc.root; at; at = parentOf(this.doc, at) ?? undefined) {
+      if (takes(at)) { parent = at; break }
+    }
+    if (!parent) return undefined
+    const host = this.doc.nodes[parent]
+    const step = host.flow ? 0 : 24 + (host.children.length % 8) * 16
+    return place(parent, step, step)
   }
 
   /**
@@ -360,6 +612,7 @@ export class EditorStore {
       this.lastSavedPath = res.path ?? null
       this.emit()
     }
+    this.report(res, 'Saved', "Couldn't save")
     return res
   }
 
@@ -387,10 +640,13 @@ export class EditorStore {
     try {
       html = emitHtml(this.doc)
     } catch (e) {
+      this.notify('error', `Couldn't export the HTML: ${String(e)}`)
       return { ok: false, error: String(e) }
     }
     const saver = api.exportHtml ?? api.save
-    return saver(this.exportFilename(), html)
+    const res = await saver(this.exportFilename(), html)
+    this.report(res, 'Exported', "Couldn't export the HTML")
+    return res
   }
 
   /** Standalone React filename, derived from the document name. */
@@ -414,26 +670,34 @@ export class EditorStore {
     try {
       src = emitReact(this.doc)
     } catch (e) {
+      this.notify('error', `Couldn't export the React component: ${String(e)}`)
       return { ok: false, error: String(e) }
     }
     const saver = api.exportReact ?? api.save
-    return saver(this.reactFilename(), src)
+    const res = await saver(this.reactFilename(), src)
+    this.report(res, 'Exported', "Couldn't export the React component")
+    return res
   }
 
   async open() {
     const api = this.host
     if (!api) return { ok: false as const, error: 'no host bridge' }
     const res = await api.open()
-    if (!res.ok) return res
+    if (!res.ok) {
+      this.report(res, 'Opened', "Couldn't open the file")
+      return res
+    }
     const parsed = validate(res.contents)
     if (!parsed.doc) {
+      const file = res.path?.split(/[\\/]/).pop()
+      this.notify('error', `${file ?? 'That file'} isn't a Loom document, so nothing was opened.`)
       return { ok: false as const, error: 'invalid document', issues: parsed.issues }
     }
     this.loadDocument(parsed.doc)
     // An opened file is what is on disk.
     this.savedDoc = parsed.doc
     this.lastSavedPath = res.path ?? null
-    this.emit()
+    this.report(res, 'Opened', "Couldn't open the file")
     return { ok: true as const, issues: parsed.issues }
   }
 
@@ -442,6 +706,25 @@ export class EditorStore {
     const api = this.host
     if (!api || !this.dirty) return
     await api.autosave(this.autosaveName(), serialize(this.doc))
+  }
+
+  /**
+   * What an earlier session left unsaved, if anything: the newest autosave,
+   * validated, for the welcome card to offer. Never loaded here.
+   */
+  async findRecovery(): Promise<{ doc: Document; name: string; mtime: number } | null> {
+    const res = await this.host?.latestAutosave?.()
+    if (!res?.ok || !res.contents || !res.mtime) return null
+    const parsed = validate(res.contents)
+    if (!parsed.doc || parsed.doc.root === null) return null
+    return { doc: parsed.doc, name: parsed.doc.meta.name, mtime: res.mtime }
+  }
+
+  /** Continue from a recovered document: loaded as unsaved work, one choice by the person. */
+  recover(doc: Document) {
+    this.loadDocument(doc)
+    this.dirty = true
+    this.notify('ok', `Recovered "${doc.meta.name}". Save it to keep it.`)
   }
 
   async restoreAutosave() {
@@ -493,20 +776,47 @@ export class EditorStore {
    * Used by Alt-drag; locked nodes and the root refuse.
    */
   duplicate(id: NodeId): NodeId | undefined {
-    const src = this.doc.nodes[id]
-    if (!src || src.locked || id === this.doc.root) return undefined
-    const parent = parentOf(this.doc, id)
-    if (!parent) return undefined
-    const index = this.doc.nodes[parent].children.indexOf(id)
-    const dup = duplicateSubtree(this.doc, id)
-    if (!dup) return undefined
-    const newId = dup.node.id
-    const ok = this.commit(
-      { op: 'insert', parent, index: index + 1, node: dup.node, tree: dup.tree },
-      `Duplicate ${src.type}`,
-    )
-    if (ok) this.select([newId])
-    return ok ? newId : undefined
+    return this.duplicateAll([id])[0]
+  }
+
+  /**
+   * Duplicate several nodes as ONE undoable step (Ctrl+D, the context menu),
+   * each copy just after its source, selecting the copies. A node inside
+   * another selected node travels with that one's copy, not twice.
+   */
+  duplicateAll(ids: NodeId[]): NodeId[] {
+    const picked = new Set(ids)
+    const within = (id: NodeId): boolean => {
+      for (let p = parentOf(this.doc, id); p; p = parentOf(this.doc, p)) if (picked.has(p)) return true
+      return false
+    }
+    const sources = ids
+      .filter((id) => {
+        const n = this.doc.nodes[id]
+        return n && !n.locked && id !== this.doc.root && !within(id)
+      })
+      .map((id) => {
+        const parent = parentOf(this.doc, id)!
+        return { id, parent, index: this.doc.nodes[parent].children.indexOf(id) }
+      })
+      // Later siblings first: inserting after them never shifts an earlier one.
+      .sort((a, b) => (a.parent === b.parent ? b.index - a.index : 0))
+    const ops: Op[] = []
+    const copyOf = new Map<NodeId, NodeId>()
+    for (const src of sources) {
+      const dup = duplicateSubtree(this.doc, src.id)
+      if (!dup) continue
+      ops.push({ op: 'insert', parent: src.parent, index: src.index + 1, node: dup.node, tree: dup.tree })
+      copyOf.set(src.id, dup.node.id)
+    }
+    if (ops.length === 0) return []
+    const only = sources.length === 1 ? this.doc.nodes[sources[0].id]?.type : undefined
+    const ok = this.commitAll(ops, only ? `Duplicate ${only}` : `Duplicate ${ops.length} items`)
+    if (!ok) return []
+    // In the order they were asked for, not the insertion order.
+    const ordered = ids.flatMap((id) => copyOf.get(id) ?? [])
+    this.select(ordered)
+    return ordered
   }
 }
 

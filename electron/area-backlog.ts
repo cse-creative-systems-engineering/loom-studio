@@ -55,8 +55,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "Calendar|div>span": ["background", "color", "fontSize", "fontWeight", "paddingY", "radius"],
   // Card
   "Card|div": ["color", "fontSize", "fontWeight", "letterSpacing", "lineHeight"],
-  // Checkbox
-  "Checkbox|input": ["accent"],
   // Checklist
   "Checklist|label data-loom-b": ["color", "fontSize", "gap"],
   // CodeBlock
@@ -96,8 +94,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "DataGrid|table>tbody>tr>td>div>button data-loom-menu-trigger": ["color", "paddingX", "paddingY"],
   "DataGrid|table>tbody>tr>td>div>div data-loom-menu-panel": ["background", "border", "borderWidth", "paddingX", "paddingY", "radius", "shadow"],
   "DataGrid|table>tbody>tr>td>div>div>div data-loom-b": ["color", "fontSize", "paddingX", "paddingY", "radius"],
-  "DataGrid|table>tbody>tr>td>input data-loom-select": ["accent"],
-  "DataGrid|table>thead>tr>th>input data-loom-select-all": ["accent"],
   // DataList
   "DataList|div": ["border", "borderWidth", "fontSize", "gap"],
   "DataList|div>span": ["color", "fontWeight"],
@@ -139,8 +135,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "Hero|div": ["color", "fontSize", "fontWeight"],
   // Icon
   "Icon|svg": ["stroke"],
-  // IconButton
-  "IconButton|span": ["fontSize", "lineHeight"],
   // Image
   "Image|span": ["color", "fontSize"],
   // InfoCallout
@@ -178,7 +172,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "Modal|div>button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "lineHeight", "paddingX", "paddingY", "radius"],
   "Modal|div>div": ["color", "fontSize", "fontWeight"],
   // OtpInput
-  "OtpInput|input": ["align", "background", "border", "borderWidth", "color", "fontFamily", "fontSize", "radius"],
+  "OtpInput|input data-loom-well": ["align", "background", "border", "borderWidth", "color", "fontFamily", "fontSize", "radius"],
   // Pagination
   "Pagination|button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "radius"],
   "Pagination|label": ["color", "fontSize", "gap"],
@@ -211,7 +205,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   // Section
   "Section|div": ["color", "fontSize", "fontWeight"],
   // Segmented
-  "Segmented|label data-loom-b": ["align", "background", "border", "borderWidth", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
+  "Segmented|label data-loom-seg": ["align", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
   "Segmented|label>input": ["opacity"],
   // SettingsRow
   "SettingsRow|div": ["gap"],
@@ -228,8 +222,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "SidebarPanel|div data-loom-body": ["gap"],
   // Skeleton
   "Skeleton|div": ["background", "opacity", "radius"],
-  // Slider
-  "Slider|input data-loom-output": ["accent"],
   // Sparkline
   "Sparkline|svg>circle data-loom-spark-head": ["fill"],
   "Sparkline|svg>path data-loom-spark-line": ["stroke"],
@@ -251,18 +243,17 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "Stepper|li>span": ["align", "background", "border", "borderWidth", "color", "fontSize", "fontWeight", "radius"],
   // SuccessCheck
   "SuccessCheck|span": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "radius"],
-  "SuccessCheck|span>span": ["color", "fontSize", "lineHeight"],
   // Switch
   "Switch|input": ["opacity"],
   "Switch|span data-loom-track": ["paddingX", "paddingY", "radius"],
-  "Switch|span>span data-loom-knob": ["background", "radius"],
+  "Switch|span>span data-loom-knob": ["radius"],
   // TabBar
   "TabBar|button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius", "shadow"],
   // TabPanel
   "TabPanel|div": ["color", "fontSize", "fontWeight"],
   // Tabs
+  "Tabs|div>button data-loom-b": ["color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
   "Tabs|div": ["background", "border", "borderWidth", "gap", "paddingX", "paddingY", "radius"],
-  "Tabs|div>button data-loom-b": ["background", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius", "shadow"],
   // TagInput
   "TagInput|input": ["color", "fontSize"],
   "TagInput|span": ["background", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],

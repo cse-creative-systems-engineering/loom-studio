@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build:renderer": "vite build",
-    "build:main": "esbuild electron/main.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/main.cjs && esbuild electron/mcp-bridge.ts --bundle --platform=node --format=cjs --outfile=dist/main/mcp-bridge.cjs && esbuild electron/preload.cts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/preload.cjs && esbuild electron/verify.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/verify.cjs && esbuild electron/selftest.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/selftest.cjs && esbuild electron/embed-bundle.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/embed-bundle.cjs && esbuild electron/snapshot.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/snapshot.cjs && esbuild electron/probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/probe.cjs && esbuild electron/layout-probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/layout-probe.cjs && esbuild electron/preview-probe.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/main/preview-probe.cjs",
+    "build:main": "esbuild electron/main.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/main.cjs && esbuild electron/mcp-bridge.ts --bundle --platform=node --format=cjs --outfile=dist/main/mcp-bridge.cjs && esbuild electron/preload.cts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/preload.cjs && esbuild electron/verify.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/verify.cjs && esbuild electron/selftest.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/selftest.cjs && esbuild electron/embed-bundle.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/embed-bundle.cjs && esbuild electron/snapshot.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/snapshot.cjs && esbuild electron/probe.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/probe.cjs && esbuild electron/layout-probe.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/layout-probe.cjs && esbuild electron/preview-probe.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/preview-probe.cjs",
     "build": "npm run build:main && npm run embed:bundle && npm run build:renderer",
     "embed:bundle": "electron dist/main/embed-bundle.cjs",
     "test:bundle": "npm run build && electron dist/main/selftest.cjs",
@@ -18,7 +18,8 @@
     "shot": "npm run build && electron dist/main/snapshot.cjs",
     "probe:layout": "npm run build && electron dist/main/layout-probe.cjs",
     "probe:preview": "npm run build && electron dist/main/preview-probe.cjs",
-    "probe:drag": "npm run build && node electron/cdp-drag.mjs"
+    "probe:drag": "npm run build && node electron/cdp-drag.mjs",
+    "probe:react": "npm run build && node electron/react-export-probe.mjs"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

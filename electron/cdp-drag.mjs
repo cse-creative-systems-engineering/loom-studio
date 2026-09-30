@@ -14,9 +14,16 @@ import { spawn } from 'node:child_process'
 import electronPath from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertFreshBuild } from './fresh-build.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(here, '..')
+try {
+  assertFreshBuild(root)
+} catch (e) {
+  console.error(`FAIL  ${e.message}`)
+  process.exit(1)
+}
 const PORT = Number(process.env.LOOM_CDP_PORT || 9335)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -253,7 +260,8 @@ try {
   // are skipped: a Button is not a tab).
   const kinds = await evaluate(
     ews,
-    `(() => { const seen = new Set(); return [...document.querySelectorAll('.toolbox .tool .tool-name')].map((e) => e.textContent.trim()).filter((n) => !/ /.test(n) && !seen.has(n) && seen.add(n)) })()`,
+    // Component tools only: the starters are arrangements, not kinds.
+    `(() => { const seen = new Set(); return [...document.querySelectorAll('.toolbox section[data-cat]:not([data-cat="Starters"]) .tool .tool-name')].map((e) => e.textContent.trim()).filter((n) => !seen.has(n) && seen.add(n)) })()`,
   )
   const refused = []
   let tried = 0
@@ -266,9 +274,11 @@ try {
         const root = s.doc.root;
         const c = s.dropComponent(${JSON.stringify(kind)}, root, 420, 140);
         // A tab set or an accordion takes only its own sections; the Button
-        // belongs INSIDE one of those, so give it one to land in.
+        // belongs INSIDE one of those. A container that arrives with its
+        // sections (Tabs brings three) takes the drop in the one you can see,
+        // its first (active) section; otherwise give it one to land in.
         const inner = { Tabs: 'TabPanel', Accordion: 'AccordionItem' }[${JSON.stringify(kind)}];
-        const into = inner ? s.addComponent(inner, c, 0, 0) : c;
+        const into = inner ? (s.doc.nodes[c].children[0] ?? s.addComponent(inner, c, 0, 0)) : c;
         const b = s.dropComponent('Button', root, 40, 40);
         s.select([]);
         return { c, b, root, into }; })()`,
@@ -282,7 +292,10 @@ try {
     await drag(ews, b0.cx, b0.cy, tx, ty, 8)
     tried++
     const p = await parent(made.b)
-    if (p !== made.into) refused.push(`${kind} (in ${p === made.root ? 'the page' : p})`)
+    // Inside means the container or, for one that arrives with its own
+    // children (a settings section's rows), the one under the pointer.
+    const inside = p === made.into || (made.into === made.c && await evaluate(ews, `(() => { const d = window.__loomStore.doc; let k = ${JSON.stringify(p)}; while (k) { if (k === ${JSON.stringify(made.c)}) return true; k = Object.keys(d.nodes).find((n) => d.nodes[n].children.includes(k)) } return false })()`))
+    if (!inside) refused.push(`${kind} (in ${p === made.root ? 'the page' : p})`)
   }
   step(`a drop goes inside every container (${tried} tried)`, tried > 20 && refused.length === 0, refused.join(', '))
 

@@ -33,12 +33,58 @@ export interface Theme {
   success: string
   warning: string
 
+  /**
+   * Whether the theme is dark or light, for the parts of a control the
+   * browser still draws (a select's option list, a date picker's popup and
+   * icon, scrollbars). Left unset they are drawn light on a dark design.
+   */
+  colorScheme: 'dark' | 'light'
+
+  /**
+   * The aurora page's colours (render/aurora.tsx): four hues that drift
+   * behind the UI, how strongly they show, and how they meet the page. On a
+   * dark page `screen` makes them light; on a light page they are pastel and
+   * simply laid over it.
+   */
+  aurora: string[]
+  auroraOpacity: number
+  auroraBlend: 'screen' | 'normal'
+
   /* surfaces */
   bg: string
   surface: string
   surfaceGlass: string
   border: string
   borderStrong: string
+
+  /**
+   * Glass: the material every surface (panel, card, dialog, bar, menu) is
+   * made of. A translucent fill, a blur of what is behind it, a hairline
+   * edge, a light top highlight and a soft layered shadow; depth comes from
+   * light and shadow, not from a 1px box. `glassFillRaised` is the same
+   * material one level up, for a surface that sits ON another surface: it
+   * is lighter (elevation reads as light) and does not blur again.
+   */
+  glassFill: string
+  glassFillRaised: string
+  glassEdge: string
+  glassHighlight: string
+  glassShadow: string
+  glassBlur: number
+
+  /**
+   * Soft depth, used as an ACCENT (neumorphism where it helps, never where
+   * contrast is at stake): a field is a WELL pressed into the surface, a
+   * switch or slider knob is EXTRUDED from it, a segmented control's choice
+   * is RAISED. Text and buttons keep their full contrast.
+   */
+  wellFill: string
+  wellEdge: string
+  wellShadow: string
+  knobFill: string
+  knobShadow: string
+  raisedFill: string
+  raisedShadow: string
 
   /* type scale — a real ratio, not ad-hoc values */
   fontFamily: string
@@ -99,14 +145,35 @@ const BASE: Theme = {
   success: '#2fbf8f',
   warning: '#d9a13a',
 
+  colorScheme: 'dark',
+  aurora: ['#4f46e5', '#7c3aed', '#0891b2', '#be185d'],
+  auroraOpacity: 0.55,
+  auroraBlend: 'screen',
   bg: '#0b0d13',
   surface: '#151a26',
   surfaceGlass: 'rgba(24, 29, 44, 0.66)',
   border: 'rgba(255, 255, 255, 0.09)',
   borderStrong: 'rgba(255, 255, 255, 0.16)',
 
-  fontFamily:
-    "ui-sans-serif, -apple-system, 'Inter', 'Segoe UI', system-ui, sans-serif",
+  // The output ships its own face (render/fonts.ts), so it is named FIRST:
+  // behind `ui-sans-serif` it never won, and the design fell to SF, Segoe or
+  // DejaVu depending on the machine it was opened on.
+  fontFamily: "'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif",
+
+  glassFill: 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)), rgba(15,18,28,0.56)',
+  glassFillRaised: 'linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.035))',
+  glassEdge: 'rgba(255,255,255,0.09)',
+  glassHighlight: 'inset 0 1px 0 rgba(255,255,255,0.08)',
+  glassShadow: '0 24px 60px -24px rgba(0,0,0,0.65), 0 2px 8px -2px rgba(0,0,0,0.35)',
+  glassBlur: 28,
+
+  wellFill: 'rgba(0,0,0,0.26)',
+  wellEdge: 'rgba(255,255,255,0.06)',
+  wellShadow: 'inset 0 1px 3px rgba(0,0,0,0.45), inset 0 -1px 0 rgba(255,255,255,0.04)',
+  knobFill: 'linear-gradient(180deg, #ffffff, #dfe4ee)',
+  knobShadow: '0 1px 1px rgba(0,0,0,0.3), 0 3px 8px -1px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.9)',
+  raisedFill: 'linear-gradient(180deg, rgba(255,255,255,0.13), rgba(255,255,255,0.06))',
+  raisedShadow: '0 1px 2px rgba(0,0,0,0.45), 0 2px 6px -2px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.12)',
   fontMono: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace",
 
   // ~1.2 ratio on a 15px base.
@@ -156,6 +223,10 @@ const DAYLIGHT: Theme = {
   accent: '#2f5fe0',
   accentHover: '#1f4bc4',
   textOnAccent: '#ffffff',
+  colorScheme: 'light',
+  aurora: ['#c7d2fe', '#ddd6fe', '#bae6fd', '#fbcfe8'],
+  auroraOpacity: 0.85,
+  auroraBlend: 'normal',
   bg: '#f6f7f9',
   surface: '#ffffff',
   surfaceGlass: 'rgba(255, 255, 255, 0.78)',
@@ -165,6 +236,18 @@ const DAYLIGHT: Theme = {
   shadowMd: '0 6px 18px -8px rgba(16,20,28,0.14)',
   shadowLg: '0 20px 44px -18px rgba(16,20,28,0.20)',
   shadowGlow: '0 6px 20px -10px rgba(47, 95, 224, 0.45)',
+  glassFill: 'linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0.2)), rgba(255,255,255,0.42)',
+  glassFillRaised: 'rgba(255,255,255,0.72)',
+  glassEdge: 'rgba(255,255,255,0.8)',
+  glassHighlight: 'inset 0 1px 0 rgba(255,255,255,0.95)',
+  glassShadow: '0 0 0 1px rgba(16,20,28,0.05), 0 24px 48px -24px rgba(16,20,28,0.22), 0 2px 6px -2px rgba(16,20,28,0.08)',
+  wellFill: 'rgba(16,20,28,0.045)',
+  wellEdge: 'rgba(16,20,28,0.10)',
+  wellShadow: 'inset 0 1px 2px rgba(16,20,28,0.10), inset 0 -1px 0 rgba(255,255,255,0.8)',
+  knobFill: 'linear-gradient(180deg, #ffffff, #f1f3f7)',
+  knobShadow: '0 1px 2px rgba(16,20,28,0.2), 0 3px 8px -2px rgba(16,20,28,0.22), inset 0 1px 0 #ffffff',
+  raisedFill: '#ffffff',
+  raisedShadow: '0 1px 2px rgba(16,20,28,0.12), 0 0 0 1px rgba(16,20,28,0.04)',
 }
 
 const CONTRAST: Theme = {
@@ -176,12 +259,25 @@ const CONTRAST: Theme = {
   accent: '#7ea6ff',
   accentHover: '#9dbcff',
   textOnAccent: '#0a0f1c',
+  // Contrast keeps its colour quieter: the text above it comes first.
+  auroraOpacity: 0.32,
   bg: '#000000',
   surface: '#0d1017',
   surfaceGlass: 'rgba(18, 22, 32, 0.9)',
   border: 'rgba(255, 255, 255, 0.22)',
   borderStrong: 'rgba(255, 255, 255, 0.38)',
   shadowGlow: '0 6px 24px -8px rgba(126, 166, 255, 0.7)',
+  // Contrast keeps its glass nearly opaque: legibility first.
+  glassFill: 'rgba(10,12,18,0.88)',
+  glassFillRaised: 'rgba(255,255,255,0.06)',
+  glassEdge: 'rgba(255,255,255,0.38)',
+  glassHighlight: 'inset 0 1px 0 rgba(255,255,255,0.12)',
+  glassBlur: 20,
+  // Contrast: wells and raised parts keep a real edge, not just a shadow.
+  wellFill: 'rgba(0,0,0,0.6)',
+  wellEdge: 'rgba(255,255,255,0.38)',
+  raisedFill: 'rgba(255,255,255,0.14)',
+  raisedShadow: '0 0 0 1px rgba(255,255,255,0.45)',
 }
 
 const THEMES: Record<ThemeName, Theme> = {

@@ -15,6 +15,7 @@ import { resolveTheme } from './render/theme'
 import { emptyDocument } from './state/store'
 import type { Document } from './model/types'
 import { pageFill } from './model/page'
+import { AuroraBackdrop } from './render/aurora'
 import { installBehaviourRuntime, installDocumentCss } from './render/behaviour-mount'
 import './render/output-base.css'
 import './desktop-window.css'
@@ -87,8 +88,9 @@ function App() {
 
   const t = resolveTheme(doc.meta.theme)
   return (
-    <div className="dw-stage" style={{ background: pageFill(doc.meta.page, t.bg), color: t.textPrimary, fontFamily: t.fontFamily }}>
+    <div className="dw-stage" style={{ background: pageFill(doc.meta.page, t.bg), color: t.textPrimary, fontFamily: t.fontFamily, isolation: 'isolate' }}>
       {doc.root === null ? null : renderNode({ doc, selected: new Set(), mode: 'preview', theme: t }, doc.root)}
+      {doc.meta.page?.background === 'aurora' && <AuroraBackdrop theme={t} />}
       <button type="button" className="dw-stop" onClick={() => void api?.stop()} title="Stop running on the desktop (Esc)">
         Stop
       </button>

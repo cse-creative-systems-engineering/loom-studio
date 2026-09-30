@@ -325,17 +325,12 @@ export const EFFECT_KEYFRAMES = `
 `
 
 /**
- * Which effects a target can represent. The desktop backend has no WebGL
- * compositor behind it, so atmosphere degrades to a flat approximation.
+ * Which effects a target cannot represent. None: desktop output renders in
+ * Chromium, the same compositor as the web (see DESKTOP_CAPABILITIES). The
+ * gate stays so a future non-Chromium backend has one place to say what it
+ * lacks.
  */
-export const DESKTOP_UNSUPPORTED: EffectName[] = [
-  'aurora',
-  'spotlight',
-  'shimmer',
-  'tilt',
-  'chromatic',
-  'grain',
-]
+export const DESKTOP_UNSUPPORTED: EffectName[] = []
 
 export function effectSupported(e: EffectName, target: 'web' | 'desktop'): boolean {
   return target === 'web' || !DESKTOP_UNSUPPORTED.includes(e)

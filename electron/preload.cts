@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('loomHost', {
   autosave: (name: string, contents: string) =>
     ipcRenderer.invoke('doc:write-recent', name, contents),
   readAutosave: (name: string) => ipcRenderer.invoke('doc:read-recent', name),
+  latestAutosave: () => ipcRenderer.invoke('doc:latest-recent'),
 })
 
 const isPreviewWindow = process.argv.some((a) => a.includes('preview.html'))

@@ -14,6 +14,7 @@ import { resolveTheme, THEME_NAMES, type ThemeName } from './render/theme'
 import { emptyDocument } from './state/store'
 import type { Document } from './model/types'
 import { pageFill } from './model/page'
+import { AuroraBackdrop } from './render/aurora'
 import { installBehaviourRuntime, installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import './render/output-base.css'
 import './preview-window.css'
@@ -116,11 +117,14 @@ function App() {
             // The page, only if the document has one; a translucent page
             // shows the desktop through it.
             background: pageFill(doc.meta.page, resolveTheme(themeName).bg),
+            position: 'relative',
+            isolation: 'isolate',
           }}
         >
           {doc.root === null
             ? null
             : renderNode({ doc, selected: new Set(), mode: 'preview', theme: resolveTheme(themeName) }, doc.root)}
+          {doc.meta.page?.background === 'aurora' && <AuroraBackdrop theme={resolveTheme(themeName)} />}
         </div>
       </div>
       {/* Floating controls: the only chrome. The pill is the window's drag

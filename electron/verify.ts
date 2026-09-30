@@ -9,6 +9,7 @@
 import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import { assertFreshBuild } from './fresh-build.mjs'
 
 const here = __dirname
 
@@ -61,7 +62,7 @@ function sourceChecks(): Array<{ name: string; pass: boolean; detail: string }> 
     },
     {
       name: 'file and autosave IPC is honoured only from the editor window',
-      pass: ['doc:save', 'doc:export-html', 'doc:export-react', 'doc:open', 'doc:write-recent', 'doc:read-recent'].every(
+      pass: ['doc:save', 'doc:export-html', 'doc:export-react', 'doc:open', 'doc:write-recent', 'doc:read-recent', 'doc:latest-recent'].every(
         (ch) => new RegExp(`'${ch}'[^\\n]*\\n\\s*(?:\\/\\/[^\\n]*\\n\\s*)*if \\(!fromEditor\\(e\\)\\) return FORBIDDEN`).test(main),
       ),
       detail: '',
@@ -70,6 +71,19 @@ function sourceChecks(): Array<{ name: string; pass: boolean; detail: string }> 
       name: 'autosave paths are validated before touching the filesystem',
       pass: (main.match(/autosaveFileName\(suggestedName\)/g) ?? []).length === 2,
       detail: '',
+    },
+    {
+      // The default menu's accelerators fired before the page: Ctrl+R reloaded
+      // the editor instead of exporting React, Ctrl+plus/minus/0 zoomed the
+      // whole UI instead of the canvas.
+      name: 'the default menu does not take the Studio\'s shortcuts',
+      pass: /Menu\.setApplicationMenu\(/.test(main) && !/role: 'reload'|role: 'zoomIn'|role: 'resetZoom'|role: 'viewMenu'/.test(main),
+      detail: '',
+    },
+    {
+      name: 'the newest autosave is only ever read to be offered, never loaded at launch',
+      pass: /'doc:latest-recent'/.test(main) && !/findRecovery\(\)\.then\(\(r\) => r && s\.recover/.test(read('src/app.tsx')),
+      detail: 'recovery is a button the person presses',
     },
     {
       name: 'no sample project is restored at launch',
@@ -147,6 +161,15 @@ async function run() {
 }
 
 app.whenReady().then(() => {
+  // verify drives dist/, not the sources: a build that failed part way, or an
+  // edit since the last build, would be verified as old code and could pass.
+  try {
+    assertFreshBuild(path.join(here, '..', '..'))
+  } catch (e) {
+    console.log(JSON.stringify({ threw: e instanceof Error ? e.message : String(e), passed: 0, total: 0 }, null, 2))
+    app.exit(1)
+    return
+  }
   void run().catch((e) => {
     // Print the real stack: "Cannot read properties of null" without a frame is
     // useless, and guessing at it is how bugs get "fixed" in the wrong place.

@@ -15,8 +15,8 @@ import { isSafeColor, stateCss, STATE_PRESETS } from '../src/render/states'
 import { documentCss } from '../src/render/document-css'
 import { fieldsFor } from '../src/render/parts'
 import type { Document, Node as LoomNode } from '../src/model/types'
-import { descendants, parentOf } from '../src/model/ops'
-import { allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
+import { ancestry, descendants, parentOf } from '../src/model/ops'
+import { defineComponent, allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
 import { emitHtml, exportFilenameFor } from '../src/export/html'
 import { emitReact, reactFilenameFor } from '../src/export/react'
 import React from 'react'
@@ -41,6 +41,8 @@ import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
 import { THEME_NAMES } from '../src/render/theme'
+import { OUTPUT_FAMILY, fontFaceCss } from '../src/render/fonts'
+import { effectSupported } from '../src/render/effects'
 import { PreviewStage } from '../src/preview'
 import { seedDemo } from '../src/demo'
 import { reparentProbe } from './reparent-probe'
@@ -150,6 +152,23 @@ function snapshot(s: EditorStore) {
 
 export async function runSelfTest(): Promise<string> {
   const s = new EditorStore()
+
+  // --- 0. the canvas has the output's state stylesheet from the start ---
+  // FIRST, before anything opens a preview: the sheet used to arrive only
+  // with the docked preview, so until then a Switch drew its knob with no
+  // track (in the canvas, the toolbox cards and the specimen board alike).
+  {
+    const host0 = document.createElement('div')
+    document.body.appendChild(host0)
+    const r0 = createRoot(host0)
+    r0.render(React.createElement(ToolThumb, { tool: { type: 'Switch' }, theme: 'midnight' }))
+    await new Promise((r) => setTimeout(r, 60))
+    const track = host0.querySelector<HTMLElement>('[data-loom-track]')
+    const bg = track ? getComputedStyle(track).backgroundColor : 'missing'
+    r0.unmount()
+    host0.remove()
+    check('a Switch draws its track before any preview has opened', bg !== 'missing' && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent', bg)
+  }
 
   // --- 1. drop a component with declared defaults applied ---
   const btn = s.addComponent('Button', withRoot(s), 40, 60)
@@ -292,9 +311,10 @@ export async function runSelfTest(): Promise<string> {
     }
     check('no container double-links a child', dupes.length === 0, dupes.join(','))
 
-    const labels = Object.values(s4.doc.nodes).filter((n) => n.type === 'Label')
+    // Muted lines are Captions (theme-coloured), so text is Label + Caption.
+    const labels = Object.values(s4.doc.nodes).filter((n) => n.type === 'Label' || n.type === 'Caption')
     check(
-      'demo seeds 8 Labels (2 header, 2 per card x 3 cards)',
+      'demo seeds 8 text lines (2 header, 5 in the cards, 1 footer)',
       labels.length === 8,
       `got ${labels.length}`,
     )
@@ -734,6 +754,41 @@ export async function runSelfTest(): Promise<string> {
     check('export embeds the active theme', html.includes(getTheme('daylight').textPrimary), 'daylight text colour missing')
     check('export is deterministic', emitHtml(se.doc) === html)
 
+    // The export carries its typeface. Without it the page fell to whatever
+    // `ui-sans-serif` meant on the machine that opened it (DejaVu Sans on
+    // Linux), which is most of why the output looked home made. Proven the
+    // way a reader sees it: the page is loaded in a frame under the app's own
+    // content-security-policy (a srcdoc frame inherits it, and a policy
+    // without `font-src data:` blocks the face) and the text is MEASURED
+    // against the platform face.
+    for (const name of THEME_NAMES) {
+      check(`theme ${name} asks for the shipped face first`, getTheme(name).fontFamily.startsWith(`'${OUTPUT_FAMILY}'`), getTheme(name).fontFamily)
+    }
+    check('export embeds the output typeface as data', /@font-face\{font-family:'Inter Variable'[^}]*src:url\(data:font\/woff2;base64,/.test(html))
+    {
+      const frame = document.createElement('iframe')
+      frame.style.cssText = 'position:fixed;left:-4000px;top:0;width:800px;height:600px'
+      document.body.appendChild(frame)
+      await new Promise<void>((r) => { frame.onload = () => r(); frame.srcdoc = html })
+      const fd = frame.contentDocument!
+      const faces = [...fd.fonts].filter((f) => f.family.replace(/["']/g, '') === OUTPUT_FAMILY)
+      const loaded = await Promise.all(faces.map((f) => f.load().then(() => f.status, () => 'error')))
+      const probe = (family: string) => {
+        const el = fd.createElement('span')
+        el.style.cssText = `font:400 32px ${family};white-space:nowrap;position:absolute`
+        el.textContent = 'Hamburgefonstiv 0123'
+        fd.body.appendChild(el)
+        const w = el.getBoundingClientRect().width
+        el.remove()
+        return w
+      }
+      const shipped = probe(getTheme('daylight').fontFamily)
+      const platform = probe('ui-sans-serif, system-ui, sans-serif')
+      frame.remove()
+      check('exported page loads its typeface', faces.length === 2 && loaded.every((st) => st === 'loaded'), `faces=${faces.length} ${loaded.join(',')}`)
+      check('exported text is set in the shipped face, not the platform one', Math.abs(shipped - platform) > 2, `shipped=${shipped.toFixed(1)} platform=${platform.toFixed(1)}`)
+    }
+
     // Hostile text must be escaped, never emitted raw.
     const evil = new EditorStore()
     evil.addComponent('Label', withRoot(evil), 0, 0, { text: '<script>alert(1)</script>' })
@@ -864,7 +919,7 @@ export async function runSelfTest(): Promise<string> {
         for (const n of Object.values(v.doc.nodes)) for (const c of n.children) counts[c] = (counts[c] ?? 0) + 1
         singleParent = Object.values(counts).every((k) => k === 1) &&
           v.issues.some((i) => i.message.includes('already has a parent'))
-        linear = emitHtml(v.doc).length < 100000
+        linear = emitHtml(v.doc).length - fontFaceCss().length < 100000
       }
       check('shared subtrees collapse to one parent with issues', singleParent)
       check('shared subtrees render linearly', linear)
@@ -881,7 +936,8 @@ export async function runSelfTest(): Promise<string> {
       let rendered = -1
       if (v.doc) {
         try {
-          rendered = emitHtml(v.doc).length
+          // The embedded typeface is a fixed cost, not rendering.
+          rendered = emitHtml(v.doc).length - fontFaceCss().length
         } catch {
           rendered = -1
         }
@@ -960,9 +1016,14 @@ export async function runSelfTest(): Promise<string> {
     check('every component instantiates free (absolute)', nonFree.length === 0, nonFree.map((c) => c.name).join(','))
     check('the flow exceptions are real and few', [...FLOW_BY_NATURE].every((n) => instantiate(n).flow === true) && FLOW_BY_NATURE.size <= 4)
     const panel = getComponent('Panel')
-    check('Panel defaults to a portable solid surface', panel?.props.surface?.default === 'solid')
-    check('Panel glass defaults off (web-only effect)', panel?.props.glass?.default === false)
-    check('desktop capabilities exclude CSS layout mechanisms', !DESKTOP_CAPABILITIES.includes('css-grid' as never))
+    // Glass is the default material (desktop output is Chromium, 2026-09-28).
+    check('Panel defaults to the glass surface', panel?.props.surface?.default === 'glass')
+    check('Panel glass is not gated off desktop', panel !== undefined && unsupportedProps(panel, 'desktop').length === 0)
+    // Desktop output renders in Chromium (decided 2026-09-28), so it admits
+    // every web capability: glass and atmosphere are not web-only.
+    check('desktop renders in Chromium: it can express everything the web can',
+      (['webview', 'webgl', 'css-filter', 'css-grid', 'css-backdrop-filter'] as const).every((c) => DESKTOP_CAPABILITIES.includes(c)))
+    check('no effect is gated off desktop', (['glass', 'aurora', 'grain', 'glow', 'shimmer', 'spotlight', 'tilt', 'chromatic'] as const).every((e) => effectSupported(e, 'desktop')))
     check('the editor targets desktop by default', new EditorStore().target === 'desktop')
   }
 
@@ -995,7 +1056,7 @@ export async function runSelfTest(): Promise<string> {
     // label shares its text with <title>, so it can never prove removal).
     const someId = Object.keys(s24.doc.nodes).find((id) => {
       const n = s24.doc.nodes[id]
-      if (id === withRoot(s24) || n.type !== 'Label') return false
+      if (id === withRoot(s24) || (n.type !== 'Label' && n.type !== 'Caption')) return false
       const t = String(n.props.text ?? '').trim()
       return t !== '' && t !== s24.doc.meta.name && beforeHide.split(t).length - 1 === 1
     })
@@ -1115,6 +1176,23 @@ export async function runSelfTest(): Promise<string> {
     check('react output keeps absolute positioning', src.includes('"position": "absolute"'))
     check('react output carries no editor hooks', !src.includes('data-loom-id') && !src.includes('loom-handle'))
     check('react output is deterministic', emitReact(s28.doc) === src)
+    // It must COMPILE and RUN (npm run probe:react compiles, renders and
+    // mounts every export for real); these are the fast guards for the three
+    // ways it did not: a style as `style={"k": v}` (a syntax error in every
+    // export), custom properties camel-cased (`--loom-accent` as
+    // `-LoomAccent`), and a behaviour runtime that ran on import (touching
+    // `window`, leaving nothing to call on mount).
+    check('react styles are object literals: style={{...}}', src.includes('style={{"') && !/style=\{"/.test(src))
+    check('react keeps custom properties by name', src.includes('"--loom-accent"') && !src.includes('-LoomAccent'))
+    check('react installs its behaviour on mount, not on import', /const installBehaviour = \(function[\s\S]*\}\);\n/.test(src) && !/const installBehaviour = \(function[\s\S]*?\}\)\(\);\n/.test(src))
+    // The page under the design travels with the component, as in the HTML
+    // export (export/page.ts): the typeface embedded, the aurora drawn and
+    // moving, and every page rule scoped to the component's own wrapper.
+    const pageCss = /const PAGE_CSS = (".*");\n/.exec(src)?.[1]
+    const pageRules = pageCss ? (JSON.parse(pageCss) as string) : ''
+    check('react embeds the output typeface', /@font-face\{font-family:'Inter Variable'[^}]*src:url\(data:font\/woff2;base64,/.test(pageRules))
+    check('react draws the aurora page', s28.doc.meta.page?.background === 'aurora' && src.includes('data-loom-aurora') && pageRules.includes('@keyframes loom-wander-1'))
+    check('react page rules stay inside the component', src.includes('className="loom-export loom-container"') && !/(^|\})\s*body\{/.test(pageRules) && !/(^|\})\s*\*,/.test(pageRules), pageRules.slice(0, 80))
     check('react filename is filesystem-safe', reactFilenameFor('My App / v2.0!') === 'my-app-v2-0.jsx', reactFilenameFor('My App / v2.0!'))
 
     // Hostile text is expression-wrapped (a JS string literal, never parsed
@@ -1259,7 +1337,10 @@ export async function runSelfTest(): Promise<string> {
     const selRoot = renderToStaticMarkup(
       renderNode({ doc: s33.doc, selected: new Set([root33]) }, root33),
     )
-    check('the root gets resize handles like any node', selRoot.includes('loom-handle'))
+    // Handles are canvas chrome, drawn over the design by the canvas's
+    // selection layer (§101), not inside the node where its own overflow
+    // clipped them; the node itself carries the selection mark.
+    check('the root is marked selected like any node, and draws no handles of its own', selRoot.includes('data-selected="true"') && !selRoot.includes('loom-handle'))
     check('handles never reach the output', !emitHtml(s33.doc).includes('loom-handle'))
 
     // Move + resize reach the model for the root exactly as for a child.
@@ -1387,7 +1468,9 @@ export async function runSelfTest(): Promise<string> {
     check('a closed dropdown menu is hidden', css.includes('[data-loom-menu-panel][data-loom-open="0"]'))
     check('state colours come from theme variables', css.includes('var(--loom-on)') && css.includes('var(--loom-accent'))
     check('a pressed control looks pressed', css.includes('[data-loom-pressed="1"]'))
-    check('a closed panel is hidden', css.includes('[data-loom-b="panel"]{display:none}'))
+    // Forced: the panel's own display is inline, which beat the plain rule
+    // (§98 measures it live).
+    check('a closed panel is hidden', css.includes('[data-loom-b="panel"][data-loom-shown="0"]{display:none !important}'))
     check('a collapsed drawer is hidden even against inline styles',
       css.includes(':not([data-loom-open="1"]){display:none !important}'))
 
@@ -2310,10 +2393,9 @@ export async function runSelfTest(): Promise<string> {
     check('the card shows the value', html.includes('$48.2k'))
     check('the card shows the comparison', html.includes('+12.4%'))
     check('the card says what the comparison is against', html.includes('vs last month'))
-    check('the card draws exactly one visual', (() => {
-      const svgs = (html.match(/<svg/g) ?? []).length
-      return svgs === 1
-    })(), `${(html.match(/<svg/g) ?? []).length} svgs`)
+    // A trend mark is an icon beside the delta, not the card's visual.
+    const visuals = (h: string) => (h.match(/<svg/g) ?? []).length - (h.match(/data-loom-trend/g) ?? []).length
+    check('the card draws exactly one visual', visuals(html) === 1, `${visuals(html)} visuals`)
 
     // Colour follows GOODNESS, not direction. This is the whole reason
     // `goodDirection` exists: a falling error rate is good news.
@@ -2339,9 +2421,9 @@ export async function runSelfTest(): Promise<string> {
     // The visual is a CHOICE, and "none" is a real answer.
     if (kpi) {
       s46.commit({ op: 'setProp', id: kpi, key: 'visual', value: 'none' }, 'Visual')
-      check('a card can carry no visual at all', (emitHtml(s46.doc).match(/<svg/g) ?? []).length === 0)
+      check('a card can carry no visual at all', visuals(emitHtml(s46.doc)) === 0)
       s46.commit({ op: 'setProp', id: kpi, key: 'visual', value: 'bars' }, 'Visual')
-      check('a card can carry bars instead', (emitHtml(s46.doc).match(/<svg/g) ?? []).length === 0 &&
+      check('a card can carry bars instead', visuals(emitHtml(s46.doc)) === 0 &&
         emitHtml(s46.doc).includes('border-radius:2px'))
       s46.undo()
     }
@@ -2351,7 +2433,9 @@ export async function runSelfTest(): Promise<string> {
     const s47 = new EditorStore()
     const r47 = withRoot(s47)
     s47.addComponent('KpiCard', r47, 0, 0, { points: '12,30,22,48', width: 200, height: 44 })
-    s47.addComponent('Sparkline', r47, 0, 0, { points: '12,30,22,48', width: 200, height: 44 })
+    // The card draws its chart INSIDE its edge and padding (200 - 2 x 17), so the
+    // standalone sparkline is given the same box to compare like with like.
+    s47.addComponent('Sparkline', r47, 0, 0, { points: '12,30,22,48', width: 166, height: 44 })
     const both = emitHtml(s47.doc)
     // Each chart draws an area path and a line path, so two charts make four:
     // the card's two must match the sparkline's two exactly.
@@ -3031,7 +3115,8 @@ export async function runSelfTest(): Promise<string> {
       const g = h.querySelector(`[data-loom-id="${grid}"]`) as HTMLElement | null
       return { table: Boolean(g?.querySelector('table')), handles: g?.querySelectorAll('[data-loom-handle]').length ?? 0, selected: g?.getAttribute('data-selected') }
     }, [grid])
-    check('selected, it is the same grid with handles', picked.table && picked.handles === 4 && picked.selected === 'true', JSON.stringify(picked))
+    // Its handles are the canvas's selection layer's (§101), not the grid's.
+    check('selected, it is the same grid, marked selected', picked.table && picked.handles === 0 && picked.selected === 'true', JSON.stringify(picked))
   }
 
   // --- 55. every area of every component can be customized ---------------
@@ -3463,10 +3548,12 @@ export async function runSelfTest(): Promise<string> {
     app.loadDocument(before)
   }
 
-  // --- 62. the Studio has its own typeface, and the canvas does not ------
+  // --- 62. the Studio has its own typeface, and the canvas has the export's -
   // The chrome was falling back to whatever the OS had (Noto Sans here). Inter
-  // is bundled for the TOOL. The design must not pick it up: exports do not
-  // ship the font, so a canvas in Inter would not be what gets exported.
+  // is bundled for the TOOL. The canvas must show what gets exported: it once
+  // had to avoid Inter because exports did not ship it; exports now embed the
+  // theme's face (render/fonts.ts), so the canvas uses the THEME's stack, which
+  // happens to name Inter first. The Studio's own stack must not leak in.
   {
     await document.fonts.load('12px "Inter Variable"')
     await document.fonts.ready
@@ -3498,13 +3585,15 @@ export async function runSelfTest(): Promise<string> {
     await new Promise((r) => setTimeout(r, 60))
     const label = [...host.querySelectorAll<HTMLElement>('[data-loom-type="Label"]')][0]
     const canvasFont = label ? getComputedStyle(label).fontFamily : 'missing'
-    check('the canvas keeps the export\'s type, not the Studio\'s', label !== undefined && !canvasFont.includes('Inter Variable'), canvasFont)
+    const themeFont = (name?: string) => getTheme(name).fontFamily.replace(/["']/g, '').replace(/\s*,\s*/g, ',')
+    const norm = (f: string) => f.replace(/["']/g, '').replace(/\s*,\s*/g, ',')
+    check('the canvas keeps the export\'s type, not the Studio\'s', label !== undefined && norm(canvasFont) === themeFont(s62.doc.meta.theme), canvasFont)
     r62.unmount()
     host.remove()
     // And what a component inherits: the real surface and preview stage carry
     // the theme's font, as the exported <body> does.
     const surf = document.querySelector<HTMLElement>('.loom .surface')
-    check('the real canvas inherits the theme font, not the Studio font', surf !== null && !getComputedStyle(surf).fontFamily.includes('Inter Variable'), surf ? getComputedStyle(surf).fontFamily : 'no surface')
+    check('the real canvas inherits the theme font, not the Studio font', surf !== null && norm(getComputedStyle(surf).fontFamily) === themeFont(window.__loomStore?.doc.meta.theme), surf ? getComputedStyle(surf).fontFamily : 'no surface')
   }
 
   // --- 63. every tool has its own drawing ---------------------------------
@@ -3949,7 +4038,7 @@ export async function runSelfTest(): Promise<string> {
     check('never bigger than the usable screen', at('left', 9999, 9999).width === 1920 && at('center', 9999, 9999).height === 1053)
   }
 
-  // --- 71. the AI agent's building tools ------------------------------------
+  // --- 105. the AI agent's building tools ------------------------------------
   // An agent builds through the same ops a person does, VALIDATED first (a
   // model's guessed property must never reach the document), and one agent
   // turn is one undo step.
@@ -4013,7 +4102,7 @@ export async function runSelfTest(): Promise<string> {
     check('remove deletes', rm.removed === 1 && !st.doc.nodes[cardId])
   }
 
-  // --- 72. the Assistant sits bottom-centre of the canvas -----------------
+  // --- 106. the Assistant sits bottom-centre of the canvas -----------------
   // Shane: "at the very bottom of the center of the design screen, instead of
   // the current controls, we could put the composer for the AI agent".
   {
@@ -4037,6 +4126,1369 @@ export async function runSelfTest(): Promise<string> {
     check('the Assistant steps aside in Preview', document.querySelector('.assistant') === null)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await wait()
+  }
+
+  // --- 90. checkbox, radio and select are drawn, not left to the OS -------
+  // A white OS square on a dark design (and a different one per platform)
+  // was one of the loudest "home made" tells. The native input stays for
+  // forms, keyboard and assistive tech, hidden; a themed box is drawn from
+  // its state by the shared stylesheet. Measured live, in the output.
+  {
+    installBehaviourRuntime()
+    const s90 = new EditorStore()
+    const root90 = withRoot(s90)
+    s90.addComponent('Checkbox', root90, 0, 0, { checked: true })
+    s90.addComponent('RadioGroup', root90, 0, 60)
+    s90.addComponent('Select', root90, 0, 120)
+    s90.addComponent('DataGrid', root90, 0, 200)
+    const host = document.createElement('div')
+    host.id = 'selftest-90'
+    host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:700px;z-index:99999'
+    document.body.appendChild(host)
+    // The test window is hidden, so transitions never advance: without this
+    // a colour reads as its pre-click value forever.
+    const still = document.createElement('style')
+    still.textContent = '#selftest-90 *{transition:none !important}'
+    document.head.appendChild(still)
+    const r90 = createRoot(host)
+    const theme = getTheme('midnight')
+    r90.render(renderNode({ doc: s90.doc, selected: new Set(), mode: 'preview', theme }, s90.doc.root!))
+    await new Promise((r) => setTimeout(r, 80))
+    const rgb = (hex: string) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`
+    const cbInput = host.querySelector<HTMLInputElement>('input[type=checkbox]')
+    const cbBox = cbInput?.nextElementSibling as HTMLElement | null
+    check('a checkbox hides the OS control and draws its own box', cbInput !== null && getComputedStyle(cbInput).opacity === '0' && cbBox?.hasAttribute('data-loom-box') === true,
+      cbInput ? `opacity=${getComputedStyle(cbInput).opacity} next=${cbBox?.outerHTML.slice(0, 40)}` : 'no input')
+    const boxBg = () => (cbBox ? getComputedStyle(cbBox).backgroundColor : 'none')
+    check('a checked box is filled with the accent', boxBg() === rgb(theme.accent), boxBg())
+    cbBox?.click()
+    await new Promise((r) => setTimeout(r, 30))
+    check('clicking the drawn box unchecks the real input', cbInput?.checked === false && boxBg() !== rgb(theme.accent), `checked=${cbInput?.checked} bg=${boxBg()}`)
+    const radios = [...host.querySelectorAll<HTMLInputElement>('input[type=radio][data-loom-ctl]')]
+    const radioOn = radios.find((r) => r.checked)
+    check('a radio group draws its rings, the chosen one in the accent', radios.length >= 2 && radioOn !== undefined &&
+      getComputedStyle(radioOn.nextElementSibling as HTMLElement).backgroundColor === rgb(theme.accent), `radios=${radios.length}`)
+    const select = host.querySelector<HTMLSelectElement>('select')
+    const sst = select ? getComputedStyle(select) : null
+    check('a select draws the theme chevron, not the OS arrow', sst !== null && sst.appearance === 'none' && sst.backgroundImage.includes('data:image/svg+xml'), sst ? `${sst.appearance} ${sst.backgroundImage.slice(0, 40)}` : 'no select')
+    check('a dark theme asks the browser for dark native parts', select !== null && getComputedStyle(select).colorScheme === 'dark', select ? getComputedStyle(select).colorScheme : '')
+    const gridEl = host.querySelector<HTMLElement>('[data-loom-grid]')
+    const rowBox = gridEl?.querySelector<HTMLInputElement>('input[data-loom-select]')?.nextElementSibling as HTMLElement | null
+    rowBox?.click()
+    await new Promise((r) => setTimeout(r, 30))
+    check('clicking a grid row\'s drawn box selects the row', gridEl?.getAttribute('data-loom-selected') === '1', `selected=${gridEl?.getAttribute('data-loom-selected')}`)
+    r90.unmount()
+    host.remove()
+    still.remove()
+  }
+
+  // --- 91. the output draws its icons; no font glyphs or emoji --------------
+  // ⌕ ▾ ⤴ ★ × 📢 came from whatever font the machine had: mixed sizes and
+  // baselines, emoji in colour, sometimes a missing-glyph box. Every
+  // component, as it lands, must draw its marks from the icon set. Keyboard
+  // notation (⌘ ↑ ↓ ↵) and a tree connector (└) are TEXT and stay.
+  {
+    const allowed = new Set(['⌘', '↑', '↓', '↵', '└'])
+    const glyphy = (ch: string) => {
+      const c = ch.codePointAt(0)!
+      return !allowed.has(ch) && ((c >= 0x2190 && c <= 0x2bff) || c >= 0x1f000 || ch === '×')
+    }
+    const offenders: string[] = []
+    for (const spec of allComponents()) {
+      const s91 = new EditorStore()
+      s91.addComponent(spec.name, withRoot(s91), 0, 0)
+      const html = renderToStaticMarkup(renderNode({ doc: s91.doc, selected: new Set(), mode: 'preview' }, s91.doc.root!))
+      const text = html.replace(/<[^>]*>/g, ' ')
+      const bad = [...new Set([...text].filter(glyphy))]
+      if (bad.length) offenders.push(`${spec.name}: ${bad.join('')}`)
+    }
+    check('no component draws an icon as a font glyph or emoji', offenders.length === 0, offenders.join(' | '))
+    // A suggestion list's browser indicator sat beside the ComboBox chevron.
+    const s91b = new EditorStore()
+    s91b.addComponent('ComboBox', withRoot(s91b), 0, 0)
+    const host91 = document.createElement('div')
+    document.body.appendChild(host91)
+    const r91 = createRoot(host91)
+    r91.render(renderNode({ doc: s91b.doc, selected: new Set(), mode: 'preview' }, s91b.doc.root!))
+    await new Promise((r) => setTimeout(r, 40))
+    const listInput = host91.querySelector('input[list]')
+    // getComputedStyle cannot read this vendor pseudo-element, so the check is
+    // that a live rule targets THIS input's indicator and removes it.
+    const hides = (el: Element) => [...document.styleSheets].some((sh) => [...sh.cssRules].some((r) => {
+      if (!(r instanceof CSSStyleRule) || r.style.display !== 'none') return false
+      return r.selectorText.split(',').some((sel) => {
+        const m = /^(.*)::-webkit-calendar-picker-indicator$/.exec(sel.trim())
+        return m !== null && el.matches(m[1] || '*')
+      })
+    }))
+    const indicator = listInput ? (hides(listInput) ? 'none' : 'shown') : 'missing'
+    r91.unmount()
+    host91.remove()
+    check('a ComboBox shows one chevron, not the browser\'s list arrow too', indicator === 'none', indicator)
+  }
+
+  // --- 92. an empty container is visible on the canvas ---------------------
+  // A split, a button group or an accordion paints no surface of its own, so
+  // once dropped it was invisible: nothing to see, find or drop into. The
+  // real canvas outlines an empty container; the outline goes the moment it
+  // has a child, and never reaches the output.
+  {
+    const app = window.__loomStore
+    const before = app.doc
+    const scene = new EditorStore()
+    const root92 = withRoot(scene)
+    const split = scene.addComponent('SplitH', root92, 20, 20, { w: 360, h: 220 })!
+    const group = scene.addComponent('ButtonGroup', root92, 20, 280, { w: 240, h: 48 })!
+    scene.addComponent('Button', group, 0, 0)
+    app.loadDocument(scene.doc)
+    await new Promise((r) => setTimeout(r, 120))
+    const at = (id: string) => document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${id}"]`)
+    const edge = (id: string) => { const el = at(id); return el ? getComputedStyle(el).outlineStyle : 'missing' }
+    const why = (id: string) => { const el = at(id); return el ? `vacant=${el.getAttribute('data-loom-vacant')} inline=${el.style.outline}` : 'missing' }
+    check('an empty container is outlined on the canvas', edge(split) === 'dashed', `${edge(split)} ${why(split)}`)
+    check('a container with something in it is not', edge(group) === 'none', edge(group))
+    check('the outline never reaches the output', !emitHtml(scene.doc).includes('data-loom-vacant'))
+    app.loadDocument(before)
+  }
+
+  // --- 93. the aurora page: colour wandering behind the UI -----------------
+  // Glass is only as good as what is behind it. The aurora page draws the
+  // theme's colours as large soft blobs on long, unrelated paths, behind the
+  // design, on the real canvas and in the export alike; still for anyone who
+  // asks for less motion.
+  {
+    check('a page can be aurora', cleanPage({ background: 'aurora' })?.background === 'aurora')
+    const app = window.__loomStore
+    const before = app.doc
+    const scene = new EditorStore()
+    const root93 = withRoot(scene)
+    const label = scene.addComponent('Heading', root93, 40, 40, { text: 'Over the aurora' })!
+    scene.commit({ op: 'setPage', page: { background: 'aurora' } }, 'Page')
+    app.loadDocument(scene.doc)
+    await new Promise((r) => setTimeout(r, 150))
+    const layer = document.querySelector<HTMLElement>('.loom .surface [data-loom-aurora]')
+    const blobs = layer ? [...layer.querySelectorAll<HTMLElement>('[data-loom-blob]')] : []
+    const anims = blobs.map((b) => getComputedStyle(b))
+    check('the canvas draws the aurora behind the design', layer !== null && blobs.length >= 4, `blobs=${blobs.length}`)
+    check('every blob wanders, on its own clock', anims.length >= 4 && anims.every((a) => a.animationName.startsWith('loom-wander-')) &&
+      new Set(anims.map((a) => a.animationDuration)).size === anims.length, anims.map((a) => `${a.animationName}/${a.animationDuration}`).join(' '))
+    const headEl = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${label}"]`)
+    const hb = headEl?.getBoundingClientRect()
+    const hit = hb ? document.elementFromPoint(hb.left + hb.width / 2, hb.top + hb.height / 2) : null
+    check('the design paints above the aurora', headEl !== null && hit !== null && (hit === headEl || headEl.contains(hit)), hit ? hit.tagName : 'nothing')
+    const still = [...document.styleSheets].some((sh) => [...sh.cssRules].some((r) =>
+      r instanceof CSSMediaRule && r.conditionText.includes('prefers-reduced-motion') && r.cssText.includes('data-loom-blob')))
+    check('the aurora holds still for reduced motion', still)
+    const html93 = emitHtml(scene.doc)
+    check('the export carries the aurora and its motion', html93.includes('data-loom-aurora') && html93.includes('@keyframes loom-wander-1'))
+    scene.commit({ op: 'setPage', page: { background: 'theme' } }, 'Page')
+    check('a plain page exports no aurora', !emitHtml(scene.doc).includes('loom-wander'))
+    app.loadDocument(before)
+  }
+
+  // --- 94. surfaces are glass; depth is light, not a 1px box ---------------
+  // Every surface was the same opaque fill inside the same 1px border, card in
+  // panel in panel. Surfaces are now one material: translucent, blurring what
+  // is behind, lit along the top edge. A surface ON a surface is the raised
+  // kind: lighter, and it does not blur a second time.
+  {
+    const s94 = new EditorStore()
+    // The root is a Panel on the page: top-level glass. The card sits on it.
+    const panel94 = withRoot(s94)
+    s94.addComponent('Card', panel94, 0, 0)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const r94 = createRoot(host)
+    const theme = getTheme('midnight')
+    // The panel itself, drawn as a root; the card is its first child.
+    r94.render(renderNode({ doc: s94.doc, selected: new Set(), mode: 'preview', theme }, panel94))
+    await new Promise((r) => setTimeout(r, 60))
+    const panelEl = host.firstElementChild as HTMLElement | null
+    const cardEl = panelEl?.firstElementChild as HTMLElement | null
+    const pst = panelEl ? getComputedStyle(panelEl) : null
+    const alpha = (c: string) => { const m = /rgba\([^)]*,\s*([\d.]+)\)/.exec(c); return m ? Number(m[1]) : 1 }
+    check('a Panel lands as glass: translucent and blurring what is behind', pst !== null && pst.backdropFilter.includes('blur') && alpha(pst.backgroundColor) < 1,
+      pst ? `${pst.backdropFilter} ${pst.backgroundColor}` : 'no panel')
+    check('glass is lit along its top edge', pst !== null && pst.boxShadow.includes('inset'))
+    const cst = cardEl ? getComputedStyle(cardEl) : null
+    check('a card on a panel is the raised glass: lighter, no second blur', cst !== null && cst.backdropFilter === 'none' && cst.backgroundImage.includes('gradient'),
+      cst ? `${cst.backdropFilter} ${cst.backgroundImage.slice(0, 40)}` : 'no card')
+    r94.unmount()
+    host.remove()
+    // Every surface component, dropped on a page, is glass.
+    const flat: string[] = []
+    for (const type of ['Card', 'Tabs', 'Modal', 'Drawer', 'Toolbar', 'HeaderBar', 'SettingsSection', 'KpiCard', 'DataCard', 'Menu', 'ConfirmDialog']) {
+      const st = new EditorStore()
+      st.addComponent(type, withRoot(st), 0, 0)
+      const html = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview', theme }, st.doc.root!))
+      if (!html.includes('backdrop-filter:blur')) flat.push(type)
+    }
+    check('every surface component is glass', flat.length === 0, flat.join(', '))
+  }
+
+  // --- 95. soft depth as an accent: wells, knobs, a raised choice ----------
+  // Fields are wells pressed into the surface, knobs are extruded from it,
+  // a segmented control's choice is raised. And the choice FOLLOWS a click:
+  // its look was inline, so it stayed on the authored option forever.
+  {
+    installBehaviourRuntime()
+    const s95 = new EditorStore()
+    const root95 = withRoot(s95)
+    s95.addComponent('Segmented', root95, 0, 0)
+    s95.addComponent('Slider', root95, 0, 60, { value: 20 })
+    s95.addComponent('Switch', root95, 0, 120)
+    s95.addComponent('Input', root95, 0, 180)
+    const host = document.createElement('div')
+    host.id = 'selftest-95'
+    host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px;z-index:99999'
+    document.body.appendChild(host)
+    const still = document.createElement('style')
+    still.textContent = '#selftest-95 *{transition:none !important}'
+    document.head.appendChild(still)
+    const r95 = createRoot(host)
+    r95.render(renderNode({ doc: s95.doc, selected: new Set(), mode: 'preview', theme: getTheme('midnight') }, s95.doc.root!))
+    await new Promise((r) => setTimeout(r, 80))
+    const segs = [...host.querySelectorAll<HTMLElement>('[data-loom-seg]')]
+    const raisedIdx = () => segs.findIndex((l) => getComputedStyle(l).boxShadow !== 'none')
+    const before95 = raisedIdx()
+    const other = segs.find((_, i) => i !== before95)
+    other?.click()
+    await new Promise((r) => setTimeout(r, 40))
+    check('a segmented choice is raised, and the raise follows a click', segs.length >= 2 && before95 >= 0 && other !== undefined && raisedIdx() === segs.indexOf(other),
+      `before=${before95} after=${raisedIdx()} clicked=${other ? segs.indexOf(other) : -1}`)
+    const range = host.querySelector<HTMLInputElement>('input[data-loom-range]')
+    const fillAt = () => range?.style.getPropertyValue('--loom-fill') ?? ''
+    const fill0 = fillAt()
+    if (range) {
+      range.value = '80'
+      range.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    check('a slider track fills to the value and follows the thumb', range !== null && fill0 === '20%' && fillAt() === '80%', `${fill0} -> ${fillAt()}`)
+    const knob = host.querySelector<HTMLElement>('[data-loom-knob]')
+    check('a switch knob is extruded, not a flat dot', knob !== null && getComputedStyle(knob).boxShadow !== 'none' && getComputedStyle(knob).backgroundImage.includes('gradient'))
+    const field = host.querySelector<HTMLInputElement>('input:not([type=range]):not([type=checkbox]):not([type=radio])')
+    check('a field is a well pressed into the surface', field !== null && getComputedStyle(field).boxShadow.includes('inset'), field ? getComputedStyle(field).boxShadow : 'no field')
+    r95.unmount()
+    host.remove()
+    still.remove()
+  }
+
+  // --- 96. finished defaults: legible, aligned, inside their padding -------
+  {
+    const s96 = new EditorStore()
+    const root96 = withRoot(s96)
+    s96.addComponent('Label', root96, 0, 0)
+    s96.addComponent('BannerBox', root96, 0, 60)
+    s96.addComponent('KpiCard', root96, 0, 140)
+    const host = document.createElement('div')
+    host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:700px'
+    document.body.appendChild(host)
+    const r96 = createRoot(host)
+    const day = getTheme('daylight')
+    r96.render(renderNode({ doc: s96.doc, selected: new Set(), mode: 'preview', theme: day }, s96.doc.root!))
+    await new Promise((r) => setTimeout(r, 60))
+    const rgbOf = (hex: string) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`
+    const labelEl = [...host.querySelectorAll<HTMLElement>('*')].find((e) => e.textContent === getComponent('Label')!.props.text.default && e.children.length === 0)
+    check('a dropped Label takes the theme text colour (legible on daylight)', labelEl !== undefined && getComputedStyle(labelEl).color === rgbOf(day.textPrimary),
+      labelEl ? getComputedStyle(labelEl).color : 'no label')
+    const banner = [...host.querySelectorAll<HTMLElement>('div')].find((d) => d.textContent === 'Announcement')
+    const icon = banner?.querySelector('svg')?.getBoundingClientRect()
+    const words = banner ? [...banner.querySelectorAll('span')].find((x) => x.textContent === 'Announcement')?.getBoundingClientRect() : undefined
+    check('a banner sets its icon beside its message', icon !== undefined && words !== undefined && icon.right <= words.left && Math.abs((icon.top + icon.bottom) / 2 - (words.top + words.bottom) / 2) < 6,
+      icon && words ? `icon ${icon.left.toFixed(0)}-${icon.right.toFixed(0)} @${icon.top.toFixed(0)}, text ${words.left.toFixed(0)} @${words.top.toFixed(0)}` : 'missing')
+    // The chart, not an icon: the only drawing wider than an icon is.
+    const kpiSvg = [...host.querySelectorAll<SVGElement>('svg')].find((v) => v.getBoundingClientRect().width > 60)
+    // The card is the raised kind here (it sits on the root's glass): found by its width.
+    const kpiCard = kpiSvg?.closest<HTMLElement>('div[style*="width: 220px"]') ?? null
+    const inner = kpiCard ? kpiCard.getBoundingClientRect().right - parseFloat(getComputedStyle(kpiCard).paddingRight) - parseFloat(getComputedStyle(kpiCard).borderRightWidth) : 0
+    check('a KPI card draws its chart inside its padding', kpiSvg !== undefined && kpiCard !== null && kpiSvg.getBoundingClientRect().right <= inner + 0.5,
+      kpiSvg && kpiCard ? `svg right ${kpiSvg.getBoundingClientRect().right.toFixed(1)} content right ${inner.toFixed(1)}` : 'missing')
+    r96.unmount()
+    host.remove()
+    // The demo is the first thing anyone sees: it must be right in EVERY
+    // theme, so it writes no colour of its own.
+    const sd = new EditorStore()
+    seedDemo(sd)
+    const coloured = Object.values(sd.doc.nodes).filter((n) => typeof n.props.color === 'string' && n.props.color !== '').map((n) => `${n.type}:${n.props.color}`)
+    check('the demo writes no colour literals; text takes the theme', coloured.length === 0, coloured.join(' '))
+    check('the demo sits on the aurora page', sd.doc.meta.page?.background === 'aurora')
+    // Nothing is gated off either target, so the toolbox shows no dots and no
+    // key to them.
+    const toolbox = document.querySelector('.toolbox')
+    check('the toolbox shows no "limited on" key when nothing is limited', toolbox !== null && !toolbox.querySelector('.legend') && !toolbox.querySelector('.tool-gate'),
+      toolbox?.querySelector('.legend')?.textContent ?? '')
+  }
+
+  // --- 97. the Studio is made of what it makes ---------------------------
+  // The chrome was generic dark: flat grey panels on black. It now shares the
+  // output's language: glass panels over a still wash of the accent colours,
+  // wells and raised segments, and a toolbox whose icons carry their
+  // category's colour. Read from the live Studio.
+  {
+    const cs = (q: string) => { const el = document.querySelector<HTMLElement>(q); return el ? getComputedStyle(el) : null }
+    const tb = cs('.loom .toolbox')
+    const ins = cs('.loom .inspector')
+    check('the side panels are glass', tb !== null && ins !== null && tb.backdropFilter.includes('blur') && ins.backdropFilter.includes('blur'),
+      `${tb?.backdropFilter} / ${ins?.backdropFilter}`)
+    check('the Studio sits on a wash of its accent colours', getComputedStyle(document.body).backgroundImage.split('radial-gradient').length - 1 >= 2)
+    const iconColour = (cat: string) => cs(`.toolbox [data-cat="${cat}"] .tool-icon`)?.color ?? 'missing'
+    const cats = ['Containers', 'Text', 'Controls', 'Data'].map(iconColour)
+    check('toolbox icons carry their category colour', cats.every((c) => c !== 'missing') && new Set(cats).size === cats.length, cats.join(' | '))
+    const on = cs('.seg button.on')
+    check('a chosen segment is raised out of its well', on !== null && on.boxShadow !== 'none' && (cs('.seg')?.boxShadow ?? 'none').includes('inset'), on?.boxShadow ?? 'no segment')
+    check('the Studio\'s fields are wells', (cs('.toolbox .search')?.boxShadow ?? 'none').includes('inset'))
+    // Glass is the containing block of any fixed-position child: the toolbox
+    // hover card, rendered inside the (now glass) toolbox, was placed against
+    // it and clipped: in the DOM, never on screen. It must be where it says.
+    // (relatedTarget null: the pointer enters from outside, which is what
+    // makes React fire the row's pointerenter.)
+    const row = [...document.querySelectorAll<HTMLElement>('.toolbox .tool')].find((b) => b.textContent?.trim() === 'Tabs')
+    row?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, relatedTarget: null, pointerType: 'mouse' }))
+    await new Promise((r) => setTimeout(r, 450))
+    const card = document.querySelector<HTMLElement>('.tool-card')
+    const cr = card?.getBoundingClientRect()
+    // The card takes no pointer, so it cannot be hit-tested; what matters is
+    // that no ancestor clips it: every clipping ancestor must contain it.
+    const clippers: string[] = []
+    for (let p = card?.parentElement ?? null; p && cr; p = p.parentElement) {
+      const st = getComputedStyle(p)
+      if (st.overflow === 'visible' && st.overflowX === 'visible' && st.overflowY === 'visible') continue
+      const pr = p.getBoundingClientRect()
+      if (cr.left < pr.left - 0.5 || cr.right > pr.right + 0.5 || cr.top < pr.top - 0.5 || cr.bottom > pr.bottom + 0.5) clippers.push(p.className || p.tagName)
+    }
+    check('the toolbox hover card is on screen, not clipped by a panel', card !== null && cr !== undefined && cr.width > 100 && clippers.length === 0,
+      card ? `${cr?.left.toFixed(0)},${cr?.top.toFixed(0)} ${cr?.width.toFixed(0)}x${cr?.height.toFixed(0)} clipped by ${clippers.join(', ') || 'nothing'}` : 'no card')
+    row?.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: null, pointerType: 'mouse' }))
+    await new Promise((r) => setTimeout(r, 50))
+    // An empty document welcomes you with a way in: the starters, one click
+    // each. Still genuinely empty until you choose (nothing placed unasked).
+    {
+      const app = window.__loomStore
+      const before = app.doc
+      app.loadDocument(emptyDocument())
+      await new Promise((r) => setTimeout(r, 100))
+      const starts = [...document.querySelectorAll<HTMLButtonElement>('.loom .surface .empty-start')]
+      check('an empty document is still empty, and offers the starters', app.doc.root === null && starts.length === STARTERS.length && starts.length > 0, `root=${app.doc.root} buttons=${starts.length}`)
+      const undoBefore = app.history.length
+      starts[0]?.click()
+      await new Promise((r) => setTimeout(r, 100))
+      check('one click on a starter places it, as one undo step', app.doc.root !== null && app.history.length === undoBefore + 1 && !document.querySelector('.loom .surface .empty-start'),
+        `root=${app.doc.root} history ${undoBefore}->${app.history.length}`)
+      app.loadDocument(before)
+    }  }
+
+  // --- 98. a tab set arrives with its tabs -----------------------------------
+  // Dropped empty, a Tabs had nothing for its strip to draw: an empty box
+  // with a rule across it. A toolbox drop now brings three tabs, built as its
+  // own "Add tab" builds them, in one undo step. Code that adds a Tabs still
+  // gets a bare one.
+  {
+    const s98 = new EditorStore()
+    const root98 = withRoot(s98)
+    const before98 = s98.history.length
+    const tabs = s98.dropComponent('Tabs', root98, 0, 0)!
+    const kids = s98.doc.nodes[tabs]?.children ?? []
+    const titles = kids.map((c) => `${s98.doc.nodes[c]?.type}:${String(s98.doc.nodes[c]?.props.title)}`)
+    check('a dropped Tabs arrives with three named tabs', titles.join(',') === 'TabPanel:Overview,TabPanel:Activity,TabPanel:Settings', titles.join(','))
+    check('the tab set and its tabs are one undo step', s98.history.length === before98 + 1)
+    const html98 = emitHtml(s98.doc)
+    check('the strip draws the three tabs', ['Overview', 'Activity', 'Settings'].every((l) => html98.includes(`>${l}<`)))
+    // Only the active tab's page shows (every panel used to ship shown, so a
+    // tab set drew all its pages stacked), measured live under the state
+    // stylesheet; `active` picks which; the tab's label is not repeated as a
+    // heading inside its page.
+    {
+      const host = document.createElement('div')
+      host.id = 'selftest-98'
+      document.body.appendChild(host)
+      // The test window is hidden, so transitions never advance: a fill read
+      // after a click would be its pre-click value.
+      const still98 = document.createElement('style')
+      still98.textContent = '#selftest-98 *{transition:none !important}'
+      document.head.appendChild(still98)
+      const r98 = createRoot(host)
+      const shownTitles = async () => {
+        r98.render(renderNode({ doc: s98.doc, selected: new Set(), mode: 'preview', theme: getTheme('midnight') }, s98.doc.root!))
+        await new Promise((r) => setTimeout(r, 40))
+        return [...host.querySelectorAll<HTMLElement>('[role=tabpanel]')].filter((el) => getComputedStyle(el).display !== 'none').map((el) => el.getAttribute('aria-label'))
+      }
+      const first = await shownTitles()
+      check('a tab set shows only its active page', first.join(',') === 'Overview', first.join(','))
+      s98.commit({ op: 'setProp', id: tabs, key: 'active', value: 1 }, 'Active')
+      const second = await shownTitles()
+      check('the active prop picks the page', second.join(',') === 'Activity', second.join(','))
+      const page = host.querySelector<HTMLElement>('[role=tabpanel][aria-label=Activity]')
+      check('a page does not repeat its tab label as a heading', page !== null && !(page.textContent ?? '').includes('Activity'), page?.textContent ?? '')
+      // A click moves the page AND the highlight: the chosen tab's fill was
+      // inline, so it stayed on the authored tab while the colour moved.
+      installBehaviourRuntime()
+      const tabBtn = (label: string) => [...host.querySelectorAll<HTMLElement>('[role=tab]')].find((b) => b.textContent === label)
+      tabBtn('Settings')?.click()
+      await new Promise((r) => setTimeout(r, 40))
+      const filled = [...host.querySelectorAll<HTMLElement>('[role=tab]')].filter((b) => getComputedStyle(b).backgroundColor !== 'rgba(0, 0, 0, 0)').map((b) => b.textContent)
+      const visible = [...host.querySelectorAll<HTMLElement>('[role=tabpanel]')].filter((el) => getComputedStyle(el).display !== 'none').map((el) => el.getAttribute('aria-label'))
+      check('a click moves the page and the highlight together', filled.join(',') === 'Settings' && visible.join(',') === 'Settings', `filled=${filled.join(',')} shown=${visible.join(',')}`)
+      r98.unmount()
+      host.remove()
+      still98.remove()
+      s98.undo()
+    }
+    s98.undo()
+    check('one undo removes the tab set and its tabs', !s98.doc.nodes[tabs] && kids.every((c) => !s98.doc.nodes[c]))
+    const bare = new EditorStore()
+    const bareId = bare.addComponent('Tabs', withRoot(bare), 0, 0)!
+    check('a Tabs added by code stays bare', (bare.doc.nodes[bareId]?.children.length ?? -1) === 0)
+    let refused = false
+    try { defineComponent({ name: '__bad_seed', category: 'Test', container: true, icon: '', description: '', props: {}, childTypes: ['TabPanel'], seed: [{ type: 'Button' }] }) } catch { refused = true }
+    check('a seed must be a child the container accepts', refused && !getComponent('__bad_seed'))
+  }
+
+  // --- 99. an accordion arrives with its sections -----------------------------
+  // Dropped empty, an Accordion drew nothing at all. A toolbox drop brings
+  // three sections (an FAQ), one undo step; each section is glass; a click
+  // on a summary opens its body.
+  {
+    const s99 = new EditorStore()
+    const root99 = withRoot(s99)
+    const before99 = s99.history.length
+    const acc = s99.dropComponent('Accordion', root99, 0, 0)!
+    const items = s99.doc.nodes[acc]?.children ?? []
+    const titles = items.map((c) => `${s99.doc.nodes[c]?.type}:${String(s99.doc.nodes[c]?.props.title)}`)
+    check('a dropped Accordion arrives with three sections', titles.join('|') === 'AccordionItem:What is included?|AccordionItem:How does billing work?|AccordionItem:Can I cancel at any time?', titles.join('|'))
+    check('the accordion and its sections are one undo step', s99.history.length === before99 + 1)
+    const host = document.createElement('div')
+    host.id = 'selftest-99'
+    document.body.appendChild(host)
+    const still99 = document.createElement('style')
+    still99.textContent = '#selftest-99 *{transition:none !important}'
+    document.head.appendChild(still99)
+    installBehaviourRuntime()
+    const r99 = createRoot(host)
+    // The accordion drawn on its own (it sits in the root panel, so its
+    // sections are the raised glass).
+    r99.render(renderNode({ doc: s99.doc, selected: new Set(), mode: 'preview', theme: getTheme('midnight') }, acc))
+    await new Promise((r) => setTimeout(r, 60))
+    const summaries = [...host.querySelectorAll<HTMLElement>('[data-loom-summary]')]
+    check('the accordion draws its three summaries', summaries.map((x) => x.textContent).join('|') === 'What is included?|How does billing work?|Can I cancel at any time?', summaries.map((x) => x.textContent).join('|'))
+    const sections = [...host.querySelectorAll<HTMLElement>('[data-loom-b="disclosure"]')]
+    // Glass of either kind: it sits on the root panel's glass here, so it is
+    // the raised kind (no second blur): the material's fill and lit edge.
+    check('each section is glass', sections.length === 3 && sections.every((x) => getComputedStyle(x).backgroundImage.includes('gradient') && getComputedStyle(x).boxShadow.includes('inset')),
+      sections.map((x) => getComputedStyle(x).backgroundImage.slice(0, 20)).join(' | '))
+    const body = sections[1]?.querySelector<HTMLElement>('[data-loom-body]')
+    const shut = body ? getComputedStyle(body).display : 'missing'
+    summaries[1]?.click()
+    await new Promise((r) => setTimeout(r, 40))
+    check('a click on a summary opens its section', shut === 'none' && body !== null && body !== undefined && getComputedStyle(body).display !== 'none', `${shut} -> ${body ? getComputedStyle(body).display : 'missing'}`)
+    r99.unmount()
+    host.remove()
+    still99.remove()
+    s99.undo()
+    check('one undo removes the accordion and its sections', !s99.doc.nodes[acc] && items.every((c) => !s99.doc.nodes[c]))
+    const bare = new EditorStore()
+    const bareId = bare.addComponent('Accordion', withRoot(bare), 0, 0)!
+    check('an Accordion added by code stays bare', (bare.doc.nodes[bareId]?.children.length ?? -1) === 0)
+  }
+
+  // --- 100. composites arrive with their parts; layouts arrive empty -------
+  // Every seed, table-driven: it names a real component, a toolbox drop
+  // builds exactly it as one undo step, and the output draws it. Layout
+  // containers stay empty for you to fill (the form-designer model).
+  {
+    const seeded = allComponents().filter((c) => (c.seed ?? []).length > 0)
+    const unknown = seeded.flatMap((c) => (c.seed ?? []).filter((k) => !getComponent(k.type)).map((k) => `${c.name}:${k.type}`))
+    check('every seed names a real component', unknown.length === 0, unknown.join(', '))
+    const wrong: string[] = []
+    for (const spec of seeded) {
+      const st = new EditorStore()
+      const r = withRoot(st)
+      const before = st.history.length
+      const id = st.dropComponent(spec.name, r, 0, 0)
+      const kids = id ? st.doc.nodes[id].children.map((c) => st.doc.nodes[c]?.type) : []
+      const want = (spec.seed ?? []).map((k) => k.type)
+      if (!id || kids.join(',') !== want.join(',') || st.history.length !== before + 1) wrong.push(`${spec.name}: ${kids.join(',')}`)
+      else {
+        try { emitHtml(st.doc) } catch (e) { wrong.push(`${spec.name}: ${String(e)}`) }
+      }
+    }
+    check('every seeded component drops with exactly its seed, in one step', wrong.length === 0, wrong.join(' | '))
+    const expect: Record<string, string[]> = {
+      SettingsSection: ['Email notifications', 'Two-factor authentication', 'Language'],
+      KanbanColumn: ['Design review', 'Update onboarding copy', 'Fix login redirect'],
+      NotificationList: ['New comment', 'Deploy finished', 'Storage almost full'],
+      ButtonGroup: ['Left', 'Center', 'Right'],
+      CommandBar: ['New', 'Import', 'Export'],
+    }
+    const missing: string[] = []
+    for (const [name, words] of Object.entries(expect)) {
+      const st = new EditorStore()
+      st.dropComponent(name, withRoot(st), 0, 0)
+      const html = emitHtml(st.doc)
+      for (const w of words) if (!html.includes(`>${w}<`)) missing.push(`${name}:${w}`)
+    }
+    check('composites draw their parts', missing.length === 0, missing.join(', '))
+    // A settings row is a label AND its control: seeds nest one level.
+    {
+      const ss = new EditorStore()
+      const sid = ss.dropComponent('SettingsSection', withRoot(ss), 0, 0)!
+      const controls = ss.doc.nodes[sid].children.map((r) => (ss.doc.nodes[r]?.children ?? []).map((c) => ss.doc.nodes[c]?.type).join('+'))
+      check('each seeded settings row arrives with its control', controls.join(',') === 'Switch,Switch,Select', controls.join(','))
+      // Names read down the left edge: the row's `align` (control side, right
+      // by default) was also applied as text alignment, right-aligning every
+      // label. Measured on the label text itself.
+      const host = document.createElement('div')
+      host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px'
+      document.body.appendChild(host)
+      const rs = createRoot(host)
+      rs.render(renderNode({ doc: ss.doc, selected: new Set(), mode: 'preview' }, sid))
+      await new Promise((r) => setTimeout(r, 30))
+      const offsets = ['Email notifications', 'Two-factor authentication', 'Language'].map((label) => {
+        const span = [...host.querySelectorAll<HTMLElement>('span')].find((x) => x.textContent === label)
+        const col = span?.parentElement
+        if (!span || !col) return 'missing'
+        const range = document.createRange()
+        range.selectNodeContents(span)
+        return Math.round(range.getBoundingClientRect().left - col.getBoundingClientRect().left)
+      })
+      rs.unmount()
+      host.remove()
+      check('settings row labels are left-aligned', offsets.every((o) => o === 0), offsets.join(','))
+    }
+    // A bar reads across: its seeded parts sit on one line.
+    {
+      const host = document.createElement('div')
+      host.style.cssText = 'position:fixed;left:0;top:0;width:1400px;height:600px'
+      document.body.appendChild(host)
+      const rb = createRoot(host)
+      const stacked: string[] = []
+      for (const name of ['Toolbar', 'CommandBar', 'ButtonGroup']) {
+        const st = new EditorStore()
+        const id = st.dropComponent(name, withRoot(st), 0, 0)!
+        rb.render(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, id))
+        await new Promise((r) => setTimeout(r, 20))
+        const bar = host.firstElementChild as HTMLElement | null
+        const tops = [...(bar?.children ?? [])].map((c) => Math.round(c.getBoundingClientRect().top))
+        if (tops.length < 3 || new Set(tops).size !== 1) stacked.push(`${name}: ${tops.join(',')}`)
+      }
+      rb.unmount()
+      host.remove()
+      check('a bar lays its parts out in a row', stacked.length === 0, stacked.join(' | '))
+    }
+    const tb = new EditorStore()
+    const tbId = tb.dropComponent('Toolbar', withRoot(tb), 0, 0)!
+    check('a toolbar arrives with its tools', tb.doc.nodes[tbId].children.length === 4 && tb.doc.nodes[tbId].children.every((c) => tb.doc.nodes[c]?.type === 'IconButton'))
+    // Arranged, not piled: seeded parts must not overlap (free-positioned they
+    // all sat at 0,0), measured live for every seeded component.
+    {
+      const host = document.createElement('div')
+      host.style.cssText = 'position:fixed;left:0;top:0;width:1400px;height:900px'
+      document.body.appendChild(host)
+      const r100 = createRoot(host)
+      const piled: string[] = []
+      for (const spec of seeded) {
+        const st = new EditorStore()
+        const id = st.dropComponent(spec.name, withRoot(st), 0, 0)!
+        r100.render(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, id))
+        await new Promise((r) => setTimeout(r, 20))
+        const own = host.firstElementChild as HTMLElement | null
+        // The seeded children, found as the container's element children in
+        // document order that the renderer drew for them (visible ones only).
+        const boxes = [...(own?.querySelectorAll<HTMLElement>('*') ?? [])]
+          .filter((el) => el.parentElement && getComputedStyle(el).display !== 'none')
+          .filter((el) => el.textContent && (spec.seed ?? []).some((k) => {
+            const t = String(k.props?.title ?? k.props?.label ?? '')
+            return t !== '' && el.firstChild !== null && el.textContent?.trim().startsWith(t) && el.getBoundingClientRect().height > 0
+          }))
+          .map((el) => el.getBoundingClientRect())
+        for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i], b = boxes[j]
+          const overlap = Math.min(a.right, b.right) - Math.max(a.left, b.left) > 2 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2
+          const nested = (a.left <= b.left && a.right >= b.right && a.top <= b.top && a.bottom >= b.bottom) || (b.left <= a.left && b.right >= a.right && b.top <= a.top && b.bottom >= a.bottom)
+          if (overlap && !nested) { piled.push(spec.name); i = boxes.length; break }
+        }
+        const kidsFlow = st.doc.nodes[id].flow
+        if (!kidsFlow) piled.push(`${spec.name} (not arranged)`)
+      }
+      r100.unmount()
+      host.remove()
+      check('seeded parts are arranged, not piled on each other', piled.length === 0, [...new Set(piled)].join(', '))
+    }
+    const layouts = ['Panel', 'Stack', 'Grid', 'Card', 'ScrollView', 'SplitH', 'SplitV', 'FormGrid'].filter((n) => (getComponent(n)?.seed ?? []).length > 0)
+    check('layout containers land empty, for you to fill', layouts.length === 0, layouts.join(', '))
+  }
+
+  // --- 101. the editor's basics (UI/UX review, batch A) ----------------------
+  // Read from the live Studio: the keys, the menu, the handles, the file
+  // outcomes, contrast, names and the hover card, each as a person meets it.
+  {
+    const app = window.__loomStore
+    const saved = app.doc
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+    const press = (key: string, init: KeyboardEventInit = {}) =>
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
+    const fixture = () => {
+      app.loadDocument(emptyDocument())
+      const root = app.dropComponent('Stack', null, 0, 0)!
+      app.commit({ op: 'setFlow', id: root, flow: true }, 'flow')
+      const a = app.dropComponent('Caption', root, 0, 0)!
+      const b = app.dropComponent('Label', root, 0, 0)!
+      return { root, a, b }
+    }
+
+    // 1. Ctrl+D duplicates (it deleted), one undo step, the copy selected.
+    {
+      const { root, a, b } = fixture()
+      app.select([a])
+      const before = app.history.length
+      press('d', { ctrlKey: true })
+      await settle()
+      const kids = app.doc.nodes[root].children
+      check('Ctrl+D duplicates the selection, as in every design tool', kids.length === 3 && kids.includes(a) && app.selection.length === 1 && app.selection[0] !== a && app.doc.nodes[app.selection[0]]?.type === 'Caption',
+        `children ${kids.length}, selection ${app.selection.map((id) => app.doc.nodes[id]?.type).join(',')}`)
+      check('the duplicate is one undo step', app.history.length === before + 1)
+      app.select([a, b])
+      const before2 = app.history.length
+      press('d', { ctrlKey: true })
+      await settle()
+      check('Ctrl+D on two nodes copies both in one step, each after its source',
+        app.doc.nodes[root].children.length === 5 && app.history.length === before2 + 1 && app.selection.length === 2 &&
+          app.doc.nodes[root].children.indexOf(app.selection[0]) === app.doc.nodes[root].children.indexOf(a) + 1,
+        app.doc.nodes[root].children.map((id) => app.doc.nodes[id]?.type).join(','))
+      // The context menu offers it too.
+      const el = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${a}"]`)
+      const r = el?.getBoundingClientRect()
+      el?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: (r?.left ?? 0) + 2, clientY: (r?.top ?? 0) + 2 }))
+      await settle()
+      const dupItem = [...document.querySelectorAll<HTMLButtonElement>('.ctx-item')].find((x) => x.textContent?.includes('Duplicate'))
+      check('the context menu offers Duplicate', dupItem !== undefined)
+      press('Escape')
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+      await settle()
+    }
+
+    // 2 + 3. Handles sit on the selected node's own corners, flow child or
+    // free, for every component; and stay 8px on screen at any zoom.
+    {
+      // Zoom out first, so a handle that scales with the zoom shows it.
+      const zoomOut = document.querySelector<HTMLButtonElement>('.loom [aria-label="Zoom out"]')
+      for (let i = 0; i < 6; i++) { zoomOut?.click(); await settle(20) }
+      const zoomPct = Number(document.querySelector<HTMLElement>('.loom .surface')?.dataset.zoom ?? 100)
+      const off: string[] = []
+      const sizes: number[] = []
+      let measured = 0
+      for (const spec of allComponents()) {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Stack', null, 0, 0)!
+        app.commit({ op: 'setFlow', id: root, flow: true }, 'flow')
+        const id = app.dropComponent(spec.name, root, 0, 0)
+        if (!id || !app.doc.nodes[root].children.includes(id)) continue
+        app.select([id])
+        await settle(30)
+        const node = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${id}"]`)
+        const box = document.querySelector<HTMLElement>(`.loom .surface .sel-box[data-for="${id}"]`)
+        const nw = box?.querySelector<HTMLElement>('.loom-handle[data-corner="nw"]')
+        const se = box?.querySelector<HTMLElement>('.loom-handle[data-corner="se"]')
+        if (!node || !nw || !se) { off.push(`${spec.name}: no handles`); continue }
+        // Reachable, not just placed: nothing clips or covers the handle.
+        const sr = se.getBoundingClientRect()
+        if (document.elementFromPoint(sr.left + sr.width / 2, sr.top + sr.height / 2) !== se) off.push(`${spec.name}: handle covered or clipped`)
+        const nr = node.getBoundingClientRect()
+        const a = nw.getBoundingClientRect()
+        const z = se.getBoundingClientRect()
+        measured++
+        sizes.push(a.width)
+        const near = (p: number, q: number) => Math.abs(p - q) <= 1.5
+        if (!(near(a.left + a.width / 2, nr.left) && near(a.top + a.height / 2, nr.top) && near(z.left + z.width / 2, nr.right) && near(z.top + z.height / 2, nr.bottom))) {
+          off.push(`${spec.name}: node ${nr.left.toFixed(0)},${nr.top.toFixed(0)}-${nr.right.toFixed(0)},${nr.bottom.toFixed(0)} handles ${(a.left + a.width / 2).toFixed(0)},${(a.top + a.height / 2).toFixed(0)}-${(z.left + z.width / 2).toFixed(0)},${(z.top + z.height / 2).toFixed(0)}`)
+        }
+      }
+      check('a selected node\'s handles sit on its own corners, reachable, for every component', measured > 80 && off.length === 0,
+        `${measured} measured; ${off.slice(0, 4).join(' | ')}${off.length > 4 ? ` (+${off.length - 4})` : ''}`)
+      // A fixed overlay is fixed to the artboard (the design's viewport), not
+      // to the Studio window it used to cover.
+      {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Stack', null, 0, 0)!
+        const pal = app.dropComponent('CommandPalette', root, 0, 0)!
+        app.select([])
+        await settle(40)
+        const surf = document.querySelector<HTMLElement>('.loom .surface')!.getBoundingClientRect()
+        const pr = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${pal}"]`)?.getBoundingClientRect()
+        check('a fixed overlay on the canvas stays inside the artboard', pr !== undefined && pr.left >= surf.left - 1 && pr.top >= surf.top - 1 && pr.right <= surf.right + 1 && pr.bottom <= surf.bottom + 1,
+          pr ? `overlay ${pr.left.toFixed(0)},${pr.top.toFixed(0)}-${pr.right.toFixed(0)},${pr.bottom.toFixed(0)} artboard ${surf.left.toFixed(0)},${surf.top.toFixed(0)}-${surf.right.toFixed(0)},${surf.bottom.toFixed(0)}` : 'missing')
+      }
+      check('resize handles are 8px on screen at any zoom', zoomPct < 90 && sizes.length > 0 && sizes.every((w) => w > 7 && w < 9.5),
+        `zoom ${zoomPct}%, handle ${Math.min(...sizes).toFixed(1)}-${Math.max(...sizes).toFixed(1)}px`)
+      // Back to fitting the viewport.
+      document.querySelector<HTMLButtonElement>('.loom .zoom-readout, .loom [aria-label^="Zoom "][aria-label*="percent"]')?.click()
+      await settle()
+    }
+
+    // 4. Open asks before discarding unsaved work; every file action reports.
+    {
+      const realHost = app.host
+      const realConfirm = window.confirm
+      let opened = 0
+      let asked = 0
+      let openResult: Awaited<ReturnType<LoomHost['open']>> = { ok: false, canceled: true }
+      app.host = {
+        save: async () => ({ ok: true, path: '/work/Telemetry Console.loom.json' }),
+        open: async () => { opened++; return openResult },
+        autosave: async () => ({ ok: true }),
+        readAutosave: async () => ({ ok: false }),
+        exportHtml: async () => ({ ok: false, error: 'disk full' }),
+      }
+      try {
+        fixture()
+        window.confirm = () => { asked++; return false }
+        const openBtn = document.querySelector<HTMLButtonElement>('.loom button[aria-label="Open"]')
+        openBtn?.click()
+        press('o', { ctrlKey: true })
+        await settle()
+        check('Open asks before discarding unsaved work, and a "no" keeps it', app.dirty && asked === 2 && opened === 0, `asked ${asked}, opened ${opened}`)
+        window.confirm = () => { asked++; return true }
+        openResult = { ok: true, path: '/work/notes.txt', contents: 'plain text, not a document' }
+        openBtn?.click()
+        await settle()
+        const bad = app.notice
+        check('opening a file that is not a Loom document says so', opened === 1 && bad?.tone === 'error' && /isn't a Loom document/.test(bad.text) && app.doc.root !== null,
+          bad?.text ?? 'no notice')
+        await app.save()
+        await settle()
+        const toast = document.querySelector<HTMLElement>('.loom .toast')
+        check('a save says where it went', app.notice?.tone === 'ok' && app.notice.text === 'Saved Telemetry Console.loom.json' && toast?.textContent?.includes('Saved') === true,
+          `${app.notice?.text} / toast ${toast?.textContent ?? 'none'}`)
+        check('the notice is a status region a screen reader announces', document.querySelector('.loom .toast-region')?.getAttribute('role') === 'status')
+        await app.exportHtmlFile()
+        await settle()
+        check('a failed export says why', app.notice?.tone === 'error' && app.notice.text.includes('disk full'), app.notice?.text ?? 'none')
+        const before = app.notice?.id
+        openResult = { ok: false, canceled: true }
+        openBtn?.click()
+        await settle()
+        check('a cancelled dialog leaves no notice', app.notice?.id === before)
+      } finally {
+        app.host = realHost
+        window.confirm = realConfirm
+        if (app.notice) app.dismissNotice(app.notice.id)
+      }
+    }
+
+    // 5. Contrast: the call to action and the tertiary text both read.
+    {
+      const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
+      const lum = ([r, g, b]: number[]) => {
+        const f = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+      }
+      const ratio = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05) }
+      const cta = document.querySelector<HTMLElement>('.loom .tb-primary')
+      const ink = cta ? rgb(getComputedStyle(cta).color) : []
+      const stops = cta ? (getComputedStyle(cta).backgroundImage.match(/rgba?\([^)]*\)/g) ?? []).map(rgb) : []
+      const worst = stops.length ? Math.min(...stops.map((s) => ratio(ink, s))) : 0
+      check('the Export button\'s label reads (4.5:1 on its whole gradient)', worst >= 4.5, `${worst.toFixed(2)}:1`)
+      const root = getComputedStyle(document.documentElement)
+      const hex = (v: string) => { const h = root.getPropertyValue(v).trim().replace('#', ''); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) }
+      const tertiary = Math.min(ratio(hex('--ink-3'), hex('--panel')), ratio(hex('--ink-3'), hex('--panel-2')))
+      check('tertiary text reads on the panels (4.5:1)', tertiary >= 4.5, `${tertiary.toFixed(2)}:1`)
+    }
+
+    // 6. Every inspector control has a name; fields show a focus ring.
+    {
+      const { a } = fixture()
+      app.select([a])
+      await settle()
+      // Unfold what the inspector folds (Display, Effects), so every control is counted.
+      for (const head of document.querySelectorAll<HTMLButtonElement>('.loom .inspector .disclosure-head[aria-expanded="false"]')) head.click()
+      await settle()
+      const controls = [...document.querySelectorAll<HTMLElement>('.loom .inspector [role="switch"], .loom .inspector select, .loom .inspector input:not([type="color"]), .loom .inspector textarea')]
+      const nameOf = (el: HTMLElement) =>
+        el.getAttribute('aria-label') ||
+        (el.getAttribute('aria-labelledby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' ').trim() ||
+        [...((el as HTMLInputElement).labels ?? [])].map((l) => l.textContent).join(' ').trim()
+      const nameless = controls.filter((c) => !nameOf(c)).map((c) => `${c.tagName.toLowerCase()}${c.getAttribute('role') ? `[${c.getAttribute('role')}]` : ''}`)
+      check('every switch, menu and field in the inspector has a name', controls.length > 10 && nameless.length === 0, `${controls.length} controls; nameless: ${nameless.join(', ')}`)
+      const search = document.querySelector<HTMLInputElement>('.loom .props-search')
+      search?.focus()
+      // A hidden test window may not hold the OS focus, and then no field is
+      // :focus-visible; measure the ring when it is, else read the rule.
+      const live = search !== null && document.activeElement === search && search.matches(':focus-visible')
+      const ring = live && search ? getComputedStyle(search).boxShadow : ''
+      const rule = [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules] } catch { return [] } })
+        .some((r) => r instanceof CSSStyleRule && r.selectorText.includes('.props-search:focus-visible') && /0(px)? 0(px)? 0(px)? 2px/.test(r.style.boxShadow))
+      check('a focused field shows a ring, not just a tinted edge', live ? /0px 0px 0px 2px/.test(ring) : rule, live ? `measured: ${ring}` : `rule present: ${rule}`)
+      search?.blur()
+    }
+
+    // 7. The hover card speaks the inspector's language, not the schema's.
+    {
+      const text = tooltipFor('Tabs')
+      check('the hover card names properties in plain words', !/\(choice|\(text|\(number|= /.test(text) && text.includes('You can set its'), text.split('\n').slice(-3).join(' / '))
+    }
+
+    app.loadDocument(saved)
+    app.select([])
+    await settle()
+  }
+
+  // --- 102. building without dragging, a real tree, a clipboard, several at
+  // once (UI/UX review, batch B) ----------------------------------------------
+  {
+    const app = window.__loomStore
+    const saved = app.doc
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+    const key = (target: EventTarget, k: string, init: KeyboardEventInit = {}) =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.loom .toolbox button')].find((b) => b.textContent?.trim().startsWith(name))?.click()
+    const toolButton = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.loom .toolbox .tool')].find((b) => b.querySelector('.tool-name')?.textContent === name)
+
+    // 8. A click (or Enter, which clicks a button) adds a tool: into the
+    // selected container, else beside the selection, else as the root.
+    try {
+        app.loadDocument(emptyDocument())
+        await settle()
+        tab('Components')
+        await settle()
+        toolButton('Card')?.click()
+        await settle()
+        const root = app.doc.root
+        check('clicking a tool in an empty document makes it the root', root !== null && app.doc.nodes[root!]?.type === 'Card', `root ${root && app.doc.nodes[root]?.type}`)
+        toolButton('Button')?.click()
+        await settle()
+        const kids = root ? app.doc.nodes[root].children : []
+        check('clicking a tool with a container selected adds it inside', kids.length === 1 && app.doc.nodes[kids[0]]?.type === 'Button' && app.selection[0] === kids[0],
+          kids.map((k) => app.doc.nodes[k]?.type).join(','))
+        toolButton('Label')?.click()
+        await settle()
+        check('with a leaf selected, the tool goes into its container', root !== null && app.doc.nodes[root].children.length === 2 && app.doc.nodes[app.doc.nodes[root].children[1]]?.type === 'Label')
+        check('the empty document says a tool can be clicked, not only dragged', (() => { app.loadDocument(emptyDocument()); return true })() && await settle().then(() => /Click any tool/.test(document.querySelector('.loom .empty-hint-body')?.textContent ?? '')))
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 8 (click to add) runs to the end', false, String(e))
+    }
+
+    // 9. Layers: a tree you can read, fold, walk, rename and reorder.
+    try {
+        const sd = new EditorStore()
+        seedDemo(sd)
+        app.loadDocument(sd.doc)
+        tab('Layers')
+        await settle(100)
+        const rows = [...document.querySelectorAll<HTMLElement>('.loom .layers [role="treeitem"]')]
+        const cramped = rows.filter((r) => Number(r.getAttribute('aria-level')) <= 5 && (r.querySelector<HTMLElement>('.tool-name')?.clientWidth ?? 0) < 80)
+          .map((r) => `${r.getAttribute('aria-label')} ${r.querySelector<HTMLElement>('.tool-name')?.clientWidth}px`)
+        check('every layer name has room to be read (80px+, five levels deep)', rows.length >= 15 && cramped.length === 0, `${rows.length} rows; cramped: ${cramped.slice(0, 3).join(' | ')}`)
+        check('the layers are a tree to assistive tech', document.querySelector('.loom .layers [role="tree"]') !== null && rows.every((r) => r.hasAttribute('aria-level')))
+        const glyphs = document.querySelector('.loom .layers')?.textContent?.match(/[↑↓●○⚿]/g) ?? []
+        check('layer controls are drawn icons, not text glyphs', glyphs.length === 0, glyphs.join(''))
+        // Fold a branch.
+        const branch = rows.find((r) => r.getAttribute('aria-expanded') === 'true')!
+        const before = document.querySelectorAll('.loom .layers [role="treeitem"]').length
+        branch.querySelector<HTMLButtonElement>('.layer-twist')?.click()
+        await settle()
+        const after = document.querySelectorAll('.loom .layers [role="treeitem"]').length
+        check('a branch folds away its rows', after < before && branch.getAttribute('aria-expanded') === 'false', `${before} -> ${after} rows`)
+        branch.querySelector<HTMLButtonElement>('.layer-twist')?.click()
+        await settle()
+        // Walk it with the keyboard.
+        const first = document.querySelector<HTMLElement>('.loom .layers [role="treeitem"]')!
+        app.select([first.dataset.layer!])
+        await settle()
+        key(first, 'ArrowDown')
+        await settle()
+        const second = document.querySelectorAll<HTMLElement>('.loom .layers [role="treeitem"]')[1]
+        check('ArrowDown in the tree selects the next row (and does not nudge the node)', app.selection[0] === second.dataset.layer, `${app.doc.nodes[app.selection[0]]?.type}`)
+        // Rename in place.
+        const target = second.dataset.layer!
+        second.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+        await settle()
+        const input = document.querySelector<HTMLInputElement>('.loom .layers .layer-rename')
+        const h0 = app.history.length
+        if (input) {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Page title')
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          key(input, 'Enter')
+          input.blur()
+        }
+        await settle()
+        const named = app.doc.nodes[target]?.name
+        const shown = document.querySelector<HTMLElement>(`.loom .layers [data-layer="${target}"] .tool-name`)?.textContent
+        check('a layer renames in place (double-click), in one undo step', input !== null && named === 'Page title' && shown === 'Page title' && app.history.length === h0 + 1, `name ${named}, shows ${shown}`)
+        const round = validate(serialize(app.doc))
+        check('a node\'s name survives save and open, and never reaches the output', round.doc?.nodes[target]?.name === 'Page title' && !emitHtml(app.doc).includes('Page title'))
+        // Drag a row below its next sibling.
+        const siblingsOf = (id: string) => app.doc.nodes[parentOf(app.doc, id)!].children
+        const kids = siblingsOf(target)
+        const a = kids[0]
+        const b = kids[1]
+        const rowA = document.querySelector<HTMLElement>(`.loom .layers [data-layer="${a}"]`)!
+        const rowB = document.querySelector<HTMLElement>(`.loom .layers [data-layer="${b}"]`)!
+        const ra = rowA.getBoundingClientRect()
+        const rb = rowB.getBoundingClientRect()
+        rowA.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: ra.left + 40, clientY: ra.top + 5 }))
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: rb.left + 40, clientY: rb.top + rb.height * 0.2 }))
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: rb.left + 40, clientY: rb.bottom - 2 }))
+        await settle(30)
+        const marked = rowB.className
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: rb.left + 40, clientY: rb.bottom - 2 }))
+        await settle()
+        const order = siblingsOf(a)
+        check('dragging a layer below another reorders it there', order.indexOf(a) === order.indexOf(b) + 1, `marked "${marked}", order ${order.map((x) => app.doc.nodes[x]?.type).join(',')}`)
+        tab('Components')
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 9 (layers) runs to the end', false, String(e))
+    }
+
+    // 10. A clipboard, and a menu with the everyday actions.
+    try {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Stack', null, 0, 0)!
+        app.commit({ op: 'setFlow', id: root, flow: true }, 'flow')
+        const a = app.dropComponent('Caption', root, 0, 0)!
+        const b = app.dropComponent('Label', root, 0, 0)!
+        app.select([a])
+        await settle()
+        key(document.body, 'c', { ctrlKey: true })
+        const h0 = app.history.length
+        key(document.body, 'v', { ctrlKey: true })
+        await settle()
+        const kids = app.doc.nodes[root].children
+        check('Ctrl+C, Ctrl+V pastes a copy just after the original, selected, in one step', kids.length === 3 && kids[1] === app.selection[0] && app.doc.nodes[kids[1]].type === 'Caption' && app.history.length === h0 + 1,
+          kids.map((k) => app.doc.nodes[k]?.type).join(','))
+        app.select([b])
+        key(document.body, 'x', { ctrlKey: true })
+        await settle()
+        const cutGone = !app.doc.nodes[b]
+        app.select([root])
+        key(document.body, 'v', { ctrlKey: true })
+        await settle()
+        check('Ctrl+X removes, and a paste into the selected container brings it back', cutGone && app.doc.nodes[root].children.length === 3 && app.doc.nodes[app.doc.nodes[root].children[2]].type === 'Label')
+        // Typing keeps its own select-all and clipboard.
+        app.select([a])
+        await settle()
+        const field = document.querySelector<HTMLElement>('.loom .inspector textarea, .loom .inspector input[type="text"]')
+        const selBefore = app.selection.join()
+        if (field) key(field, 'a', { ctrlKey: true })
+        await settle()
+        check('Ctrl+A in a field selects its text, not every node', field !== null && app.selection.join() === selBefore)
+        // The menu.
+        const el = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${a}"]`)
+        el?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+        await settle()
+        const items = [...document.querySelectorAll('.ctx-item')].map((x) => x.textContent ?? '')
+        const want = ['Cut', 'Copy', 'Paste', 'Duplicate', 'Bring to front', 'Send to back', 'Wrap in Stack', 'Hide from output', 'Lock']
+        const missing = want.filter((w) => !items.some((t) => t.includes(w)))
+        check('the context menu has the everyday actions', missing.length === 0 && !items.some((t) => t.includes('Set width 200')), `missing ${missing.join(', ')}`)
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        await settle()
+        const h1 = app.history.length
+        const box = app.wrap([app.doc.nodes[root].children[0], app.doc.nodes[root].children[1]])
+        check('wrap puts siblings in a new Stack, in order, where they were, in one step', !!box && app.doc.nodes[root].children[0] === box && app.doc.nodes[box].children.length === 2 && app.history.length === h1 + 1)
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 10 (clipboard and menu) runs to the end', false, String(e))
+    }
+
+    // 11. The inspector leads with the component, folds the rest, and gives
+    // text room.
+    try {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Stack', null, 0, 0)!
+        app.commit({ op: 'setFlow', id: root, flow: true }, 'flow')
+        const cap = app.dropComponent('Caption', root, 0, 0)!
+        app.setProp(cap, 'text', 'Streaming from four sources with a p95 latency of forty-eight milliseconds across every region')
+        app.select([cap])
+        await settle(80)
+        const scroll = document.querySelector('.loom .inspector .insp-scroll')
+        const heads = [...(scroll?.querySelectorAll('h3') ?? [])].map((h) => h.textContent?.replace(/\d+ on$/, '').trim() ?? '')
+        const content = heads.indexOf('Content')
+        const display = heads.findIndex((h) => h.startsWith('Display'))
+        check('the inspector starts with search, then the component\'s own properties', scroll?.firstElementChild?.classList.contains('props-bar') === true && content >= 0 && content < display, heads.join(' > '))
+        const folded = [...document.querySelectorAll<HTMLButtonElement>('.loom .inspector .disclosure-head')].map((b) => `${b.textContent}:${b.getAttribute('aria-expanded')}`)
+        check('Display and Effects are folded until used', folded.some((f) => f.startsWith('Display') && f.endsWith('false')) && folded.some((f) => f.startsWith('Effects') && f.endsWith('false')) && !document.querySelector('.loom .inspector [aria-label="Glass"]'),
+          folded.join(' | '))
+        const ta = document.querySelector<HTMLTextAreaElement>('.loom .inspector textarea[aria-label="Text"]')
+        check('a long text value wraps and grows in its field', ta !== null && ta.getBoundingClientRect().height > 40, `${ta?.getBoundingClientRect().height.toFixed(0)}px`)
+        app.commit({ op: 'setOpacity', id: cap, opacity: 0.5 }, 'op')
+        app.select([])
+        await settle()
+        app.select([cap])
+        await settle()
+        const displayHead = [...document.querySelectorAll<HTMLButtonElement>('.loom .inspector .disclosure-head')].find((b) => b.textContent?.startsWith('Display'))
+        check('a changed Display opens by itself and says what changed', displayHead?.getAttribute('aria-expanded') === 'true' && displayHead.textContent?.includes('50%') === true, displayHead?.textContent ?? '')
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 11 (inspector order) runs to the end', false, String(e))
+    }
+
+    // 12. Several at once: said, arranged, edited together.
+    try {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Panel', null, 0, 0)!
+        app.commit({ op: 'setFlow', id: root, flow: false }, 'free')
+        const ids = [
+          app.dropComponent('Caption', root, 40, 10)!,
+          app.dropComponent('Caption', root, 100, 60)!,
+          app.dropComponent('Caption', root, 300, 120)!,
+        ]
+        app.setProp(ids[1], 'size', 'lg')
+        app.select(ids)
+        await settle(80)
+        const head = document.querySelector('.loom .inspector .insp-name')?.textContent
+        check('several selected: the inspector says how many, and what', head === '3 selected' && document.querySelector('.loom .inspector .insp-path')?.textContent === '3 Caption', head ?? '')
+        const sizeSel = document.querySelector<HTMLSelectElement>('.loom .inspector select[aria-label="Size"]')
+        check('a value they disagree on reads Mixed', sizeSel?.value === '' && sizeSel.selectedOptions[0]?.textContent === 'Mixed', sizeSel?.selectedOptions[0]?.textContent ?? 'no field')
+        const h0 = app.history.length
+        if (sizeSel) {
+          sizeSel.value = 'sm'
+          sizeSel.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        await settle()
+        check('an edit sets it on every selected node, in one step', ids.every((x) => app.doc.nodes[x].props.size === 'sm') && app.history.length === h0 + 1)
+        const size = () => ({ w: 50, h: 20 })
+        app.align(ids, 'left', size)
+        check('align left lines them up on the leftmost edge', ids.every((x) => app.doc.nodes[x].props.x === 40), ids.map((x) => app.doc.nodes[x].props.x).join(','))
+        app.commitAll([{ op: 'move', id: ids[0], x: 0, y: 0 }, { op: 'move', id: ids[1], x: 70, y: 0 }, { op: 'move', id: ids[2], x: 300, y: 0 }], 'spread')
+        app.distribute(ids, 'horizontal', size)
+        check('distribute spaces them evenly between the outer two', app.doc.nodes[ids[1]].props.x === 150, String(app.doc.nodes[ids[1]].props.x))
+        const alignBtn = document.querySelector<HTMLButtonElement>('.loom .inspector [aria-label="Align left"]')
+        check('the arrange buttons are there for free-positioned siblings', alignBtn !== null && !alignBtn.disabled)
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 12 (several selected) runs to the end', false, String(e))
+    }
+
+    app.loadDocument(saved)
+    app.select([])
+    await settle()
+  }
+
+  // --- 103. zoom and pan, typing in place, getting back, starting well, room
+  // to work, room to click (UI/UX review, batch C) ----------------------------
+  {
+    const app = window.__loomStore
+    const saved = app.doc
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+    const key = (target: EventTarget, k: string, init: KeyboardEventInit = {}) =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    const zoomPct = () => Number(document.querySelector<HTMLElement>('.loom .surface')?.dataset.zoom ?? 0)
+    const part = async (label: string, body: () => Promise<void>) => {
+      try {
+        await body()
+      } catch (e) {
+        check(`§103 part ${label} runs to the end`, false, String(e))
+      }
+    }
+    const demo = () => {
+      const sd = new EditorStore()
+      seedDemo(sd)
+      app.loadDocument(sd.doc)
+    }
+
+    // 13. Zoom from the keyboard and the wheel; pan with Space or the middle button.
+    await part('13 (zoom and pan)', async () => {
+      demo()
+      await settle(80)
+      key(document.body, '!', { shiftKey: true })
+      await settle()
+      const fit = zoomPct()
+      key(document.body, '=', { ctrlKey: true })
+      await settle()
+      const zin = zoomPct()
+      key(document.body, '0', { ctrlKey: true })
+      await settle()
+      const one = zoomPct()
+      key(document.body, '-', { ctrlKey: true })
+      await settle()
+      const zout = zoomPct()
+      check('Ctrl+=, Ctrl+0 and Ctrl+- zoom the canvas', zin > fit && one === 100 && zout < 100, `fit ${fit} -> in ${zin}, 0 -> ${one}, out ${zout}`)
+      key(document.body, '!', { shiftKey: true })
+      await settle()
+      check('Shift+1 fits the canvas again', zoomPct() === fit, `${zoomPct()} vs ${fit}`)
+      // Ctrl+wheel: the design point under the pointer stays under it. At a
+      // zoom where the canvas can scroll both ways: a canvas smaller than its
+      // window has nothing to scroll, so nothing can hold the point there.
+      key(document.body, '0', { ctrlKey: true })
+      key(document.body, '=', { ctrlKey: true })
+      key(document.body, '=', { ctrlKey: true })
+      await settle(80)
+      const canvas = document.querySelector<HTMLElement>('.loom .canvas')!
+      const surface = document.querySelector<HTMLElement>('.loom .surface')!
+      const r0 = surface.getBoundingClientRect()
+      const px = r0.left + r0.width * 0.7
+      const py = r0.top + r0.height * 0.4
+      const z0 = zoomPct() / 100
+      const dx = (px - r0.left) / z0
+      const dy = (py - r0.top) / z0
+      canvas.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: -200, clientX: px, clientY: py, bubbles: true, cancelable: true }))
+      await settle(80)
+      const z1 = zoomPct() / 100
+      const r1 = surface.getBoundingClientRect()
+      const drift = Math.hypot(r1.left + dx * z1 - px, r1.top + dy * z1 - py)
+      check('Ctrl+wheel zooms at the pointer, keeping the point under it', z1 > z0 * 1.2 && drift < 3, `zoom ${z0.toFixed(2)} -> ${z1.toFixed(2)}, drift ${drift.toFixed(1)}px`)
+      // Pan: Space held, then a drag; and the middle button on its own.
+      const pan = async (button: number, withSpace: boolean) => {
+        canvas.scrollLeft = 100
+        canvas.scrollTop = 60
+        const before = [canvas.scrollLeft, canvas.scrollTop]
+        if (withSpace) window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true }))
+        await settle()
+        const cr = canvas.getBoundingClientRect()
+        const x = cr.left + cr.width / 2
+        const y = cr.top + cr.height / 2
+        canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button, clientX: x, clientY: y }))
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: x - 60, clientY: y - 30 }))
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: x - 60, clientY: y - 30 }))
+        if (withSpace) window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space', key: ' ', bubbles: true }))
+        await settle()
+        return [canvas.scrollLeft - before[0], canvas.scrollTop - before[1]]
+      }
+      const selBefore = app.selection.join()
+      const spaced = await pan(0, true)
+      check('Space+drag pans the canvas (and selects nothing)', spaced[0] === 60 && spaced[1] === 30 && app.selection.join() === selBefore, `moved ${spaced.join(',')}`)
+      const middle = await pan(1, false)
+      check('a middle-button drag pans the canvas', middle[0] === 60 && middle[1] === 30, `moved ${middle.join(',')}`)
+      key(document.body, '!', { shiftKey: true })
+      await settle()
+    })
+
+    // 14. Double-click a component to type its text where it is.
+    await part('14 (type in place)', async () => {
+      demo()
+      await settle(80)
+      const label = Object.values(app.doc.nodes).find((n) => n.type === 'Label')!
+      const el = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${label.id}"]`)!
+      el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+      await settle()
+      const ed = document.querySelector<HTMLTextAreaElement>('.loom .surface textarea.inline-edit')
+      const at = ed?.getBoundingClientRect()
+      const lr = el.getBoundingClientRect()
+      check('double-clicking a component opens its text, over it', ed !== null && ed.value === String(label.props.text) && at !== undefined && Math.abs(at.left - lr.left) < 3 && Math.abs(at.top - lr.top) < 3,
+        ed ? `"${ed.value}" at ${at?.left.toFixed(0)},${at?.top.toFixed(0)} over ${lr.left.toFixed(0)},${lr.top.toFixed(0)}` : 'no editor')
+      const h0 = app.history.length
+      if (ed) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ed, 'Fleet Console')
+        key(ed, 'Enter')
+      }
+      await settle()
+      check('Enter keeps the new text, in one undo step', app.doc.nodes[label.id].props.text === 'Fleet Console' && app.history.length === h0 + 1 && !document.querySelector('.loom textarea.inline-edit'))
+      el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+      await settle()
+      const ed2 = document.querySelector<HTMLTextAreaElement>('.loom .surface textarea.inline-edit')
+      if (ed2) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ed2, 'nope')
+        key(ed2, 'Escape')
+      }
+      await settle()
+      check('Escape leaves the text as it was', app.doc.nodes[label.id].props.text === 'Fleet Console' && !document.querySelector('.loom textarea.inline-edit'))
+    })
+
+    // 15. What a crash or a closed window left is offered back, never loaded unasked.
+    await part('15 (recovery)', async () => {
+      const realHost = app.host
+      const lost = new EditorStore()
+      seedDemo(lost)
+      lost.commit({ op: 'rename', name: 'Quarterly review' }, 'name')
+      try {
+        app.host = { ...(realHost ?? {}), latestAutosave: async () => ({ ok: true, name: 'quarterly-review.loom.json', mtime: Date.now() - 5 * 60000, contents: serialize(lost.doc) }) } as LoomHost
+        app.loadDocument(emptyDocument())
+        await settle(150)
+        const offer = document.querySelector<HTMLButtonElement>('.loom .empty-recover')
+        check('an empty document offers what an earlier session left, by name and age', offer !== null && /Quarterly review/.test(offer.textContent ?? '') && /5 min ago/.test(offer.textContent ?? '') && app.doc.root === null,
+          offer?.textContent ?? 'no offer')
+        offer?.click()
+        await settle()
+        check('continuing loads it as unsaved work, and says so', app.doc.meta.name === 'Quarterly review' && app.doc.root !== null && app.dirty && /Recovered/.test(app.notice?.text ?? ''), app.notice?.text ?? '')
+        app.host = { ...(realHost ?? {}), latestAutosave: async () => ({ ok: false }) } as LoomHost
+        app.loadDocument(emptyDocument())
+        await settle(150)
+        check('with nothing left over, nothing is offered', document.querySelector('.loom .empty-recover') === null)
+      } finally {
+        app.host = realHost
+        if (app.notice) app.dismissNotice(app.notice.id)
+      }
+    })
+
+    // 16. The welcome is readable at any zoom and starts somewhere real.
+    await part('16 (first run)', async () => {
+      app.loadDocument(emptyDocument())
+      await settle(100)
+      const title = document.querySelector<HTMLElement>('.loom .empty-hint-title')
+      const h = title?.getBoundingClientRect().height ?? 0
+      check('the welcome card is drawn at the Studio\'s size, not the zoom\'s', zoomPct() < 100 && h >= 17, `zoom ${zoomPct()}%, title ${h.toFixed(1)}px tall`)
+      const starts = [...document.querySelectorAll('.loom .empty-start')].map((b) => b.textContent?.trim())
+      check('there are starters for the everyday screens', STARTERS.length >= 5 && ['Dashboard', 'Settings page', 'Sign-in', 'Landing hero'].every((n) => starts.includes(n)), starts.join(', '))
+      const broken: string[] = []
+      for (const st of STARTERS) {
+        const t = new EditorStore()
+        const id = t.addStarter(st.id, null, 0, 0)
+        if (!id || Object.values(t.doc.nodes).some((n) => !getComponent(n.type))) broken.push(st.id)
+        else if (!emitHtml(t.doc).includes('data-loom')) broken.push(`${st.id} (no output)`)
+      }
+      check('every starter builds from real tools and exports', broken.length === 0, broken.join(', '))
+      // The KPI card's bar visual draws (its row collapsed to nothing).
+      const host = document.createElement('div')
+      host.style.cssText = 'position:fixed;left:0;top:0;width:600px'
+      document.body.appendChild(host)
+      const rk = createRoot(host)
+      const ks = new EditorStore()
+      const kid = ks.dropComponent('KpiCard', withRoot(ks), 0, 0)!
+      ks.setProp(kid, 'visual', 'bars')
+      rk.render(renderNode({ doc: ks.doc, selected: new Set(), mode: 'preview' }, kid))
+      await settle(40)
+      const bars = [...host.querySelectorAll<HTMLElement>('div')].filter((d) => d.style.flex === '1 1 0%' || d.style.flex === '1')
+      const drawn = bars.filter((b) => b.getBoundingClientRect().width > 2).length
+      rk.unmount()
+      host.remove()
+      check('a KPI card\'s bars draw', bars.length >= 6 && drawn === bars.length, `${drawn}/${bars.length} bars have width`)
+    })
+
+    // 17. The panels fold away and resize, and remember.
+    await part('17 (panels)', async () => {
+      demo()
+      await settle(80)
+      const canvasW = () => document.querySelector('.loom .canvas-wrap')?.getBoundingClientRect().width ?? 0
+      const w0 = canvasW()
+      document.querySelector<HTMLButtonElement>('.loom [aria-label="Components panel"]')?.click()
+      await settle(80)
+      const w1 = canvasW()
+      check('the components panel folds away, and the canvas takes the room', !document.querySelector('.loom .toolbox') && w1 > w0 + 150, `${w0.toFixed(0)} -> ${w1.toFixed(0)}px`)
+      document.querySelector<HTMLButtonElement>('.loom [aria-label="Components panel"]')?.click()
+      await settle(80)
+      key(document.body, '\\', { ctrlKey: true })
+      await settle(80)
+      const bothGone = !document.querySelector('.loom .toolbox') && !document.querySelector('.loom .inspector')
+      key(document.body, '\\', { ctrlKey: true })
+      await settle(80)
+      check('Ctrl+\\ folds both panels away and brings them back', bothGone && !!document.querySelector('.loom .toolbox') && !!document.querySelector('.loom .inspector'))
+      const edge = document.querySelector<HTMLElement>('.loom .panel-edge.right')
+      const iw0 = document.querySelector('.loom .inspector')?.getBoundingClientRect().width ?? 0
+      if (edge) for (let i = 0; i < 4; i++) {
+        key(edge, 'ArrowLeft')
+        await settle(30)
+      }
+      await settle(50)
+      const iw1 = document.querySelector('.loom .inspector')?.getBoundingClientRect().width ?? 0
+      let stored = ''
+      try { stored = window.localStorage.getItem('loom.panels') ?? '' } catch { /* no storage */ }
+      check('a panel edge resizes the panel, and the width is remembered', edge !== null && Math.round(iw1 - iw0) === 40 && stored.includes(`"rw":${Math.round(iw1)}`), `${iw0.toFixed(0)} -> ${iw1.toFixed(0)}px, stored ${stored}`)
+      edge?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+      await settle(80)
+    })
+
+    // 18. Every Studio control is at least 24px to hit (WCAG 2.2 target size).
+    await part('18 (targets)', async () => {
+      demo()
+      const cap = Object.values(app.doc.nodes).find((n) => n.type === 'Caption')!
+      app.select([cap.id])
+      await settle(80)
+      for (const head of document.querySelectorAll<HTMLButtonElement>('.loom .inspector .disclosure-head[aria-expanded="false"]')) head.click()
+      await settle(60)
+      const surface = document.querySelector('.loom .surface')
+      const small = [...document.querySelectorAll<HTMLElement>('.loom button, .loom input, .loom select, .loom textarea, .loom [role="switch"], .loom [role="tab"], .loom [role="treeitem"]')]
+        // The design's own controls are the design's, and a separator is a
+        // drag strip with a keyboard equivalent (arrow keys when focused).
+        .filter((b) => !surface?.contains(b) && b.getAttribute('role') !== 'separator' && b.getClientRects().length > 0 && getComputedStyle(b).visibility !== 'hidden' && !(b as HTMLInputElement).type?.startsWith('color'))
+        .map((b) => ({ b, r: b.getBoundingClientRect() }))
+        .filter(({ r }) => r.width > 0 && (r.width < 23.5 || r.height < 23.5))
+        .map(({ b, r }) => `${(b.getAttribute('aria-label') || b.title || b.textContent || b.className).trim().slice(0, 20)} ${r.width.toFixed(0)}x${r.height.toFixed(0)}`)
+      check('every Studio control is at least 24px to hit', small.length === 0, small.slice(0, 6).join(' | '))
+    })
+
+    app.loadDocument(saved)
+    app.select([])
+    await settle()
+  }
+
+  // --- 104. markers explained, a way up, named groups, daylight, stillness,
+  // and a tab order that stays in the Studio (UI/UX review, batch D) ----------
+  {
+    const app = window.__loomStore
+    const saved = app.doc
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+    const part = async (label: string, body: () => Promise<void>) => {
+      try {
+        await body()
+      } catch (e) {
+        check(`§104 part ${label} runs to the end`, false, String(e))
+      }
+    }
+    const sd = new EditorStore()
+    seedDemo(sd)
+    app.loadDocument(sd.doc)
+    await settle(80)
+
+    // 19. The row markers have a key; the path up is clickable.
+    await part('19 (markers and path)', async () => {
+      const gauge = Object.values(app.doc.nodes).find((n) => n.type === 'Gauge')!
+      app.select([gauge.id])
+      await settle(80)
+      const legend = document.querySelector('.loom .inspector .props-legend')?.textContent ?? ''
+      check('the inspector explains its row markers', /changed from its default/.test(legend) && /bound to data/.test(legend), legend)
+      check('the bindable marker is a drawn icon, not a text glyph', !(document.querySelector('.loom .inspector')?.textContent ?? '').includes('◈'))
+      const crumbs = [...document.querySelectorAll<HTMLButtonElement>('.loom .inspector .crumbs .crumb')]
+      const chain = ancestry(app.doc, gauge.id).slice(0, -1)
+      check('the inspector shows the path up, one crumb per ancestor', crumbs.length === chain.length && crumbs.length >= 3, `${crumbs.map((c) => c.textContent).join(' > ')}`)
+      crumbs[1]?.click()
+      await settle()
+      check('a crumb selects that ancestor', app.selection[0] === chain[1], `${app.doc.nodes[app.selection[0]]?.type}`)
+    })
+
+    // 20. The title bar says which group is which.
+    await part('20 (labels)', async () => {
+      const labels = [...document.querySelectorAll('.loom .titlebar .seg-label')].map((l) => l.textContent)
+      const target = [...document.querySelectorAll<HTMLButtonElement>('.loom [aria-label="Export target"] button')]
+      check('the title bar names the design theme and the build target', labels.includes('Theme') && labels.includes('Target') && !!document.querySelector('.loom [aria-label="Design theme"]'), labels.join(', '))
+      check('each target explains itself', target.length === 2 && target.every((b) => b.title.length > 20), target.map((b) => b.title).join(' | '))
+    })
+
+    // 21. A light Studio, chosen (dark stays the default), and still when asked.
+    await part('21 (appearance and motion)', async () => {
+      const root = document.documentElement
+      const btn = document.querySelector<HTMLButtonElement>('.loom [aria-label^="Studio appearance"]')
+      const before = root.dataset.appearance
+      btn?.click()
+      await settle(80)
+      const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
+      const lum = ([r, g, b]: number[]) => {
+        const f = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+      }
+      const ratio = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05) }
+      const tok = (v: string) => { const h = getComputedStyle(root).getPropertyValue(v).trim().replace('#', ''); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) }
+      const light = root.dataset.appearance === 'light'
+      const inkOk = Math.min(ratio(tok('--ink'), tok('--panel')), ratio(tok('--ink-3'), tok('--panel')), ratio(tok('--ink-3'), tok('--panel-2')))
+      let stored = ''
+      try { stored = window.localStorage.getItem('loom.appearance') ?? '' } catch { /* no storage */ }
+      check('the Studio has a light appearance, chosen in the title bar and remembered', before === 'dark' && light && stored === 'light' && lum(tok('--panel')) > 0.8 && getComputedStyle(root).colorScheme === 'light', `${before} -> ${root.dataset.appearance}, stored ${stored}`)
+      check('light text keeps the contrast floor (4.5:1, tertiary included)', inkOk >= 4.5, `${inkOk.toFixed(2)}:1`)
+      const fieldsLight = rgb(getComputedStyle(document.querySelector('.loom .inspector') ?? root).color)
+      check('the panels use the light ink', lum(fieldsLight) < 0.1, fieldsLight.join(','))
+      btn?.click() // light -> system
+      await settle()
+      btn?.click() // system -> dark
+      await settle()
+      check('the appearance cycles back to the Studio\'s dark default', root.dataset.appearance === 'dark')
+      const rules = [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules] } catch { return [] } })
+      const still = rules.some((r) => r instanceof CSSMediaRule && r.conditionText.includes('prefers-reduced-motion') && /\.loom/.test(r.cssText) && /transition-duration/.test(r.cssText) && /:not\(\.surface/.test(r.cssText))
+      check('under reduced motion the Studio chrome holds still (and leaves the design alone)', still)
+    })
+
+    // 22. Tab stays in the Studio: the design on the canvas is edited, not used.
+    await part('22 (tab order)', async () => {
+      await settle(60)
+      const surface = document.querySelector('.loom .surface')!
+      const stops = [...surface.querySelectorAll<HTMLElement>('button, a[href], input, select, textarea, [tabindex]')].filter((el) => el.tabIndex >= 0 && !el.closest('[inert]'))
+      check('nothing in the design on the canvas is a tab stop', stops.length === 0, stops.slice(0, 4).map((e) => `${e.tagName}.${e.dataset.loomType ?? ''}`).join(', '))
+      const all = [...document.querySelectorAll<HTMLElement>('.loom button, .loom input, .loom select, .loom textarea, .loom [tabindex]')].filter((el) => el.tabIndex >= 0 && !el.closest('[inert]') && el.getClientRects().length > 0)
+      check('the first tab stop is the title bar\'s', all[0]?.closest('.titlebar') !== null, all[0] ? `${all[0].tagName} ${all[0].getAttribute('aria-label') ?? all[0].textContent}` : 'none')
+    })
+
+    app.loadDocument(saved)
+    app.select([])
+    await settle()
   }
 
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after

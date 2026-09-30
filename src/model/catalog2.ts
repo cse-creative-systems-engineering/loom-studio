@@ -646,7 +646,14 @@ defineComponent({ name: 'Calendar', category: 'Data', icon: '📅', description:
   showNav: { type: 'boolean', default: true, group: 'Content' },
   size: { type: 'enum', options: ['sm', 'md', 'lg'], default: 'md', group: 'Size' },
 }})
-defineComponent({ name: 'KanbanColumn', category: 'Data', container: true, icon: '🗂', description: 'Kanban swimlane.', props: {
+defineComponent({ name: 'KanbanColumn', category: 'Data', container: true, icon: '🗂', description: 'Kanban swimlane.',
+  // Its header counts three: it arrives with the three cards it counts.
+  seed: [
+    { type: 'Card', props: { title: 'Design review', elevation: 'sm' } },
+    { type: 'Card', props: { title: 'Update onboarding copy', elevation: 'sm' } },
+    { type: 'Card', props: { title: 'Fix login redirect', elevation: 'sm' } },
+  ],
+  props: {
   title: { type: 'string', default: 'In progress', group: 'Content' },
   count: { type: 'number', default: 3, min: 0, max: 99, group: 'Content' },
   tone: { type: 'enum', options: ['neutral', 'accent', 'success', 'warning'], default: 'accent', group: 'Style' },
@@ -896,11 +903,19 @@ defineComponent({ name: 'Menu', category: 'Navigation', container: true, icon: '
   shortcut: { label: 'Shortcut', hint: 'The key chord on the right', fields: ['text', 'box'] },
 }})
 
-defineComponent({ name: 'CommandBar', category: 'Navigation', container: true, icon: '⌘', description: "A strip of tools for the current surface.", props: {
+defineComponent({ name: 'CommandBar', category: 'Navigation', container: true, icon: '⌘', description: "A strip of tools for the current surface.",
+  seed: [
+    { type: 'Button', props: { label: 'New', variant: 'primary', icon: 'plus' } },
+    { type: 'Button', props: { label: 'Import', variant: 'ghost', icon: 'upload' } },
+    { type: 'Button', props: { label: 'Export', variant: 'ghost', icon: 'download' } },
+  ],
+  props: {
   gap: { type: 'number', default: 8, min: 0, max: 32, group: 'Layout' },
   // A toolbar is a row, and the two flow axes are what turn a row of buttons
   // into "actions right, filters left".
   ...flowProps(),
+  // A bar reads across: its commands in a row, not the shared column default.
+  direction: { type: 'enum', options: ['row', 'column'], default: 'row', group: 'Layout' },
   // AFTER the fragment: a strip of tools centres on its cross axis.
   align: { type: 'enum', options: ['stretch', 'start', 'center', 'end', 'baseline'], default: 'center', group: 'Layout' },
   ...padProps(),
@@ -1061,7 +1076,7 @@ defineComponent({ name: 'SuccessCheck', category: 'Feedback', icon: '✓', descr
   // The check is a glyph by default and can be a name from the house set. The
   // colour is the tone, so a "done" mark can also be "this is not done yet".
   tone: { type: 'enum', options: ['success', 'accent', 'neutral'], default: 'success', group: 'Style' },
-  icon: { type: 'string', default: '✓', group: 'Content' },
+  icon: { type: 'string', default: 'check', group: 'Content' },
   showLabel: { type: 'boolean', default: true, group: 'Content' },
   ...stackAlign('center'),
 }})
@@ -1115,7 +1130,13 @@ defineComponent({ name: 'ConfirmDialog', category: 'Feedback', container: true, 
   ...padProps(),
   ...surfaceProps(),
 }})
-defineComponent({ name: 'NotificationList', category: 'Feedback', container: true, icon: '🔔', description: 'Stack of notifications.', props: {
+defineComponent({ name: 'NotificationList', category: 'Feedback', container: true, icon: '🔔', description: 'Stack of notifications.',
+  seed: [
+    { type: 'Alert', props: { tone: 'info', title: 'New comment', body: 'Maya replied to the Q3 plan.' } },
+    { type: 'Alert', props: { tone: 'success', title: 'Deploy finished', body: 'Version 2.4 is live.' } },
+    { type: 'Alert', props: { tone: 'warning', title: 'Storage almost full', body: '90% of your plan is in use.' } },
+  ],
+  props: {
   gap: { type: 'number', default: 8, min: 0, max: 32, group: 'Layout' },
   // What an empty stack says. A notification centre with nothing in it and no
   // explanation is the most common dead end in a product.
