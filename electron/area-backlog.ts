@@ -18,7 +18,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "AccordionItem|div data-loom-summary": ["color", "fontSize", "fontWeight", "gap", "paddingX", "paddingY"],
   "AccordionItem|div>span data-loom-caret": ["color"],
   // Alert
-  "Alert|button": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
+  "Alert|button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
   "Alert|div": ["color", "fontSize", "gap"],
   "Alert|div>button data-loom-dismiss": ["color", "lineHeight"],
   "Alert|div>span": ["background", "radius"],
@@ -67,14 +67,14 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "ComboBox|span": ["color"],
   // CommandPalette
   "CommandPalette|button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
-  "CommandPalette|div data-loom-palette-panel": ["background", "border", "borderWidth", "radius", "shadow"],
-  "CommandPalette|div data-loom-palette-scrim": ["background"],
-  "CommandPalette|div>div": ["border", "borderWidth", "color", "fontSize", "gap", "paddingX", "paddingY"],
-  "CommandPalette|div>div data-loom-palette-empty": ["align", "color", "fontSize", "paddingX", "paddingY"],
-  "CommandPalette|div>div data-loom-palette-list": ["paddingX", "paddingY"],
-  "CommandPalette|div>div>input data-loom-palette-input": ["color", "fontSize"],
-  "CommandPalette|div>div>kbd": ["border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
-  "CommandPalette|div>div>span": ["color"],
+  "CommandPalette|div>div data-loom-palette-panel": ["background", "border", "borderWidth", "radius", "shadow"],
+  "CommandPalette|div>div data-loom-palette-scrim": ["background"],
+  "CommandPalette|div>div>div": ["border", "borderWidth", "color", "fontSize", "gap", "paddingX", "paddingY"],
+  "CommandPalette|div>div>div data-loom-palette-empty": ["align", "color", "fontSize", "paddingX", "paddingY"],
+  "CommandPalette|div>div>div data-loom-palette-list": ["paddingX", "paddingY"],
+  "CommandPalette|div>div>div>input data-loom-palette-input": ["color", "fontSize"],
+  "CommandPalette|div>div>div>kbd": ["border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
+  "CommandPalette|div>div>div>span": ["color"],
   // ConfirmDialog
   "ConfirmDialog|div": ["color", "fontSize", "fontWeight", "gap", "lineHeight"],
   "ConfirmDialog|div>button data-loom-dismiss": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
@@ -107,7 +107,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "DropdownButton|div data-loom-menu-panel": ["background", "border", "borderWidth", "gap", "paddingX", "paddingY", "radius", "shadow"],
   "DropdownButton|div>div data-loom-b": ["color", "fontSize", "paddingX", "paddingY", "radius"],
   // EmptyState
-  "EmptyState|button": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
+  "EmptyState|button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
   "EmptyState|div": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "radius"],
   "EmptyState|div>svg": ["stroke"],
   // ErrorSummary
@@ -138,7 +138,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   // Image
   "Image|span": ["color", "fontSize"],
   // InfoCallout
-  "InfoCallout|button": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
+  "InfoCallout|button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
   "InfoCallout|div": ["color", "fontSize"],
   "InfoCallout|strong": ["color", "fontSize"],
   "InfoCallout|svg": ["stroke"],
@@ -266,7 +266,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "TreeList|div data-loom-row": ["border", "borderWidth", "gap", "paddingX"],
   "TreeList|div>span data-loom-b": ["color"],
   // WarningCallout
-  "WarningCallout|button": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
+  "WarningCallout|button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
   "WarningCallout|div": ["color", "fontSize"],
   "WarningCallout|strong": ["color", "fontSize"],
   "WarningCallout|svg": ["stroke"],

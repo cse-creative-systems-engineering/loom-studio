@@ -31,8 +31,10 @@ function behind(el: Element): number[] {
     if (c && c[3] > 0) stack.push(c)
     if (c && c[3] >= 1) break
   }
-  // No page background chosen: the browser's canvas (white) shows through.
-  let out = [255, 255, 255]
+  // No page background chosen: the browser's canvas shows through, dark when
+  // the page (or the viewer) is in a dark scheme.
+  const dark = /dark/.test(getComputedStyle(document.documentElement).colorScheme) || (!/light/.test(getComputedStyle(document.documentElement).colorScheme) && matchMedia('(prefers-color-scheme: dark)').matches)
+  let out = dark ? [18, 18, 18] : [255, 255, 255]
   const page = rgba(getComputedStyle(document.body).backgroundColor)
   if (page && page[3] >= 1) out = page.slice(0, 3)
   for (const c of stack.reverse()) out = out.map((v, i) => v * (1 - c[3]) + c[i] * c[3])
@@ -84,7 +86,7 @@ export function appearance(): { findings: Finding[]; page: Record<string, unknow
       if (text && (s.overflowX !== 'visible' || s.textOverflow === 'ellipsis') && (e.scrollWidth > e.clientWidth + 1 || e.scrollHeight > e.clientHeight + 2))
         add(tool, 'clipped-text', `"${text.slice(0, 30)}" needs ${e.scrollWidth}x${e.scrollHeight}, has ${e.clientWidth}x${e.clientHeight}`)
       // Contrast of every run of text the tool draws.
-      if (text && e.tagName !== 'OPTION') {
+      if (text && e.tagName !== 'OPTION' && !e.closest('[aria-disabled="true"],:disabled')) {
         const fg = rgba(s.color)
         if (fg) {
           const bg = behind(e)

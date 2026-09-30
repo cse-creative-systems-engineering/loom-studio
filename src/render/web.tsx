@@ -142,6 +142,17 @@ export function zoomed(pxValue: number, zoom: number): number {
   return pxValue / z
 }
 
+/**
+ * Text drawn ON a light tint of a tone (a chip, a count pill): the accent's
+ * hover shade, which each theme sets further from its surface (darker in
+ * daylight, lighter in midnight). Accent text on its own 10% tint measured
+ * 4.38:1 in daylight.
+ */
+function toneInk(t: Theme, tone: string): string {
+  const c = toneColor(t, tone)
+  return c === t.accent ? t.accentHover : c
+}
+
 function toneColor(t: Theme, tone: string): string {
   switch (tone) {
     case 'success':
@@ -1604,6 +1615,12 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
         s.border = `1px solid ${t.borderStrong}`
         s.borderRadius = `${t.radiusMd}px`
         s.padding = `${t.space1 + 2}px ${t.space3}px`
+      } else {
+        // Ghost means no surface. Left unset, the <button> kept the browser's
+        // grey button face: a disabled-looking box at 2.5:1.
+        s.background = 'transparent'
+        s.border = 'none'
+        s.padding = `${t.space1}px ${t.space1}px`
       }
       break
     }
@@ -2150,6 +2167,7 @@ function renderPreviewBody(
               <button
                 type="button"
                 data-loom-composer-send
+                aria-disabled="true"
                 {...part('send')}
                 {...canvasInert}
                 aria-label={str(p.sendLabel) || 'Send'}
@@ -2504,6 +2522,14 @@ function renderPreviewBody(
           aria-label={str(p.ariaLabel) || str(p.title) || undefined}
           id={node.id}
           data-loom-reveal
+          data-loom-modal=""
+          // In output a modal lives in the browser's TOP LAYER: above
+          // everything, centred on the screen, its dim a real ::backdrop
+          // behind it. Drawn in place, its fixed scrim was trapped by any
+          // glass ancestor (backdrop-filter is a containing block) and, being
+          // its own child, dimmed the dialog's buttons so none could be
+          // clicked. Never on the canvas: that is the design being edited.
+          popover={ctx.mode === 'preview' ? 'manual' : undefined}
           data-loom-open={p.open === false ? '0' : '1'}
         >
           {/* The scrim is also the ESCAPE target: the runtime dismisses a
@@ -2550,6 +2576,9 @@ function renderPreviewBody(
                   key={a}
                   type="button"
                   data-loom-b="press"
+                  // A dialog's actions answer it: each closes the dialog and
+                  // names itself (loom:cancel, loom:save) for a host to act on.
+                  data-loom-close={node.id}
                   data-loom-action={a.trim().toLowerCase().replace(/\s+/g, '.') || undefined}
                   style={{
                     background: t.surface,
@@ -2915,6 +2944,10 @@ function renderPreviewBody(
         <div key={key} style={style} data-loom-palette={node.id} data-loom-open="0">
           {/* The scrim and the panel are editor-independent chrome: the runtime
               fills the list, because only it knows what the document can do. */}
+          {/* Scrim and panel open in the TOP LAYER in output (see Modal): a
+              palette opened while scrolled used to appear where the page's
+              glass ancestor put it, off-screen. */}
+          <div data-loom-palette-layer="" popover={ctx.mode === 'preview' ? 'manual' : undefined}>
           <div data-loom-palette-scrim="" style={{ position: 'absolute', inset: 0, background: '#000a' }} />
           <div
             data-loom-palette-panel=""
@@ -2963,6 +2996,7 @@ function renderPreviewBody(
                 <span>esc close</span>
               </div>
             ) : null}
+          </div>
           </div>
           {p.trigger !== false ? (
             <button
@@ -3693,7 +3727,7 @@ function renderPreviewBody(
       return (
         <div key={key} style={style} aria-label={str(p.ariaLabel) || undefined}>
           {tags.map((tg) => (
-            <span key={tg} style={{ background: `${tint}1a`, color: tint, borderRadius: `${t.radiusFull}px`, padding: '2px 9px', fontSize: `${fs}px`, fontWeight: t.weightSemibold }}>{tg}</span>
+            <span key={tg} style={{ background: `${tint}1a`, color: tint === t.accent ? t.accentHover : tint, borderRadius: `${t.radiusFull}px`, padding: '2px 9px', fontSize: `${fs}px`, fontWeight: t.weightSemibold }}>{tg}</span>
           ))}
           {cap > 0 && all.length > cap ? (
             <span style={{ color: t.textMuted, fontSize: `${t.textXs}px` }}>+{all.length - cap}</span>
@@ -4791,7 +4825,7 @@ function renderPreviewBody(
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: size === 'sm' ? `${t.textXs}px` : `${t.textSm}px`, fontWeight: t.weightSemibold, color: t.textPrimary }}>{str(p.title)}</span>
               {p.showCount !== false ? (
-                <span style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightBold, background: `${toneColor(t, str(p.tone))}1a`, color: toneColor(t, str(p.tone)), borderRadius: '999px', padding: '1px 8px' }}>{num(p.count, 0)}</span>
+                <span style={{ fontSize: `${t.textXs}px`, fontWeight: t.weightBold, background: `${toneColor(t, str(p.tone))}1a`, color: toneInk(t, str(p.tone)), borderRadius: '999px', padding: '1px 8px' }}>{num(p.count, 0)}</span>
               ) : null}
             </div>
           ) : null}
@@ -4817,6 +4851,8 @@ function renderPreviewBody(
           {action ? (
             <button
               type="button"
+              data-loom-b="press"
+              data-loom-action={action.trim().toLowerCase().replace(/\s+/g, '.') || undefined}
               style={{
                 marginTop: `${t.space2}px`,
                 padding: `6px 14px`,
@@ -5040,7 +5076,7 @@ function renderPreviewBody(
             return (
               <li
                 key={st}
-                {...(live ? behaviourAttrs({ role: 'step', group: node.id, index: i }) : {})}
+                {...(live ? { ...behaviourAttrs({ role: 'step', group: node.id, index: i }), tabIndex: 0 } : {})}
                 data-loom-state={state}
                 aria-current={state === 'now' ? 'step' : undefined}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', flexDirection: vertical ? 'column' : 'row', alignSelf: vertical ? 'stretch' : undefined }}
@@ -5233,6 +5269,8 @@ function renderPreviewBody(
           {str(p.actionLabel) ? (
             <button
               type="button"
+              data-loom-b="press"
+              data-loom-action={str(p.actionLabel).trim().toLowerCase().replace(/\s+/g, '.') || undefined}
               style={{
                 alignSelf: 'flex-start',
                 marginTop: `${t.space1}px`,
@@ -5399,6 +5437,8 @@ function renderPreviewBody(
           {str(p.actionLabel) ? (
             <button
               type="button"
+              data-loom-b="press"
+              data-loom-action={str(p.actionLabel).trim().toLowerCase().replace(/\s+/g, '.') || undefined}
               style={{
                 alignSelf: 'flex-start',
                 marginTop: `${t.space1}px`,

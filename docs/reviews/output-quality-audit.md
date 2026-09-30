@@ -37,6 +37,18 @@ ring anywhere" (a background tab never matches `:focus`); "native-look buttons"
 (styled buttons keep `appearance:auto` harmlessly); ButtonGroup clipping (a
 screenshot edge).
 
+## Status
+
+**Phase 1 (`claude/phase-1-floor`) fixed:** 1, 2, 3, 4, 5, 6, 6b, 11, 13, 29,
+plus the BackButton's browser button face and the named hand-off events of
+standing rule 8. Guarded by selftest 110-112 and the **interaction audit**
+(`electron/interaction-audit.ts`): every operable element of every tool must
+change something or emit a named `loom:*` event, and be reachable by Tab.
+
+**Correction:** finding 4 said NotificationList's x did nothing. It worked —
+its items are Toasts, which fade before hiding, and the probe read them 200ms
+after the click. Alert's x and ConfirmDialog's buttons really were dead.
+
 ## The short version
 
 The **atoms are good**. Controls, Text and most Data tools look finished and
@@ -87,8 +99,9 @@ seen in close-up). *Fix:* the export declares the theme's `color-scheme` on
 "Theme" the default page); the canvas then matches too.
 
 **4. Close / dismiss controls that do nothing.** The runtime's dismiss handler
-only acts inside `[data-loom-toast]` (`behaviour.ts:753`): Alert ✕ and every
-NotificationList ✕ are decoration; ConfirmDialog's Cancel does not close it.
+only acts inside `[data-loom-toast]` (`behaviour.ts:753`): Alert ✕ is
+decoration; ConfirmDialog's Cancel does not close it. (NotificationList's ✕
+does work — see the correction above.)
 Standing rule 2. *Fix:* one dismiss path for any `[data-loom-dismiss]` that
 hides its owning tool, and Cancel/confirm close the dialog (fire an event for
 hosts); live tests for each.

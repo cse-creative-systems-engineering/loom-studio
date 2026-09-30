@@ -338,6 +338,15 @@ export function behaviourCss(): string {
     '[data-loom-reveal]:not([data-loom-open="1"]){display:none !important}',
     '[data-loom-reveal] [data-loom-body]{display:flex;flex-direction:column;gap:inherit}',
     '[data-loom-scrim]{position:fixed;inset:0;background:#000a;z-index:40}',
+    // Top-layer overlays (output only): centred on the screen, dimmed behind
+    // by ::backdrop instead of an in-dialog scrim.
+    '[data-loom-modal][popover]:popover-open{position:fixed !important;inset:0 !important;margin:auto !important;height:fit-content !important;max-height:calc(100vh - 32px);overflow:auto;translate:none !important;transform:none !important}',
+    '[data-loom-modal][popover]>[data-loom-scrim]{display:none !important}',
+    '[data-loom-modal][popover]::backdrop{background:#000a}',
+    '[data-loom-palette-layer][popover]{position:fixed;inset:0;width:auto;height:auto;margin:0;padding:0;border:0;background:transparent;overflow:visible;color:inherit}',
+    // The canvas is the design being edited: an open modal is drawn in place
+    // and never dims the rest of it.
+    '.surface [data-loom-scrim]{display:none !important}',
     '[data-loom-scrim="0"]{display:none}',
     // --- dropdown menu ---
     '[data-loom-menu-panel][data-loom-open="0"]{display:none !important}',
@@ -551,6 +560,31 @@ export function installBehaviour(): void {
     })
   }
   armToasts()
+
+  // --- overlays in the top layer ------------------------------------------
+  // A popover-marked overlay (output only) is put into, or taken out of, the
+  // browser's top layer to match its open state; where the API is missing the
+  // overlay simply stays where it is drawn.
+  function topLayer(el: Element, open: boolean): void {
+    const pop = el as HTMLElement & { showPopover?: () => void; hidePopover?: () => void }
+    if (!pop.hasAttribute('popover') || typeof pop.showPopover !== 'function' || !pop.isConnected) return
+    let isOpen = false
+    try {
+      isOpen = pop.matches(':popover-open')
+    } catch {
+      return
+    }
+    try {
+      if (open && !isOpen) pop.showPopover()
+      else if (!open && isOpen) pop.hidePopover?.()
+    } catch {
+      // Not in a document that can show it; it stays drawn in place.
+    }
+  }
+  const armOverlays = (): void => {
+    q('[data-loom-modal][popover]').forEach((m) => topLayer(m, m.getAttribute('data-loom-open') === '1'))
+  }
+  armOverlays()
   if (typeof MutationObserver === 'function') {
     const root = document.body ?? document.documentElement
     if (root) {
@@ -564,10 +598,8 @@ export function installBehaviour(): void {
             const node = added[j]
             if (node.nodeType !== 1) continue
             const el = node as Element
-            if (el.hasAttribute('data-loom-toast') || el.querySelector('[data-loom-toast]')) {
-              armToasts()
-              return
-            }
+            if (el.hasAttribute('data-loom-toast') || el.querySelector('[data-loom-toast]')) armToasts()
+            if (el.hasAttribute('data-loom-modal') || el.querySelector('[data-loom-modal]')) armOverlays()
           }
         }
       }).observe(root, { childList: true, subtree: true })
@@ -701,7 +733,7 @@ export function installBehaviour(): void {
     append(list, copy)
     input.value = ''
     input.style.height = ''
-    composer.setAttribute('data-loom-empty', '1')
+    setEmpty(composer, true)
     // The hook a host page (or a future data runtime) listens for.
     try {
       composer.dispatchEvent(new CustomEvent('loom:send', { bubbles: true, detail: { text } }))
@@ -709,10 +741,18 @@ export function installBehaviour(): void {
       // Event unavailable: the message still appeared, which is what a person sees.
     }
   }
+  // Nothing to send: Send is dimmed AND says it is inactive, so assistive
+  // tech hears the same state the eye sees (and it is an inactive control,
+  // not low-contrast text).
+  function setEmpty(composer: Element, empty: boolean): void {
+    composer.setAttribute('data-loom-empty', empty ? '1' : '0')
+    composer.querySelector('[data-loom-composer-send]')?.setAttribute('aria-disabled', empty ? 'true' : 'false')
+  }
   document.addEventListener('input', (e) => {
     const input = target(e)
     if (!(input instanceof HTMLTextAreaElement) || !input.hasAttribute('data-loom-composer-input')) return
-    input.closest('[data-loom-composer]')?.setAttribute('data-loom-empty', input.value.trim() === '' ? '1' : '0')
+    const composer = input.closest('[data-loom-composer]')
+    if (composer) setEmpty(composer, input.value.trim() === '')
     grow(input)
   })
   document.addEventListener('keydown', (e) => {
@@ -787,8 +827,20 @@ export function installBehaviour(): void {
       const id = closer.getAttribute('data-loom-close') ?? ''
       const host = document.getElementById(id)
       if (host) hide(host)
-      fire(closer, 'close')
+      fire(closer, closer.getAttribute('data-loom-action') || 'close')
       return
+    }
+    // A click on a top-layer modal's backdrop lands on the modal itself,
+    // outside its box: that dismisses it, when it may be dismissed.
+    const tgt = e.target
+    if (tgt instanceof HTMLElement && tgt.hasAttribute('data-loom-modal') && tgt.querySelector('[data-loom-scrim="1"]')) {
+      const r = tgt.getBoundingClientRect()
+      const m = e as MouseEvent
+      if (m.clientX < r.left || m.clientX > r.right || m.clientY < r.top || m.clientY > r.bottom) {
+        hide(tgt)
+        fire(tgt, 'dismiss')
+        return
+      }
     }
 
     // A close control closes what it belongs to: a toast, an alert, a
@@ -909,6 +961,24 @@ export function installBehaviour(): void {
       })
       dots.setAttribute('data-loom-current', String(k))
       fire(el, 'dot')
+      return
+    }
+
+    // A step itself: going there. Clickable steps are how a stepper is used
+    // to move back to an earlier stage; they did nothing.
+    if (role === 'step' && !el.getAttribute('data-loom-nav') && el.hasAttribute('data-loom-i')) {
+      const steps = el.closest('[data-loom-steps]')
+      if (steps) {
+        const all = q('[data-loom-b="step"]', steps).filter((s) => s.hasAttribute('data-loom-i') && !s.getAttribute('data-loom-nav'))
+        const next = all.indexOf(el) + 1
+        steps.setAttribute('data-loom-current', String(next))
+        all.forEach((s, idx) => {
+          s.setAttribute('data-loom-state', idx + 1 < next ? 'done' : idx + 1 === next ? 'now' : 'todo')
+          if (idx + 1 === next) s.setAttribute('aria-current', 'step')
+          else s.removeAttribute('aria-current')
+        })
+        fire(el, 'step')
+      }
       return
     }
 
@@ -1033,7 +1103,13 @@ export function installBehaviour(): void {
       return
     }
 
-    if (role === 'press') fire(el, 'press')
+    if (role === 'press') {
+      fire(el, 'press')
+      // A named action ("clear.filters") is also announced by name: the
+      // hand-off a host listens for.
+      const action = el.getAttribute('data-loom-action')
+      if (action) fire(el, action)
+    }
   })
 
   // --- command palette --------------------------------------------------
@@ -1118,6 +1194,8 @@ export function installBehaviour(): void {
 
   const openPalette = (palette: Element): void => {
     palette.setAttribute('data-loom-open', '1')
+    const layer = palette.querySelector('[data-loom-palette-layer]')
+    if (layer) topLayer(layer, true)
     const trigger = palette.querySelector('[data-loom-palette-trigger]')
     if (trigger) trigger.setAttribute('aria-expanded', 'true')
     paintPalette(palette, '')
@@ -1131,6 +1209,8 @@ export function installBehaviour(): void {
 
   function closePalette(palette: Element): void {
     palette.setAttribute('data-loom-open', '0')
+    const layer = palette.querySelector('[data-loom-palette-layer]')
+    if (layer) topLayer(layer, false)
     const trigger = palette.querySelector('[data-loom-palette-trigger]')
     if (trigger) trigger.setAttribute('aria-expanded', 'false')
     fire(palette, 'palette-close')
@@ -1210,6 +1290,7 @@ export function installBehaviour(): void {
     host.setAttribute('aria-hidden', 'false')
     const scrim = host.querySelector('[data-loom-scrim]')
     if (scrim) scrim.setAttribute('data-loom-scrim', '1')
+    topLayer(host, true)
   }
 
   function hide(host: HTMLElement): void {
@@ -1217,6 +1298,7 @@ export function installBehaviour(): void {
     host.setAttribute('aria-hidden', 'true')
     const scrim = host.querySelector('[data-loom-scrim]')
     if (scrim) scrim.setAttribute('data-loom-scrim', '0')
+    topLayer(host, false)
   }
 }
 

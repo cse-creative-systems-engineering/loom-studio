@@ -28,6 +28,7 @@ import { ICONS, ICON_NAMES, resolveIcon } from '../src/render/icons'
 import { buildTooltip, tooltipFor } from '../src/model/tooltip'
 import { auditReport, KNOWN_INERT } from './prop-audit'
 import { auditAreas } from './area-audit'
+import { auditInteractions } from './interaction-audit'
 import { KNOWN_UNREACHABLE } from './area-backlog'
 import { installBehaviourRuntime } from '../src/render/behaviour-mount'
 import { STARTERS } from '../src/model/starters'
@@ -4258,6 +4259,83 @@ export async function runSelfTest(): Promise<string> {
     const css = behaviourCss()
     check('a borderless input\'s well is ringed while it has focus', /:has\(> :is\(input,textarea\):is\(\[style\*="outline:none"\],\[style\*="outline: none"\]\):focus-visible\)\{outline:2px/.test(css))
     host.remove()
+  }
+
+  // --- 112. Phase 1: overlays, the page under an export, tones ---------------
+  // Findings 1, 2, 3, 13 and 29 of the output audit.
+  {
+    installBehaviourRuntime()
+    const st = new EditorStore()
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, new AiTurn(st), name, args)
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', ref: 'page', props: { surface: 'glass' }, children: [
+      { type: 'Modal', ref: 'modal', x: 40, y: 40 },
+      { type: 'Stepper', ref: 'steps', x: 40, y: 400 },
+      { type: 'EmptyState', ref: 'empty', x: 40, y: 480 },
+      { type: 'BackButton', ref: 'back', x: 600, y: 400 },
+    ] } })
+    const refs = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
+    const out = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview', hookAll: true }, st.doc.root as string))
+    const canvas = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set() }, st.doc.root as string))
+    check('in output a Modal is a top-layer popover; on the canvas it is drawn in place', /data-loom-modal="" popover="manual"/.test(out) && !/popover=/.test(canvas))
+    check('the canvas never dims the design behind an open modal', behaviourCss().includes('.surface [data-loom-scrim]{display:none !important}'))
+    const host = document.createElement('div')
+    host.className = 'loom-container'
+    host.style.cssText = 'position:absolute;left:0;top:0;width:900px;height:700px'
+    host.innerHTML = out
+    document.body.appendChild(host)
+    await new Promise((r) => setTimeout(r, 30))
+    const modal = host.querySelector<HTMLElement>(`[data-loom-node="${refs.modal}"]`)!
+    const inTop = (() => { try { return modal.matches(':popover-open') } catch { return false } })()
+    check('an open Modal is shown in the top layer, even inside a glass panel', inTop)
+    const save = [...modal.querySelectorAll('button')].find((x) => x.textContent?.trim() === 'Save')!
+    const r = save.getBoundingClientRect()
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    check('the Modal\'s own buttons are what a click lands on (its scrim used to cover them)', !!hit && (hit === save || save.contains(hit)), hit ? `${hit.tagName} ${hit.getAttribute('data-loom-scrim') ?? ''}` : 'nothing')
+    const said: string[] = []
+    host.addEventListener('loom:save', () => said.push('save'))
+    save.click()
+    check('a dialog action closes the dialog and names itself', modal.getAttribute('data-loom-open') === '0' && said.join() === 'save' && !(() => { try { return modal.matches(':popover-open') } catch { return false } })())
+    const steps = [...host.querySelectorAll<HTMLElement>(`[data-loom-node="${refs.steps}"] [data-loom-b="step"]`)]
+    steps[2]?.click()
+    check('clicking a step goes to it', steps[2]?.getAttribute('aria-current') === 'step' && steps[2]?.getAttribute('data-loom-state') === 'now' && steps[0]?.getAttribute('data-loom-state') === 'done' && steps.every((x) => x.tabIndex === 0))
+    const act: string[] = []
+    host.addEventListener('loom:clear.filters', () => act.push('clear'))
+    host.querySelector<HTMLElement>(`[data-loom-node="${refs.empty}"] button`)?.click()
+    check('an empty state\'s action is announced by name', act.length === 1)
+    const back = host.querySelector<HTMLElement>(`[data-loom-node="${refs.back}"]`)!
+    check('a ghost BackButton has no browser button face', getComputedStyle(back).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(back).borderStyle === 'none')
+    host.remove()
+    // The page under an export declares the theme's scheme, so "no page"
+    // is the theme's canvas for every viewer.
+    check('an HTML export declares its theme\'s colour scheme', /:root\{color-scheme:dark\}/.test(emitHtml(st.doc)))
+    // Tones that pass AA as text on daylight's page and surface, and under white text.
+    const L = (h: string) => { const c = (h.match(/\w\w/g) ?? []).map((x) => parseInt(x, 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]! }
+    const ratio = (a: string, b: string) => { const [x, y] = [L(a), L(b)].sort((p, q) => q - p); return (x! + 0.05) / (y! + 0.05) }
+    const day = getTheme('daylight')
+    const tones = [day.success, day.danger, day.warning]
+    check('daylight\'s success, danger and warning pass AA on its page and surface', tones.every((c) => ratio(c, day.bg) >= 4.5 && ratio(c, day.surface) >= 4.5), tones.map((c) => `${c} ${ratio(c, day.bg).toFixed(2)}`).join(', '))
+  }
+
+  // --- 111. the interaction audit (standing rule 8) --------------------------
+  // Every operable element of every toolbox tool, dropped as the toolbox drops
+  // it and operated in real output with the real runtime, must change
+  // something or emit a named loom:* event, and must be reachable by Tab.
+  // KNOWN_DEAD is the ratchet: it is empty, and a new entry needs a reason.
+  {
+    const KNOWN_DEAD: Record<string, string> = {}
+    installBehaviourRuntime()
+    const a = auditInteractions()
+    const found = new Map(a.dead.map((d) => [`${d.tool}|${d.what}`, d]))
+    const fresh = [...found].filter(([k]) => !KNOWN_DEAD[k]).map(([k, d]) => `${d.why}: ${k}`)
+    check('nothing that looks operable does nothing, or is mouse-only', fresh.length === 0, fresh.slice(0, 12).join(' | '))
+    check('the dead-control backlog has no stale entries', Object.keys(KNOWN_DEAD).every((k) => found.has(k)))
+    check('the interaction audit actually operates the catalogue', a.tools === allComponents().length - addedTypes().size && a.operated > 60, `${a.tools} tools, ${a.operated} controls operated`)
+    // It bites: put back the old Alert (an x with no dismiss wiring) and it is caught.
+    const old = auditInteractions({
+      only: ['Alert'],
+      tamper: (tool) => tool.querySelectorAll('[data-loom-dismiss]').forEach((b) => b.removeAttribute('data-loom-dismiss')),
+    })
+    check('the audit catches a close button that closes nothing', old.dead.some((d) => d.tool === 'Alert' && d.why === 'inert' && /dismiss/.test(d.what)), JSON.stringify(old.dead))
   }
 
   // --- 109. what the OpenRouter run found in Loom ----------------------------
