@@ -3535,10 +3535,10 @@ function renderPreviewBody(
         <div
           key={key}
           style={style}
-          role="img"
+          role={readOnly ? 'img' : 'slider'}
           aria-label={str(p.ariaLabel) || `${v} of ${max} stars`}
           data-loom-value={String(v)}
-          {...(readOnly ? {} : behaviourAttrs({ role: 'rate' }))}
+          {...(readOnly ? {} : { ...behaviourAttrs({ role: 'rate' }), tabIndex: 0, 'aria-valuemin': 1, 'aria-valuemax': max, 'aria-valuenow': v })}
         >
           {Array.from({ length: max }, (_, i) => (
             <span
@@ -4033,7 +4033,7 @@ function renderPreviewBody(
                       scope="col"
                       {...part('header')}
                       aria-sort={sortCol === ci && sortDir !== 'none' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                      {...(sortable ? behaviourAttrs({ role: 'sort', group: node.id, index: ci }) : {})}
+                      {...(sortable ? { ...behaviourAttrs({ role: 'sort', group: node.id, index: ci }), tabIndex: 0 } : {})}
                       {...(sortCol === ci && sortDir !== 'none' ? { 'data-loom-sort': sortDir } : {})}
                       style={{
                         position: sticky ? 'sticky' : 'static',
@@ -4649,6 +4649,9 @@ function renderPreviewBody(
               >
                 <span
                   {...behaviourAttrs({ role: 'expand', group: node.id, index: i })}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Expand or collapse"
                   style={{ color: t.textMuted, cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}
                 >
                   {depth > 0 ? '└' : <IconGlyph value="chevron-down" size={12} />}
@@ -5213,7 +5216,7 @@ function renderPreviewBody(
       const ink = solid ? t.textOnAccent : t.textPrimary
       const bodyInk = solid ? t.textOnAccent : t.textSecondary
       return (
-        <div key={key} style={style} role="alert">
+        <div key={key} style={style} role="alert" data-loom-dismissable={p.dismissible === true ? '' : undefined}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {str(p.icon) ? (
               <IconGlyph value={str(p.icon)} size={size === 'sm' ? 14 : 16} color={solid ? t.textOnAccent : tone} />
@@ -5222,7 +5225,7 @@ function renderPreviewBody(
             )}
             <strong style={{ fontSize: size === 'sm' ? `${t.textXs}px` : `${t.textSm}px`, color: ink }}>{str(p.title)}</strong>
             {p.dismissible === true ? (
-              <button type="button" aria-label="dismiss" style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: bodyInk, cursor: 'pointer', padding: 0, lineHeight: 1, display: 'inline-flex' }}><IconGlyph value="x" size={14} /></button>
+              <button type="button" data-loom-dismiss="" aria-label="dismiss" style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: bodyInk, cursor: 'pointer', padding: 0, lineHeight: 1, display: 'inline-flex' }}><IconGlyph value="x" size={14} /></button>
             ) : null}
           </div>
           <div style={{ fontSize: size === 'sm' ? `${t.textXs}px` : `${t.textSm}px`, color: bodyInk }}>{str(p.body)}</div>
@@ -5325,7 +5328,7 @@ function renderPreviewBody(
           {Array.from({ length: steps }, (_, i) => (
             <span
               key={i}
-              {...(live ? behaviourAttrs({ role: 'dot', group: node.id, index: i + 1 }) : {})}
+              {...(live ? { ...behaviourAttrs({ role: 'dot', group: node.id, index: i + 1 }), role: 'button', tabIndex: 0, 'aria-label': `Step ${i + 1} of ${steps}` } : {})}
               data-loom-lit={i < cur ? '1' : '0'}
               style={{ width: `${dot}px`, height: `${dot}px`, borderRadius: '999px', background: i < cur ? toneColor(t, str(p.tone)) : t.borderStrong, cursor: live ? 'pointer' : 'default', flexShrink: 0 }}
             />
@@ -5352,7 +5355,7 @@ function renderPreviewBody(
       const ink = solid ? t.textOnAccent : t.textPrimary
       const List = p.ordered === true ? 'ol' : 'ul'
       return (
-        <div key={key} style={style} role="alert">
+        <div key={key} style={style} role="alert" data-loom-dismissable={p.dismissible === true ? '' : undefined}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {p.showIcon !== false && str(p.icon) ? <IconGlyph value={str(p.icon)} size={16} color={solid ? t.textOnAccent : tone} /> : null}
             <strong style={{ fontSize: `${t.textSm}px`, color: ink }}>{str(p.title)}</strong>
@@ -5422,15 +5425,15 @@ function renderPreviewBody(
       const size = str(p.size) || 'md'
       const align = str(p.buttonAlign) || 'end'
       return (
-        <div key={key} style={style} role="alertdialog" aria-label={str(p.title)}>
+        <div key={key} style={style} role="alertdialog" aria-label={str(p.title)} data-loom-dismissable="">
           {feedbackIcon(p, toneName, 20, tone)}
           <div style={{ fontSize: size === 'sm' ? `${t.textLg}px` : `${t.textXl}px`, fontWeight: t.weightBold, color: t.textPrimary, lineHeight: 1.2 }}>{str(p.title)}</div>
           <div style={{ fontSize: `${t.textSm}px`, color: t.textSecondary }}>{str(p.message)}</div>
           {children}
           {p.showFooter !== false ? (
             <div style={{ display: 'flex', gap: `${t.space2}px`, justifyContent: align === 'start' ? 'flex-start' : align === 'center' ? 'center' : 'flex-end' }}>
-              <button type="button" style={{ padding: `7px 14px`, borderRadius: `${t.radiusMd}px`, border: `1px solid ${t.borderStrong}`, background: 'transparent', color: t.textSecondary, cursor: 'pointer', fontSize: `${t.textSm}px` }}>{str(p.cancelLabel)}</button>
-              <button type="button" style={{ padding: `7px 14px`, borderRadius: `${t.radiusMd}px`, border: 'none', background: tone, color: t.textOnAccent, cursor: 'pointer', fontSize: `${t.textSm}px`, fontWeight: t.weightSemibold }}>{str(p.confirmLabel)}</button>
+              <button type="button" data-loom-dismiss="cancel" style={{ padding: `7px 14px`, borderRadius: `${t.radiusMd}px`, border: `1px solid ${t.borderStrong}`, background: 'transparent', color: t.textSecondary, cursor: 'pointer', fontSize: `${t.textSm}px` }}>{str(p.cancelLabel)}</button>
+              <button type="button" data-loom-dismiss="confirm" style={{ padding: `7px 14px`, borderRadius: `${t.radiusMd}px`, border: 'none', background: tone, color: t.textOnAccent, cursor: 'pointer', fontSize: `${t.textSm}px`, fontWeight: t.weightSemibold }}>{str(p.confirmLabel)}</button>
             </div>
           ) : null}
         </div>

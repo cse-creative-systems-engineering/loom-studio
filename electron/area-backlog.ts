@@ -20,7 +20,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   // Alert
   "Alert|button": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
   "Alert|div": ["color", "fontSize", "gap"],
-  "Alert|div>button": ["color", "lineHeight"],
+  "Alert|div>button data-loom-dismiss": ["color", "lineHeight"],
   "Alert|div>span": ["background", "radius"],
   "Alert|div>strong": ["color", "fontSize"],
   "Alert|div>svg": ["stroke"],
@@ -77,7 +77,7 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   "CommandPalette|div>div>span": ["color"],
   // ConfirmDialog
   "ConfirmDialog|div": ["color", "fontSize", "fontWeight", "gap", "lineHeight"],
-  "ConfirmDialog|div>button": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
+  "ConfirmDialog|div>button data-loom-dismiss": ["background", "border", "borderWidth", "color", "fontSize", "fontWeight", "paddingX", "paddingY", "radius"],
   "ConfirmDialog|svg": ["stroke"],
   // DataCard
   "DataCard|span": ["color", "fontSize", "fontWeight", "letterSpacing", "textTransform"],

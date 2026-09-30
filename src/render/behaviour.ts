@@ -143,6 +143,19 @@ export function behaviourAttrs(input: {
  */
 export function behaviourCss(): string {
   return [
+    // --- form controls speak the design's typeface ---
+    // A browser draws <button>/<input>/<select>/<textarea> in its own UI font
+    // unless told otherwise, so every generated control that did not set a
+    // family inline (tab strips, pagination, dialog buttons, collapse glyphs,
+    // Send…) shipped in Arial beside Inter text. Scoped to design surfaces so
+    // the Studio's own chrome is untouched.
+    ':is(.loom-container,.dw-stage) :is(button,input,select,textarea){font-family:inherit}',
+    // --- focus you can see, on everything operable ---
+    // Seven text tools draw their field as a WELL around a borderless input
+    // with `outline:none` inline, so focus left no trace at all (WCAG 2.4.7).
+    // The ring goes on the well, the thing that looks like the field.
+    ':is(.loom-container,.dw-stage) :has(> :is(input,textarea):is([style*="outline:none"],[style*="outline: none"]):focus-visible){outline:2px solid var(--loom-accent,#5b8cff);outline-offset:2px}',
+    ':is(.loom-container,.dw-stage) :is([role=button],[role=menuitem],[role=slider],[data-loom-b=sort],[data-loom-cmd],a[href]):focus-visible{outline:2px solid var(--loom-accent,#5b8cff);outline-offset:2px}',
     // --- command palette ---
     '[data-loom-palette]{pointer-events:none}',
     '[data-loom-palette][data-loom-open="1"]{pointer-events:auto}',
@@ -292,6 +305,7 @@ export function behaviourCss(): string {
     // `!important` for the same reason the reveal rule needs it: the renderer
     // styles the toast's own box inline, and inline beats any stylesheet.
     '[data-loom-toast][data-loom-gone="1"]{display:none !important}',
+    '[data-loom-dismissable][data-loom-gone="1"]{display:none !important}',
     '[data-loom-toast][data-loom-leaving="1"]{opacity:0}',
 
     // --- pagination: the rows-per-page control re-pages the pager ---
@@ -523,9 +537,9 @@ export function installBehaviour(): void {
   // and the CLOCK is the runtime's — a timer is not something markup can carry.
   // Armed once per element, and re-armed by an observer because a toast is
   // usually added after the runtime has already installed.
-  const gone = (toast: Element): void => {
-    toast.setAttribute('data-loom-leaving', '1')
-    toast.setAttribute('data-loom-gone', '1')
+  const gone = (el: Element): void => {
+    el.setAttribute('data-loom-leaving', '1')
+    el.setAttribute('data-loom-gone', '1')
   }
   const armToasts = (): void => {
     q('[data-loom-toast]').forEach((toast) => {
@@ -737,6 +751,34 @@ export function installBehaviour(): void {
   // A conversation opens at its newest message.
   q('[data-loom-list][data-loom-stick="1"]').forEach(toBottom)
 
+  // --- the keyboard: everything a click does, Enter and Space do --------
+  // Native controls activate themselves; everything else that is operable
+  // (an accordion summary, a menu item, a sortable header, a tree expander, a
+  // progress dot) was mouse-only. One rule, for every one of them.
+  document.addEventListener('keydown', (e) => {
+    const k = e as KeyboardEvent
+    const el = k.target
+    if (!(el instanceof HTMLElement) || el.closest('[inert]') || k.altKey || k.ctrlKey || k.metaKey) return
+    // A rating is a slider: arrows, Home and End move it.
+    if (el.getAttribute('data-loom-b') === 'rate') {
+      const stars = q('[data-loom-star]', el)
+      const cur = Number(el.getAttribute('data-loom-value') ?? 1)
+      const next = k.key === 'ArrowRight' || k.key === 'ArrowUp' ? cur + 1 : k.key === 'ArrowLeft' || k.key === 'ArrowDown' ? cur - 1 : k.key === 'Home' ? 1 : k.key === 'End' ? stars.length : null
+      if (next === null) return
+      k.preventDefault()
+      const star = stars.find((s) => Number(s.getAttribute('data-loom-i')) === Math.max(1, Math.min(stars.length, next)))
+      star?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      return
+    }
+    if (k.key !== 'Enter' && k.key !== ' ') return
+    if (/^(BUTTON|A|INPUT|SELECT|TEXTAREA|SUMMARY|LABEL)$/.test(el.tagName) || el.isContentEditable) return
+    // Unquoted on purpose: this source ships inside every export, and tests
+    // count the design's own role="…" attributes in that file.
+    if (!el.matches('[role=button],[role=menuitem],[role=tab],[role=option],[role=checkbox],[role=switch],[role=radio],[data-loom-b],[data-loom-cmd]')) return
+    k.preventDefault()
+    el.click()
+  })
+
   // --- the interactions -------------------------------------------------
   document.addEventListener('click', (e) => {
     // Dismiss first: a close button is a close button whatever else it wears.
@@ -749,13 +791,17 @@ export function installBehaviour(): void {
       return
     }
 
-    // A toast's own close button: the message goes, whatever the timer said.
+    // A close control closes what it belongs to: a toast, an alert, a
+    // notification, a confirm dialog's Cancel and its confirm button. It was
+    // toast-only, so every other x was decoration. The event it emits is the
+    // hand-off for whatever needs a backend ("confirm" deletes the project in
+    // the real app); its value names it, "dismiss" when unnamed.
     const dismiss = closest(e, '[data-loom-dismiss]')
     if (dismiss) {
-      const toast = dismiss.closest('[data-loom-toast]')
-      if (toast) {
-        gone(toast)
-        fire(dismiss, 'dismiss')
+      const owner = dismiss.closest('[data-loom-toast],[data-loom-dismissable]')
+      if (owner) {
+        gone(owner)
+        fire(dismiss, dismiss.getAttribute('data-loom-dismiss') || 'dismiss')
       }
       return
     }
@@ -825,6 +871,9 @@ export function installBehaviour(): void {
       const open = el.getAttribute('data-loom-open') === '1'
       el.setAttribute('data-loom-open', open ? '0' : '1')
       el.setAttribute('aria-expanded', open ? 'false' : 'true')
+      // The state a screen reader hears lives on the element that IS the
+      // button (the summary); it stayed "false" while the item was open.
+      el.querySelector(':scope > [data-loom-summary]')?.setAttribute('aria-expanded', open ? 'false' : 'true')
       fire(el, 'disclosure')
       return
     }
@@ -902,6 +951,7 @@ export function installBehaviour(): void {
       })
       el.setAttribute('data-loom-value', String(pick))
       el.setAttribute('aria-label', `${pick} of ${stars.length}`)
+      el.setAttribute('aria-valuenow', String(pick))
       fire(el, 'rate')
       return
     }
@@ -928,8 +978,13 @@ export function installBehaviour(): void {
       if (!body) return
       const col = el.getAttribute('data-loom-i') ?? '0'
       const dir = el.getAttribute('data-loom-sort') === 'asc' ? 'desc' : 'asc'
-      q('[data-loom-b="sort"]', table).forEach((h) => h.setAttribute('data-loom-sort', ''))
+      q('[data-loom-b="sort"]', table).forEach((h) => {
+        h.setAttribute('data-loom-sort', '')
+        h.setAttribute('aria-sort', 'none')
+      })
       el.setAttribute('data-loom-sort', dir)
+      // What a screen reader announces; it stayed "none" after every sort.
+      el.setAttribute('aria-sort', dir === 'asc' ? 'ascending' : 'descending')
       {
         const rows = q('[data-loom-row]', body)
         // Read the cell BY COLUMN, not by child position: a row may carry a

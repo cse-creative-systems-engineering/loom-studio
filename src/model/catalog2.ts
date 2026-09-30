@@ -1053,7 +1053,7 @@ defineComponent({ name: 'InlineMessage', category: 'Feedback', icon: 'ⓘ', desc
 }})
 defineComponent({ name: 'ErrorSummary', category: 'Feedback', icon: '✖', description: 'Form error summary.', props: {
   title: { type: 'string', default: '2 fields need attention', group: 'Content' },
-  ...listProps('items', 'Email is required|Password is too short'),
+  ...listProps('items', 'Email is required|Password is too short', 'pipe'),
   // The severity is the tone, and the shape is the variant: a solid red block
   // for a page you cannot submit, an outline for a panel you can.
   tone: { type: 'enum', options: ['danger', 'warning'], default: 'danger', group: 'Style' },

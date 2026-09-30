@@ -4185,6 +4185,81 @@ export async function runSelfTest(): Promise<string> {
     check('every new tool is listed with a schema', ['build', 'style_part', 'set_states', 'set_responsive', 'set_display', 'set_effects', 'duplicate', 'arrange'].every((n) => TOOLS.some((t) => t.name === n)))
   }
 
+  // --- 110. Phase 1: a trustworthy floor (docs/plan-of-attack.md) ------------
+  // Findings 4, 5, 6, 6b and 11 of docs/reviews/output-quality-audit.md,
+  // measured on real output with the real runtime: every close control closes
+  // and names its event; Enter/Space do what a click does on everything
+  // operable; the unreachable items are tab stops; the state a screen reader
+  // hears follows the state on screen; controls speak the design's typeface.
+  {
+    installBehaviourRuntime()
+    const st = new EditorStore()
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, new AiTurn(st), name, args)
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', flow: true, ref: 'page', w: 900, children: [
+      { type: 'Alert', ref: 'alert', props: { dismissible: true } },
+      { type: 'ConfirmDialog', ref: 'dlg' },
+      { type: 'ConfirmDialog', ref: 'dlg2' },
+      { type: 'ErrorSummary', ref: 'errs' },
+      { type: 'Tabs', ref: 'tabs' },
+      { type: 'Accordion', ref: 'acc' },
+      { type: 'DataGrid', ref: 'grid' },
+      { type: 'TreeList', ref: 'tree' },
+      { type: 'ProgressDots', ref: 'dots' },
+      { type: 'Rating', ref: 'rate' },
+      { type: 'SearchBox', ref: 'search' },
+    ] } })
+    const refs = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
+    // Built with no children, Tabs and Accordion arrive as the toolbox drops them.
+    const accId = refs.acc!
+    check('an agent-built Tabs and Accordion arrive with their panels and items', st.doc.nodes[refs.tabs!]!.children.length > 0 && st.doc.nodes[accId]!.children.length > 0)
+    const host = document.createElement('div')
+    host.className = 'loom-container'
+    host.style.cssText = 'position:absolute;left:-10000px;top:0;width:900px'
+    host.innerHTML = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview', hookAll: true }, st.doc.root as string))
+    document.body.appendChild(host)
+    const node = (id: string) => host.querySelector<HTMLElement>(`[data-loom-node="${id}"]`)!
+    const shown = (el: Element) => el.getClientRects().length > 0 && getComputedStyle(el).display !== 'none'
+    const key = (el: Element, k: string) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+    const heard: string[] = []
+    const listen = (ev: Event) => heard.push(ev.type)
+    for (const ev of ['loom:dismiss', 'loom:cancel', 'loom:confirm']) host.addEventListener(ev, listen)
+
+    const theme = getComputedStyle(node(refs.page!)).fontFamily
+    const tabBtn = node(refs.tabs!).querySelector('button')!
+    check('generated controls use the design\'s typeface, not the browser\'s', getComputedStyle(tabBtn).fontFamily === theme, `${getComputedStyle(tabBtn).fontFamily} vs ${theme}`)
+    check('ErrorSummary\'s default lists two errors', node(refs.errs!).querySelectorAll('li').length === 2)
+
+    node(refs.alert!).querySelector<HTMLElement>('[data-loom-dismiss]')!.click()
+    check('an Alert\'s x dismisses it', !shown(node(refs.alert!)))
+    const cancel = [...node(refs.dlg!).querySelectorAll('button')].find((x) => /cancel/i.test(x.textContent ?? ''))!
+    cancel.click()
+    const confirm = [...node(refs.dlg2!).querySelectorAll('button')].filter((x) => !/cancel/i.test(x.textContent ?? ''))[0]!
+    confirm.click()
+    check('ConfirmDialog\'s Cancel and its confirm button both close it', !shown(node(refs.dlg!)) && !shown(node(refs.dlg2!)))
+    check('closing names what happened: dismiss, cancel, confirm', heard.join(',') === 'loom:dismiss,loom:cancel,loom:confirm', heard.join(','))
+
+    const summary = node(accId).querySelector<HTMLElement>('[data-loom-summary]')!
+    key(summary, 'Enter')
+    check('Enter opens an accordion item, and its summary says it is expanded', summary.parentElement!.getAttribute('data-loom-open') === '1' && summary.getAttribute('aria-expanded') === 'true', `${summary.parentElement!.getAttribute('data-loom-open')} / ${summary.getAttribute('aria-expanded')}`)
+    key(summary, ' ')
+    check('Space closes it again', summary.parentElement!.getAttribute('data-loom-open') === '0' && summary.getAttribute('aria-expanded') === 'false')
+
+    const th = node(refs.grid!).querySelector<HTMLElement>('th[data-loom-b="sort"]')!
+    check('a sortable column header is a tab stop', th.tabIndex === 0)
+    key(th, 'Enter')
+    check('Enter sorts the column, and aria-sort says so', th.getAttribute('data-loom-sort') === 'asc' && th.getAttribute('aria-sort') === 'ascending', `${th.getAttribute('data-loom-sort')} / ${th.getAttribute('aria-sort')}`)
+    const expander = node(refs.tree!).querySelector<HTMLElement>('[data-loom-b="expand"]')!
+    const dot = node(refs.dots!).querySelector<HTMLElement>('[data-loom-b="dot"]')!
+    check('tree expanders and progress dots are named tab stops', expander.tabIndex === 0 && !!expander.getAttribute('aria-label') && dot.tabIndex === 0 && !!dot.getAttribute('aria-label'))
+    const rate = node(refs.rate!)
+    const v0 = Number(rate.getAttribute('data-loom-value'))
+    key(rate, 'ArrowRight')
+    check('a Rating is a slider the arrow keys move', rate.tabIndex === 0 && rate.getAttribute('role') === 'slider' && Number(rate.getAttribute('data-loom-value')) === Math.min(v0 + 1, rate.querySelectorAll('[data-loom-star]').length) && rate.getAttribute('aria-valuenow') === rate.getAttribute('data-loom-value'), `${v0} -> ${rate.getAttribute('data-loom-value')}`)
+    const css = behaviourCss()
+    check('a borderless input\'s well is ringed while it has focus', /:has\(> :is\(input,textarea\):is\(\[style\*="outline:none"\],\[style\*="outline: none"\]\):focus-visible\)\{outline:2px/.test(css))
+    host.remove()
+  }
+
   // --- 109. what the OpenRouter run found in Loom ----------------------------
   // An agent rebuilding a real page reported that `justify: between` did
   // nothing (the value was written through as CSS, and "between" is not CSS),
@@ -4194,9 +4269,9 @@ export async function runSelfTest(): Promise<string> {
     const st = new EditorStore()
     const turn = new AiTurn(st)
     const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
-    const b = run('build', { parent_id: null, tree: { type: 'Panel', ref: 'page', props: { w: 600 }, children: [
-      { type: 'Stack', ref: 'row', flow: true, props: { direction: 'row', justify: 'between', w: 500 }, children: [{ type: 'Label', ref: 'l', props: { text: 'Left' } }, { type: 'Label', ref: 'r', props: { text: 'Right' } }] },
-      { type: 'Button', ref: 'btn', x: 0, y: 80, props: { label: 'Sign In', w: 40 } },
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', ref: 'page', w: 600, children: [
+      { type: 'Stack', ref: 'row', flow: true, w: 500, props: { direction: 'row', justify: 'between' }, children: [{ type: 'Label', ref: 'l', props: { text: 'Left' } }, { type: 'Label', ref: 'r', props: { text: 'Right' } }] },
+      { type: 'Button', ref: 'btn', x: 0, y: 80, w: 40, props: { label: 'Sign In' } },
     ] } })
     const refs = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
     const host = document.createElement('div')
