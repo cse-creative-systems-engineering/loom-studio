@@ -28,9 +28,16 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertFreshBuild } from './fresh-build.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(here, '..')
+try {
+  assertFreshBuild(root)
+} catch (e) {
+  console.error(`FAIL  ${e.message}`)
+  process.exit(1)
+}
 const PORT = Number(process.env.LOOM_CDP_PORT || 9347)
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-react-probe-'))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

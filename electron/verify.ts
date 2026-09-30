@@ -9,6 +9,7 @@
 import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import { assertFreshBuild } from './fresh-build.mjs'
 
 const here = __dirname
 
@@ -147,6 +148,15 @@ async function run() {
 }
 
 app.whenReady().then(() => {
+  // verify drives dist/, not the sources: a build that failed part way, or an
+  // edit since the last build, would be verified as old code and could pass.
+  try {
+    assertFreshBuild(path.join(here, '..', '..'))
+  } catch (e) {
+    console.log(JSON.stringify({ threw: e instanceof Error ? e.message : String(e), passed: 0, total: 0 }, null, 2))
+    app.exit(1)
+    return
+  }
   void run().catch((e) => {
     // Print the real stack: "Cannot read properties of null" without a frame is
     // useless, and guessing at it is how bugs get "fixed" in the wrong place.
