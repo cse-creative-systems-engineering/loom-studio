@@ -1,3 +1,4 @@
+import React from 'react'
 import { iconMarkup } from './render/icons'
 
 /**
@@ -64,5 +65,36 @@ export function Ico({ name, size = 14 }: { name: string; size?: number }) {
       // Compile-time constants from icons.ts, never user input.
       dangerouslySetInnerHTML={{ __html: markup }}
     />
+  )
+}
+
+/**
+ * A section that folds: its heading is the button, its summary says what is
+ * inside while folded (so a changed value is never hidden without a trace).
+ */
+export function Disclosure({
+  title,
+  summary = '',
+  defaultOpen = false,
+  children,
+}: {
+  title: string
+  summary?: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = React.useState(defaultOpen)
+  const id = React.useId()
+  return (
+    <section className={`disclosure${open ? ' open' : ''}`}>
+      <h3>
+        <button type="button" className="disclosure-head" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+          <Ico name="chevron-right" size={12} />
+          <span>{title}</span>
+          {summary && <span className="disclosure-sum">{summary}</span>}
+        </button>
+      </h3>
+      {open && <div id={id}>{children}</div>}
+    </section>
   )
 }

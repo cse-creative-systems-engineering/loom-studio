@@ -400,7 +400,11 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
     const { EffectsPanel } = await import('../src/effects-inspector')
     const { normalizeEffects: ne, DEFAULT_EFFECTS: DE } = await import('../src/render/effects')
 
-    const off = r(h(EffectsPanel, { effects: ne(), onChange: () => {}, onCommit: () => {} }))
+    // Folded until an effect is on (eight switches under every Caption pushed
+    // its own properties down); opened, it offers all eight.
+    const folded = r(h(EffectsPanel, { effects: ne(), onChange: () => {}, onCommit: () => {} }))
+    ok('the effects panel is folded while no effect is on', folded.includes('aria-expanded="false"') && !folded.includes('Glass'))
+    const off = r(h(EffectsPanel, { effects: ne(), onChange: () => {}, onCommit: () => {}, startOpen: true }))
     for (const name of ['Glass', 'Aurora', 'Grain', 'Spotlight', 'Shimmer', 'Glow', 'Tilt', 'Chromatic']) {
       if (!off.includes(name)) ok(`inspector offers the ${name} toggle`, false, 'missing')
     }

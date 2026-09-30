@@ -31,7 +31,7 @@ import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
 import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
-import { Toggle, Glyph, Ico } from './ui-primitives'
+import { Toggle, Glyph, Ico, Disclosure } from './ui-primitives'
 import { VIEWPORTS, fitZoom, nodeBreakpoints } from './render/responsive'
 import { installBehaviourStyles, installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
 import { ContextMenu, type MenuState } from './context-menu'
@@ -232,6 +232,22 @@ export function App() {
           t.isContentEditable)
 
       if (mod) {
+        // In a field, select-all and the clipboard are the field's own: Ctrl+A
+        // once selected every NODE while you meant the text you were typing.
+        if (typing && ['a', 'c', 'x', 'v'].includes(e.key)) return
+        if (e.key === 'c') {
+          if (s.copy() > 0) e.preventDefault()
+          return
+        }
+        if (e.key === 'x') {
+          if (s.cut() > 0) e.preventDefault()
+          return
+        }
+        if (e.key === 'v') {
+          e.preventDefault()
+          s.paste()
+          return
+        }
         if (e.key === 'z' && !e.shiftKey) {
           e.preventDefault()
           s.undo()
@@ -438,7 +454,7 @@ function Toast({ s }: { s: EditorStore }) {
     <div className="toast-region" role="status" aria-live="polite">
       {n && (
         <div className={`toast ${n.tone}`} key={n.id}>
-          <Ico name={n.tone === 'ok' ? 'check' : 'info'} size={14} />
+          <Ico name={n.tone === 'ok' ? 'check' : 'alert-triangle'} size={14} />
           <span>{n.text}</span>
           <button type="button" className="toast-x" aria-label="Dismiss" onClick={() => s.dismissNotice(n.id)}>
             <Ico name="x" size={12} />
@@ -821,6 +837,7 @@ function Toolbox({
                       hideCard()
                       startDrag(e, STARTER_PREFIX + st.id)
                     }}
+                    onClick={() => s.insertTool(st.id, st.id)}
                   >
                     <span className="tool-icon"><Glyph markup={starterGlyph(st.id)} /></span>
                     <span className="tool-name">{st.label}</span>
@@ -847,6 +864,9 @@ function Toolbox({
                           hideCard()
                           startDrag(e, c.name)
                         }}
+                        // A click (or Enter) adds it to the selection; a drag
+                        // places it where it is dropped.
+                        onClick={() => s.insertTool(c.name)}
                       >
                         <span className="tool-icon"><Glyph markup={toolGlyph(c.name, c.category)} /></span>
                         <span className="tool-name">{c.name}</span>
@@ -874,33 +894,194 @@ function layerDetail(node: { props: Record<string, PropValue> }): string {
 }
 
 /**
- * Layers: the document tree in stacking order with visibility, lock, and
- * z-order controls. The canvas shows spatial truth; this shows structural
- * truth — including hidden nodes, which the canvas only ghosts.
+ * Layers: the document tree in stacking order, with visibility, lock and
+ * order controls. The canvas shows spatial truth; this shows structural
+ * truth, including hidden nodes, which the canvas only ghosts.
+ *
+ * A real tree: rows collapse, reorder by dragging (before, after, or into a
+ * container), rename in place (double-click, F2 or Enter), and move with the
+ * keyboard (arrows walk it, Alt+arrows reorder). A row's actions show on
+ * hover, selection or focus, so the name gets the width; a hidden or locked
+ * node keeps its state icon in view.
  */
 function Layers({ s }: { s: EditorStore }) {
+  const [collapsed, setCollapsed] = React.useState<ReadonlySet<NodeId>>(() => new Set())
+  const [renaming, setRenaming] = React.useState<NodeId | null>(null)
+  const [drop, setDrop] = React.useState<{ over: NodeId; where: 'before' | 'after' | 'inside' } | null>(null)
+  const treeRef = React.useRef<HTMLDivElement | null>(null)
   const root = s.doc.root === null ? undefined : s.doc.nodes[s.doc.root]
+
+  // The rows as shown, top to bottom: what the arrow keys walk.
+  const rows: NodeId[] = []
+  const walk = (ids: NodeId[]) => {
+    for (const id of ids) {
+      if (!s.doc.nodes[id]) continue
+      rows.push(id)
+      if (!collapsed.has(id)) walk(s.doc.nodes[id].children)
+    }
+  }
+  if (root) walk(root.children)
+
+  // Selecting a node reveals its row: every collapsed ancestor opens.
+  const selected = s.selection[0]
+  React.useEffect(() => {
+    if (!selected) return
+    const open: NodeId[] = []
+    for (let p = parentOf(s.doc, selected); p; p = parentOf(s.doc, p)) if (collapsed.has(p)) open.push(p)
+    if (open.length) setCollapsed((c) => new Set([...c].filter((x) => !open.includes(x))))
+  }, [selected, s.doc, collapsed])
+
+  const focusRow = (id: NodeId) =>
+    requestAnimationFrame(() => treeRef.current?.querySelector<HTMLElement>(`[data-layer="${CSS.escape(id)}"]`)?.focus())
+  const toggle = (id: NodeId) =>
+    setCollapsed((c) => {
+      const n = new Set(c)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  const reorder = (id: NodeId, dir: -1 | 1) => {
+    const parent = parentOf(s.doc, id)
+    if (!parent) return
+    const index = s.doc.nodes[parent].children.indexOf(id)
+    const to = index + dir
+    if (to < 0 || to >= s.doc.nodes[parent].children.length) return
+    // Same-parent reparent uses post-removal indexes: i-1 lifts one slot,
+    // i+1 drops one slot.
+    s.commit({ op: 'reparent', id, parent, index: to }, dir < 0 ? 'Move forward' : 'Move back')
+  }
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (renaming || (e.target as HTMLElement).tagName === 'INPUT') return
+    const id = s.selection[0]
+    const at = id ? rows.indexOf(id) : -1
+    const go = (next: NodeId | undefined) => {
+      if (!next) return
+      s.select([next])
+      focusRow(next)
+    }
+    const node = id ? s.doc.nodes[id] : undefined
+    const hasKids = (node?.children.length ?? 0) > 0
+    let handled = true
+    if (e.key === 'ArrowDown' && e.altKey && id) reorder(id, 1)
+    else if (e.key === 'ArrowUp' && e.altKey && id) reorder(id, -1)
+    else if (e.key === 'ArrowDown') go(rows[Math.min(rows.length - 1, at + 1)] ?? rows[0])
+    else if (e.key === 'ArrowUp') go(rows[Math.max(0, at - 1)] ?? rows[0])
+    else if (e.key === 'Home') go(rows[0])
+    else if (e.key === 'End') go(rows[rows.length - 1])
+    else if (e.key === 'ArrowRight' && id && hasKids) {
+      if (collapsed.has(id)) toggle(id)
+      else go(node!.children[0])
+    } else if (e.key === 'ArrowLeft' && id) {
+      if (hasKids && !collapsed.has(id)) toggle(id)
+      else {
+        const p = parentOf(s.doc, id)
+        if (p && p !== s.doc.root) go(p)
+      }
+    } else if ((e.key === 'F2' || e.key === 'Enter') && id) setRenaming(id)
+    else handled = false
+    if (handled) {
+      // The canvas's own arrow keys nudge the selection; in the tree they walk it.
+      e.preventDefault()
+      e.stopPropagation()
+    }
+  }
+
+  // Drag a row to reorder it: before or after another row, or into a container.
+  const startRowDrag = (id: NodeId, e: React.PointerEvent) => {
+    if (e.button !== 0 || renaming) return
+    const x0 = e.clientX
+    const y0 = e.clientY
+    let dragging = false
+    let target: { over: NodeId; where: 'before' | 'after' | 'inside' } | null = null
+    const onMove = (ev: PointerEvent) => {
+      if (!dragging && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return
+      dragging = true
+      const row = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-layer]')
+      const over = row?.dataset.layer
+      if (!row || !over || over === id || descendants(s.doc, id).includes(over)) {
+        target = null
+      } else {
+        const r = row.getBoundingClientRect()
+        const f = (ev.clientY - r.top) / r.height
+        const overNode = s.doc.nodes[over]
+        const into = !!getComponent(overNode.type)?.container && (!getComponent(overNode.type)?.childTypes || acceptsChild(overNode.type, s.doc.nodes[id].type))
+        target = { over, where: into && f > 0.3 && f < 0.7 ? 'inside' : f < 0.5 ? 'before' : 'after' }
+      }
+      setDrop(target)
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      setDrop(null)
+      if (!dragging || !target) return
+      const { over, where } = target
+      if (where === 'inside') {
+        s.commit({ op: 'reparent', id, parent: over, index: s.doc.nodes[over].children.length }, 'Move into')
+        return
+      }
+      const parent = parentOf(s.doc, over)
+      if (!parent) return
+      const kids = s.doc.nodes[parent].children.filter((c) => c !== id)
+      const index = kids.indexOf(over) + (where === 'after' ? 1 : 0)
+      s.commit({ op: 'reparent', id, parent, index }, 'Move')
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   if (!root) {
     return (
       <div className="scroll layers">
-        <div className="legend">0 elements · drop a component to start</div>
+        <div className="legend">0 elements · add a component to start</div>
       </div>
     )
   }
   const count = Object.keys(s.doc.nodes).length - 1
+  const focusable = selected && rows.includes(selected) ? selected : rows[0]
   return (
     <div className="scroll layers">
       <div className="legend">
         {count} element{count === 1 ? '' : 's'} · top is front
       </div>
-      {root.children.map((id) => (
-        <LayerRow key={id} s={s} id={id} depth={0} />
-      ))}
+      <div className="layer-tree" role="tree" aria-label="Layers" aria-multiselectable="true" ref={treeRef} onKeyDown={onKeyDown}>
+        {root.children.map((id) => (
+          <LayerRow
+            key={id}
+            s={s}
+            id={id}
+            depth={0}
+            collapsed={collapsed}
+            onToggle={toggle}
+            renaming={renaming}
+            onRename={setRenaming}
+            onReorder={reorder}
+            onRowDrag={startRowDrag}
+            drop={drop}
+            focusable={focusable}
+          />
+        ))}
+      </div>
     </div>
   )
 }
 
-function LayerRow({ s, id, depth }: { s: EditorStore; id: NodeId; depth: number }) {
+interface LayerRowProps {
+  s: EditorStore
+  id: NodeId
+  depth: number
+  collapsed: ReadonlySet<NodeId>
+  onToggle: (id: NodeId) => void
+  renaming: NodeId | null
+  onRename: (id: NodeId | null) => void
+  onReorder: (id: NodeId, dir: -1 | 1) => void
+  onRowDrag: (id: NodeId, e: React.PointerEvent) => void
+  drop: { over: NodeId; where: 'before' | 'after' | 'inside' } | null
+  focusable: NodeId | undefined
+}
+
+function LayerRow(props: LayerRowProps) {
+  const { s, id, depth, collapsed, onToggle, renaming, onRename, onReorder, onRowDrag, drop, focusable } = props
   const node = s.doc.nodes[id]
   if (!node) return null
   const spec = getComponent(node.type)
@@ -908,69 +1089,132 @@ function LayerRow({ s, id, depth }: { s: EditorStore; id: NodeId; depth: number 
   const parent = parentOf(s.doc, id)
   const siblings = parent ? (s.doc.nodes[parent]?.children ?? []) : []
   const index = siblings.indexOf(id)
-
-  const reorder = (dir: -1 | 1) => {
-    if (!parent) return
-    // Same-parent reparent uses post-removal indexes: i-1 lifts one slot,
-    // i+1 drops one slot. Buttons only render where the move is legal.
-    s.commit({ op: 'reparent', id, parent, index: index + dir }, dir < 0 ? 'Move forward' : 'Move back')
+  const hasKids = node.children.length > 0
+  const open = hasKids && !collapsed.has(id)
+  const detail = layerDetail(node)
+  const hidden = node.visible === false
+  const locked = node.locked === true
+  const title = node.name ?? node.type
+  // The canvas shows which node a row is: hovering a row outlines it there.
+  const mark = (on: boolean) =>
+    document.querySelector(`.loom .surface [data-loom-id="${CSS.escape(id)}"]`)?.classList.toggle('layer-hover', on)
+  const dropClass = drop?.over === id ? ` drop-${drop.where}` : ''
+  // Once per rename, however it ends (Enter, Escape, or leaving the field).
+  const finishRename = (field: HTMLInputElement, keep: boolean) => {
+    if (field.dataset.done === '1') return
+    field.dataset.done = '1'
+    const next = field.value.trim()
+    if (keep && next !== (node.name ?? '')) s.commit({ op: 'setName', id, name: next }, next ? 'Rename' : 'Clear name')
+    onRename(null)
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-layer="${CSS.escape(id)}"]`)?.focus())
   }
 
-  const detail = layerDetail(node)
-
   return (
-    <div>
+    <div role="none">
       <div
-        className={`layer-row${selected ? ' selected' : ''}${node.visible === false ? ' is-hidden' : ''}`}
-        style={{ paddingLeft: 8 + depth * 14 }}
+        className={`layer-row${selected ? ' selected' : ''}${hidden ? ' is-hidden' : ''}${dropClass}`}
+        role="treeitem"
+        aria-level={depth + 1}
+        aria-selected={selected}
+        aria-expanded={hasKids ? open : undefined}
+        aria-label={`${title}${node.name ? ` (${node.type})` : ''}${detail ? `, ${detail}` : ''}${hidden ? ', hidden' : ''}${locked ? ', locked' : ''}`}
+        tabIndex={focusable === id ? 0 : -1}
+        data-layer={id}
+        style={{ paddingLeft: 4 + depth * 12 }}
         onPointerDown={(e) => {
+          if ((e.target as HTMLElement).closest('button, input')) return
           e.stopPropagation()
           if (e.shiftKey) {
             s.select(selected ? s.selection.filter((x) => x !== id) : [...s.selection, id])
           } else {
             s.select([id])
           }
+          onRowDrag(id, e)
         }}
-        title={`${node.type}${detail ? ` — ${detail}` : ''}`}
+        onDoubleClick={() => onRename(id)}
+        onPointerEnter={() => mark(true)}
+        onPointerLeave={() => mark(false)}
+        title={`${node.type}${detail ? ` · ${detail}` : ''}`}
       >
-        <span className="tool-icon"><Glyph markup={toolGlyph(node.type, spec?.category)} size={13} /></span>
-        <span className="tool-name">
-          {node.type}
-          {detail && <span className="layer-detail"> · {detail}</span>}
-        </span>
-        {node.locked === true && (
-          <span className="layer-locked" title="Locked — unlock to drag, resize, or delete" aria-label="locked">
-            ⚿
+        {hasKids ? (
+          <button
+            type="button"
+            className={`layer-twist${open ? ' open' : ''}`}
+            tabIndex={-1}
+            aria-hidden="true"
+            onClick={() => onToggle(id)}
+          >
+            <Ico name="chevron-right" size={12} />
+          </button>
+        ) : (
+          <span className="layer-twist" aria-hidden="true" />
+        )}
+        <span className="tool-icon" aria-hidden="true"><Glyph markup={toolGlyph(node.type, spec?.category)} size={13} /></span>
+        {renaming === id ? (
+          <input
+            className="layer-rename"
+            autoFocus
+            defaultValue={node.name ?? ''}
+            placeholder={node.type}
+            aria-label={`Name for ${node.type}`}
+            onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              // Enter and Escape finish here, not through blur: a field that
+              // never had the focus (another window was in front) never blurs.
+              if (e.key === 'Enter') finishRename(e.currentTarget, true)
+              if (e.key === 'Escape') finishRename(e.currentTarget, false)
+            }}
+            onBlur={(e) => finishRename(e.currentTarget, true)}
+          />
+        ) : (
+          <span className="tool-name">
+            {title}
+            {!node.name && detail && <span className="layer-detail"> · {detail}</span>}
           </span>
         )}
-        {siblings.length > 1 && index > 0 && (
-          <button className="layer-btn" title="Move forward (toward front)" onClick={() => reorder(-1)}>
-            ↑
-          </button>
+        {(hidden || locked) && (
+          <span className="layer-state" aria-hidden="true">
+            {hidden && <Ico name="eye-off" size={12} />}
+            {locked && <Ico name="lock" size={12} />}
+          </span>
         )}
-        {siblings.length > 1 && index >= 0 && index < siblings.length - 1 && (
-          <button className="layer-btn" title="Move back (toward back)" onClick={() => reorder(1)}>
-            ↓
+        <span className="layer-actions">
+          <button type="button" className="layer-btn" tabIndex={-1} disabled={index <= 0} title="Move forward (toward front) · Alt+↑" aria-label="Move forward" onClick={() => onReorder(id, -1)}>
+            <Ico name="chevron-up" size={12} />
           </button>
-        )}
-        <button
-          className={`layer-btn${node.visible === false ? ' off' : ''}`}
-          title={node.visible === false ? 'Show in output' : 'Hide from output'}
-          onClick={() => s.commit({ op: 'setVisible', id, visible: node.visible === false }, node.visible === false ? 'Show' : 'Hide')}
-        >
-          {node.visible === false ? '○' : '●'}
-        </button>
-        <button
-          className={`layer-btn${node.locked === true ? ' on' : ''}`}
-          title={node.locked === true ? 'Unlock' : 'Lock against drag, resize, and delete'}
-          onClick={() => s.commit({ op: 'setLocked', id, locked: !node.locked }, node.locked ? 'Unlock' : 'Lock')}
-        >
-          ⚿
-        </button>
+          <button type="button" className="layer-btn" tabIndex={-1} disabled={index < 0 || index >= siblings.length - 1} title="Move back (toward back) · Alt+↓" aria-label="Move back" onClick={() => onReorder(id, 1)}>
+            <Ico name="chevron-down" size={12} />
+          </button>
+          <button
+            type="button"
+            className={`layer-btn${hidden ? ' off' : ''}`}
+            tabIndex={-1}
+            title={hidden ? 'Show in output' : 'Hide from output'}
+            aria-label={hidden ? 'Show' : 'Hide'}
+            onClick={() => s.commit({ op: 'setVisible', id, visible: hidden }, hidden ? 'Show' : 'Hide')}
+          >
+            <Ico name={hidden ? 'eye-off' : 'eye'} size={12} />
+          </button>
+          <button
+            type="button"
+            className={`layer-btn${locked ? ' on' : ''}`}
+            tabIndex={-1}
+            title={locked ? 'Unlock' : 'Lock against drag, resize, and delete'}
+            aria-label={locked ? 'Unlock' : 'Lock'}
+            onClick={() => s.commit({ op: 'setLocked', id, locked: !locked }, locked ? 'Unlock' : 'Lock')}
+          >
+            <Ico name="lock" size={12} />
+          </button>
+        </span>
       </div>
-      {node.children.map((c) => (
-        <LayerRow key={c} s={s} id={c} depth={depth + 1} />
-      ))}
+      {open && (
+        <div role="group">
+          {node.children.map((c) => (
+            <LayerRow key={c} {...props} id={c} depth={depth + 1} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1561,8 +1805,8 @@ function Canvas({
                 <span className="mark empty-mark" aria-hidden="true" />
                 <div className="empty-hint-title">Start with a blank canvas</div>
                 <div className="empty-hint-body">
-                  Drag any tool from the left onto the canvas. The first one becomes the root of this
-                  document.
+                  Click any tool on the left, or drag it onto the canvas. The first one becomes the
+                  root of this document.
                 </div>
                 <div className="empty-starts">
                   {STARTERS.map((st) => (
@@ -1706,12 +1950,16 @@ function Inspector({
           <PagePanel s={s} />
           <div className="empty compact">
             <p>Nothing selected</p>
-            <p className="dim">Drag a component onto the canvas, or click one to edit its properties.</p>
+            <p className="dim">Click a tool on the left to add it, or drag it onto the canvas. Click a component to edit its properties.</p>
           </div>
         </div>
       </aside>
     )
   }
+
+  // Several nodes: say so, and edit them together (it silently showed the
+  // first and edited only that one).
+  if (s.selection.filter((x) => s.doc.nodes[x]).length > 1) return <MultiInspector s={s} />
 
   const spec = getComponent(node.type)
   if (!spec) return <aside className="inspector" />
@@ -1752,6 +2000,12 @@ function Inspector({
 
   const chain = ancestry(s.doc, node.id)
   const parent = parentOf(s.doc, node.id)
+  // What the folded Display section holds, when it differs from the default.
+  const displaySummary = [
+    (node.opacity ?? 1) < 1 ? `${Math.round((node.opacity ?? 1) * 100)}%` : '',
+    node.visible === false ? 'hidden' : '',
+    node.locked ? 'locked' : '',
+  ].filter(Boolean).join(' · ')
 
   return (
     <aside className="inspector">
@@ -1767,44 +2021,59 @@ function Inspector({
       </div>
 
       <div className="insp-scroll">
-        <section>
-          <h3>Display</h3>
-          <div className="field">
-            <label>Opacity</label>
-            <div className="range-row">
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={Math.round((node.opacity ?? 1) * 100)}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                if (Number.isFinite(v)) s.poke({ op: 'setOpacity', id: node.id, opacity: v / 100 })
-              }}
-              onBlur={() => s.seal('Opacity')}
-              onMouseUp={() => s.seal('Opacity')}
-              aria-label="Opacity percent"
-            />
-            <span className="range-value">{Math.round((node.opacity ?? 1) * 100)}%</span>
-            </div>
-          </div>
-          <div className="field">
-            <label title="Visible in output">Visible</label>
-            <Toggle
-              label="Visible"
-              checked={node.visible !== false}
-              onChange={(v) => s.commit({ op: 'setVisible', id: node.id, visible: v }, v ? 'Show' : 'Hide')}
-            />
-          </div>
-          <div className="field">
-            <label title="Locked: no drag, resize, or delete">Locked</label>
-            <Toggle
-              label="Locked"
-              checked={node.locked === true}
-              onChange={(v) => s.commit({ op: 'setLocked', id: node.id, locked: v }, v ? 'Lock' : 'Unlock')}
-            />
-          </div>
-        </section>
+        {/* Find a property first; then what the component IS (its parts,
+            its content), then where it sits, how it reacts, and last the
+            node-level switches and the atmosphere, folded until used. */}
+        <div className="props-bar">
+          <input
+            type="search"
+            className="props-search"
+            placeholder="Search properties"
+            aria-label="Search properties"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setQuery('')
+            }}
+          />
+          <button
+            type="button"
+            className={`props-more ${showAdvanced ? 'on' : ''}`}
+            aria-pressed={showAdvanced}
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            title={showAdvanced ? 'Show only the essentials' : 'Show spacing, surface and type for this component'}
+          >
+            {showAdvanced
+              ? 'Show essentials only'
+              : view.hiddenAdvanced > 0
+                ? `Show ${view.hiddenAdvanced} more ${view.hiddenAdvanced === 1 ? 'property' : 'properties'}`
+                : 'Show all properties'}
+          </button>
+        </div>
+
+        {/* What the component is made of comes first: its tabs, its events. */}
+        <AddsPanel s={s} node={node} />
+        <ListsPanel
+          s={s}
+          node={node}
+          renderField={(key, ps, value, onChange) => <Field name={key} ps={ps} value={value} onChange={onChange} />}
+        />
+
+
+        {view.groups.length === 0 && query.trim() !== '' && (
+          <p className="props-empty">No properties match “{query.trim()}”.</p>
+        )}
+
+        {shownGroups.map((group) => (
+          <section key={group.name}>
+            <h3>{group.name}</h3>
+            {/* Flow is how a container arranges its children: the first
+                question of Layout, not a section of its own. */}
+            {group.name === 'Layout' && flowRow}
+            {group.rows.map(fieldFor)}
+          </section>
+        ))}
+
         {!isFlowChild(s.doc, node.id) && (
           <PositionSection s={s} node={node} viewport={viewport} narrow={narrow} label={label} over={over}>
             {positionRows}
@@ -1842,62 +2111,51 @@ function Inspector({
           </section>
         )}
 
-        {/* What the component is made of comes first: its tabs, its events. */}
-        <AddsPanel s={s} node={node} />
-        <ListsPanel
-          s={s}
-          node={node}
-          renderField={(key, ps, value, onChange) => <Field name={key} ps={ps} value={value} onChange={onChange} />}
-        />
-
         <StatesPanel s={s} node={node} editing={editState} onEditing={onEditState} />
-
-        <div className="props-bar">
-          <input
-            type="search"
-            className="props-search"
-            placeholder="Search properties"
-            aria-label="Search properties"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setQuery('')
-            }}
-          />
-          <button
-            type="button"
-            className={`props-more ${showAdvanced ? 'on' : ''}`}
-            aria-pressed={showAdvanced}
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            title={showAdvanced ? 'Show only the essentials' : 'Show spacing, surface and type for this component'}
-          >
-            {showAdvanced
-              ? 'Show essentials only'
-              : view.hiddenAdvanced > 0
-                ? `Show ${view.hiddenAdvanced} more ${view.hiddenAdvanced === 1 ? 'property' : 'properties'}`
-                : 'Show all properties'}
-          </button>
-        </div>
-
-        {view.groups.length === 0 && query.trim() !== '' && (
-          <p className="props-empty">No properties match “{query.trim()}”.</p>
-        )}
-
-        {shownGroups.map((group) => (
-          <section key={group.name}>
-            <h3>{group.name}</h3>
-            {/* Flow is how a container arranges its children: the first
-                question of Layout, not a section of its own. */}
-            {group.name === 'Layout' && flowRow}
-            {group.rows.map(fieldFor)}
-          </section>
-        ))}
 
         {/* Inner parts are styling, so they sit behind "more properties" with
             the rest of it; a styled part is never hidden. */}
         {spec.parts && (showAdvanced || Object.keys(spec.parts).some((n) => partStyled(node, n))) && (
           <PartsPanel s={s} node={node} parts={spec.parts} />
         )}
+
+        <Disclosure key={`display-${node.id}`} title="Display" summary={displaySummary} defaultOpen={displaySummary !== ''}>
+          <div className="field">
+            <label>Opacity</label>
+            <div className="range-row">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round((node.opacity ?? 1) * 100)}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                if (Number.isFinite(v)) s.poke({ op: 'setOpacity', id: node.id, opacity: v / 100 })
+              }}
+              onBlur={() => s.seal('Opacity')}
+              onMouseUp={() => s.seal('Opacity')}
+              aria-label="Opacity percent"
+            />
+            <span className="range-value">{Math.round((node.opacity ?? 1) * 100)}%</span>
+            </div>
+          </div>
+          <div className="field">
+            <label title="Visible in output">Visible</label>
+            <Toggle
+              label="Visible"
+              checked={node.visible !== false}
+              onChange={(v) => s.commit({ op: 'setVisible', id: node.id, visible: v }, v ? 'Show' : 'Hide')}
+            />
+          </div>
+          <div className="field">
+            <label title="Locked: no drag, resize, or delete">Locked</label>
+            <Toggle
+              label="Locked"
+              checked={node.locked === true}
+              onChange={(v) => s.commit({ op: 'setLocked', id: node.id, locked: v }, v ? 'Lock' : 'Unlock')}
+            />
+          </div>
+        </Disclosure>
 
         {/*
           The atmosphere layer. Present but separate from the schema-driven
@@ -1907,10 +2165,129 @@ function Inspector({
           component definition.
         */}
         <EffectsPanel
+          key={node.id}
           effects={normalizeEffects(node.effects)}
           onChange={(patch) => s.poke({ op: 'setEffects', id: node.id, patch })}
           onCommit={() => s.seal('Effects')}
         />
+      </div>
+    </aside>
+  )
+}
+
+const ALIGN_GLYPHS: Record<string, string> = {
+  left: '<path d="M4 3v18"/><rect x="7" y="6" width="11" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/>',
+  center: '<path d="M12 3v18"/><rect x="5" y="6" width="14" height="4" rx="1"/><rect x="8" y="14" width="8" height="4" rx="1"/>',
+  right: '<path d="M20 3v18"/><rect x="6" y="6" width="11" height="4" rx="1"/><rect x="10" y="14" width="7" height="4" rx="1"/>',
+  top: '<path d="M3 4h18"/><rect x="6" y="7" width="4" height="11" rx="1"/><rect x="14" y="7" width="4" height="7" rx="1"/>',
+  middle: '<path d="M3 12h18"/><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="8" width="4" height="8" rx="1"/>',
+  bottom: '<path d="M3 20h18"/><rect x="6" y="6" width="4" height="11" rx="1"/><rect x="14" y="10" width="4" height="7" rx="1"/>',
+  horizontal: '<path d="M3 4v16M21 4v16"/><rect x="8" y="8" width="3" height="8" rx="1"/><rect x="13" y="8" width="3" height="8" rx="1"/>',
+  vertical: '<path d="M4 3h16M4 21h16"/><rect x="8" y="8" width="8" height="3" rx="1"/><rect x="8" y="13" width="8" height="3" rx="1"/>',
+}
+
+/**
+ * The inspector for several nodes: what is selected, arranging them, the
+ * properties they all have (a value they disagree on reads "Mixed"; an edit
+ * sets it on every one, as one undo step), and what to do with them.
+ */
+function MultiInspector({ s }: { s: EditorStore }) {
+  const ids = s.selection.filter((x) => s.doc.nodes[x])
+  const nodes = ids.map((x) => s.doc.nodes[x])
+  const tally = new Map<string, number>()
+  for (const n of nodes) tally.set(n.type, (tally.get(n.type) ?? 0) + 1)
+  const kinds = [...tally.entries()].map(([t, n]) => `${n} ${t}`).join(' · ')
+
+  // Arranging needs the drawn sizes, in design units: measured on the canvas.
+  const size = (id: NodeId) => {
+    const surface = document.querySelector<HTMLElement>('.loom .surface')
+    const el = surface?.querySelector<HTMLElement>(`[data-loom-id="${CSS.escape(id)}"]`)
+    const z = Number(surface?.dataset.zoom ?? 100) / 100 || 1
+    const r = el?.getBoundingClientRect()
+    return { w: r ? r.width / z : Number(s.doc.nodes[id]?.props.w) || 0, h: r ? r.height / z : Number(s.doc.nodes[id]?.props.h) || 0 }
+  }
+  const parent = parentOf(s.doc, ids[0])
+  const siblings = !!parent && ids.every((x) => parentOf(s.doc, x) === parent)
+  const free = siblings && !s.doc.nodes[parent!].flow
+  const arrangeNote = !siblings ? 'Arranging needs components in the same container.' : !free ? 'Their container lays them out (flow): arrange them there.' : ''
+
+  // The properties every selected component has, with the same kind.
+  const specs = nodes.map((n) => getComponent(n.type)).filter((x): x is NonNullable<typeof x> => !!x)
+  const view = specs.length === nodes.length ? inspectorView(specs[0], nodes[0].props, { query: '', showAdvanced: false }) : { groups: [] }
+  const groups = view.groups
+    .filter((g) => g.name !== 'Position')
+    .map((g) => ({
+      ...g,
+      rows: g.rows.filter((r) =>
+        specs.every((sp) => {
+          const other = sp.props[r.key]
+          return other && other.type === r.spec.type && (r.spec.type !== 'enum' || (other.options ?? []).join() === (r.spec.options ?? []).join())
+        }),
+      ),
+    }))
+    .filter((g) => g.rows.length > 0)
+  const setAll = (key: string, value: PropValue) =>
+    s.commitAll(ids.map((x) => ({ op: 'setProp' as const, id: x, key, value })), `Set ${key} on ${ids.length}`)
+  const allHidden = nodes.every((n) => n.visible === false)
+  const allLocked = nodes.every((n) => n.locked === true)
+
+  return (
+    <aside className="inspector">
+      <div className="insp-head">
+        <span className="insp-icon"><Ico name="copy" size={16} /></span>
+        <div>
+          <div className="insp-name">{ids.length} selected</div>
+          <div className="insp-path">{kinds}</div>
+        </div>
+      </div>
+      <div className="insp-scroll">
+        <section>
+          <h3>Arrange</h3>
+          <div className="arrange-row" role="group" aria-label="Align">
+            {(['left', 'center', 'right', 'top', 'middle', 'bottom'] as const).map((edge) => (
+              <button key={edge} type="button" className="icon-mini" disabled={!free} title={`Align ${edge}`} aria-label={`Align ${edge}`} onClick={() => s.align(ids, edge, size)}>
+                <Glyph markup={ALIGN_GLYPHS[edge]} size={15} />
+              </button>
+            ))}
+          </div>
+          <div className="arrange-row" role="group" aria-label="Distribute">
+            {(['horizontal', 'vertical'] as const).map((axis) => (
+              <button key={axis} type="button" className="icon-mini" disabled={!free || ids.length < 3} title={`Distribute ${axis}ly${ids.length < 3 ? ' (needs three or more)' : ''}`} aria-label={`Distribute ${axis}ly`} onClick={() => s.distribute(ids, axis, size)}>
+                <Glyph markup={ALIGN_GLYPHS[axis]} size={15} />
+              </button>
+            ))}
+          </div>
+          {arrangeNote && <p className="dim small">{arrangeNote}</p>}
+        </section>
+        {groups.map((g) => (
+          <section key={g.name}>
+            <h3>{g.name}</h3>
+            {g.rows.map((r) => {
+              const values = nodes.map((n) => n.props[r.key] ?? r.spec.default)
+              const mixed = values.some((v) => v !== values[0])
+              return <Field key={r.key} name={r.key} ps={r.spec} value={values[0]} mixed={mixed} onChange={(v) => setAll(r.key, v)} />
+            })}
+          </section>
+        ))}
+        <section>
+          <h3>Display</h3>
+          <div className="field">
+            <label>Visible</label>
+            <Toggle label="Visible" checked={!allHidden} onChange={(v) => s.commitAll(ids.map((x) => ({ op: 'setVisible' as const, id: x, visible: v })), v ? 'Show' : 'Hide')} />
+          </div>
+          <div className="field">
+            <label>Locked</label>
+            <Toggle label="Locked" checked={allLocked} onChange={(v) => s.commitAll(ids.map((x) => ({ op: 'setLocked' as const, id: x, locked: v })), v ? 'Lock' : 'Unlock')} />
+          </div>
+        </section>
+        <section>
+          <h3>Selection</h3>
+          <div className="multi-actions">
+            <button type="button" className="mini" disabled={!siblings} onClick={() => s.wrap(ids)}>Wrap in Stack</button>
+            <button type="button" className="mini" onClick={() => s.duplicateAll(ids)}>Duplicate</button>
+            <button type="button" className="mini danger" onClick={() => s.remove(ids)}>Delete</button>
+          </div>
+        </section>
       </div>
     </aside>
   )
@@ -1950,9 +2327,11 @@ interface FieldProps {
   onReset?: () => void
   /** For a `node` property: the nodes it may point at. */
   refs?: Array<{ id: NodeId; label: string }>
+  /** Several nodes are being edited and they disagree: show "Mixed", not one of them. */
+  mixed?: boolean
 }
 
-function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: FieldProps) {
+function Field({ name, ps, value, onChange, badge, modified, onReset, refs, mixed = false }: FieldProps) {
   const label = propLabel(name, ps)
   // -1 is the shared vocabulary's "the designer did not set this". Showing it
   // as a number reads as a real value of minus one, so it shows as empty.
@@ -1981,11 +2360,12 @@ function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: Fi
         )}
       </div>
       {ps.type === 'boolean' && (
-        <Toggle label={label} checked={value === true} onChange={(v) => onChange(v)} />
+        <Toggle label={mixed ? `${label} (mixed)` : label} checked={!mixed && value === true} onChange={(v) => onChange(v)} />
       )}
       {ps.type === 'enum' && (
         <div className="select-wrap">
-          <select aria-label={label} value={String(value ?? ps.default)} onChange={(e) => onChange(e.target.value)}>
+          <select aria-label={label} value={mixed ? '' : String(value ?? ps.default)} onChange={(e) => onChange(e.target.value)}>
+            {mixed && <option value="" disabled>Mixed</option>}
             {(ps.options ?? []).map((o) => (
               <option key={o} value={o}>
                 {o}
@@ -2008,14 +2388,26 @@ function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: Fi
         </div>
       )}
       {ps.type === 'string' && (
-        <input
-          type="text"
+        // A text value wraps and grows (a paragraph was edited through a
+        // one-line slot that showed "Streaming from 4 sour"). Enter finishes,
+        // as in a one-line field; Shift+Enter starts a new line.
+        <textarea
+          className="text-value"
+          rows={1}
           aria-label={label}
-          value={String(value ?? '')}
+          value={mixed ? '' : String(value ?? '')}
+          placeholder={mixed ? 'Mixed' : undefined}
+          spellCheck={false}
           onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              e.currentTarget.blur()
+            }
+          }}
         />
       )}
-      {ps.type === 'color' && <ColorField label={label} value={String(value ?? '')} onChange={onChange} />}
+      {ps.type === 'color' && <ColorField label={label} value={mixed ? '' : String(value ?? '')} onChange={onChange} />}
       {ps.type === 'node' && (
         <div className="select-wrap">
           <select aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
@@ -2036,11 +2428,11 @@ function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: Fi
       {ps.type === 'number' && (
         <NumField
           ariaLabel={label}
-          value={Number(value) || 0}
+          value={mixed ? -1 : Number(value) || 0}
           min={ps.min}
           max={ps.max}
           step={ps.step ?? 1}
-          unset={unset}
+          unset={unset || mixed}
           onChange={onChange}
           onCommit={() => undefined}
         />

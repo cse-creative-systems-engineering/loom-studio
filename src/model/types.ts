@@ -37,6 +37,12 @@ export interface Node {
    */
   locked: boolean
   /**
+   * The author's own name for this node, shown in Layers instead of its type
+   * ("Revenue card", not "Card · Revenue"). Design-time only: it never reaches
+   * the output. Optional, so older files load unchanged.
+   */
+  name?: string
+  /**
    * Element opacity, 0 (invisible but present) to 1 (solid). A node-level
    * field rather than 111 schema props: every component gets transparency
    * uniformly, including future ones. Clamped on write.
@@ -285,6 +291,7 @@ export type Op =
   | { op: 'setFlow'; id: NodeId; flow: boolean }
   | { op: 'setVisible'; id: NodeId; visible: boolean }
   | { op: 'setLocked'; id: NodeId; locked: boolean }
+  | { op: 'setName'; id: NodeId; name: string }
   | { op: 'setOpacity'; id: NodeId; opacity: number }
   | { op: 'reparent'; id: NodeId; parent: NodeId; index?: number }
   /**

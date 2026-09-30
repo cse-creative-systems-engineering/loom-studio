@@ -4807,7 +4807,10 @@ export async function runSelfTest(): Promise<string> {
       const { a } = fixture()
       app.select([a])
       await settle()
-      const controls = [...document.querySelectorAll<HTMLElement>('.loom .inspector [role="switch"], .loom .inspector select, .loom .inspector input:not([type="color"])')]
+      // Unfold what the inspector folds (Display, Effects), so every control is counted.
+      for (const head of document.querySelectorAll<HTMLButtonElement>('.loom .inspector .disclosure-head[aria-expanded="false"]')) head.click()
+      await settle()
+      const controls = [...document.querySelectorAll<HTMLElement>('.loom .inspector [role="switch"], .loom .inspector select, .loom .inspector input:not([type="color"]), .loom .inspector textarea')]
       const nameOf = (el: HTMLElement) =>
         el.getAttribute('aria-label') ||
         (el.getAttribute('aria-labelledby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' ').trim() ||
@@ -4830,6 +4833,240 @@ export async function runSelfTest(): Promise<string> {
     {
       const text = tooltipFor('Tabs')
       check('the hover card names properties in plain words', !/\(choice|\(text|\(number|= /.test(text) && text.includes('You can set its'), text.split('\n').slice(-3).join(' / '))
+    }
+
+    app.loadDocument(saved)
+    app.select([])
+    await settle()
+  }
+
+  // --- 102. building without dragging, a real tree, a clipboard, several at
+  // once (UI/UX review, batch B) ----------------------------------------------
+  {
+    const app = window.__loomStore
+    const saved = app.doc
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+    const key = (target: EventTarget, k: string, init: KeyboardEventInit = {}) =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.loom .toolbox button')].find((b) => b.textContent?.trim().startsWith(name))?.click()
+    const toolButton = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.loom .toolbox .tool')].find((b) => b.querySelector('.tool-name')?.textContent === name)
+
+    // 8. A click (or Enter, which clicks a button) adds a tool: into the
+    // selected container, else beside the selection, else as the root.
+    try {
+        app.loadDocument(emptyDocument())
+        await settle()
+        tab('Components')
+        await settle()
+        toolButton('Card')?.click()
+        await settle()
+        const root = app.doc.root
+        check('clicking a tool in an empty document makes it the root', root !== null && app.doc.nodes[root!]?.type === 'Card', `root ${root && app.doc.nodes[root]?.type}`)
+        toolButton('Button')?.click()
+        await settle()
+        const kids = root ? app.doc.nodes[root].children : []
+        check('clicking a tool with a container selected adds it inside', kids.length === 1 && app.doc.nodes[kids[0]]?.type === 'Button' && app.selection[0] === kids[0],
+          kids.map((k) => app.doc.nodes[k]?.type).join(','))
+        toolButton('Label')?.click()
+        await settle()
+        check('with a leaf selected, the tool goes into its container', root !== null && app.doc.nodes[root].children.length === 2 && app.doc.nodes[app.doc.nodes[root].children[1]]?.type === 'Label')
+        check('the empty document says a tool can be clicked, not only dragged', (() => { app.loadDocument(emptyDocument()); return true })() && await settle().then(() => /Click any tool/.test(document.querySelector('.loom .empty-hint-body')?.textContent ?? '')))
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 8 (click to add) runs to the end', false, String(e))
+    }
+
+    // 9. Layers: a tree you can read, fold, walk, rename and reorder.
+    try {
+        const sd = new EditorStore()
+        seedDemo(sd)
+        app.loadDocument(sd.doc)
+        tab('Layers')
+        await settle(100)
+        const rows = [...document.querySelectorAll<HTMLElement>('.loom .layers [role="treeitem"]')]
+        const cramped = rows.filter((r) => Number(r.getAttribute('aria-level')) <= 5 && (r.querySelector<HTMLElement>('.tool-name')?.clientWidth ?? 0) < 80)
+          .map((r) => `${r.getAttribute('aria-label')} ${r.querySelector<HTMLElement>('.tool-name')?.clientWidth}px`)
+        check('every layer name has room to be read (80px+, five levels deep)', rows.length >= 15 && cramped.length === 0, `${rows.length} rows; cramped: ${cramped.slice(0, 3).join(' | ')}`)
+        check('the layers are a tree to assistive tech', document.querySelector('.loom .layers [role="tree"]') !== null && rows.every((r) => r.hasAttribute('aria-level')))
+        const glyphs = document.querySelector('.loom .layers')?.textContent?.match(/[↑↓●○⚿]/g) ?? []
+        check('layer controls are drawn icons, not text glyphs', glyphs.length === 0, glyphs.join(''))
+        // Fold a branch.
+        const branch = rows.find((r) => r.getAttribute('aria-expanded') === 'true')!
+        const before = document.querySelectorAll('.loom .layers [role="treeitem"]').length
+        branch.querySelector<HTMLButtonElement>('.layer-twist')?.click()
+        await settle()
+        const after = document.querySelectorAll('.loom .layers [role="treeitem"]').length
+        check('a branch folds away its rows', after < before && branch.getAttribute('aria-expanded') === 'false', `${before} -> ${after} rows`)
+        branch.querySelector<HTMLButtonElement>('.layer-twist')?.click()
+        await settle()
+        // Walk it with the keyboard.
+        const first = document.querySelector<HTMLElement>('.loom .layers [role="treeitem"]')!
+        app.select([first.dataset.layer!])
+        await settle()
+        key(first, 'ArrowDown')
+        await settle()
+        const second = document.querySelectorAll<HTMLElement>('.loom .layers [role="treeitem"]')[1]
+        check('ArrowDown in the tree selects the next row (and does not nudge the node)', app.selection[0] === second.dataset.layer, `${app.doc.nodes[app.selection[0]]?.type}`)
+        // Rename in place.
+        const target = second.dataset.layer!
+        second.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+        await settle()
+        const input = document.querySelector<HTMLInputElement>('.loom .layers .layer-rename')
+        const h0 = app.history.length
+        if (input) {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Page title')
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          key(input, 'Enter')
+          input.blur()
+        }
+        await settle()
+        const named = app.doc.nodes[target]?.name
+        const shown = document.querySelector<HTMLElement>(`.loom .layers [data-layer="${target}"] .tool-name`)?.textContent
+        check('a layer renames in place (double-click), in one undo step', input !== null && named === 'Page title' && shown === 'Page title' && app.history.length === h0 + 1, `name ${named}, shows ${shown}`)
+        const round = validate(serialize(app.doc))
+        check('a node\'s name survives save and open, and never reaches the output', round.doc?.nodes[target]?.name === 'Page title' && !emitHtml(app.doc).includes('Page title'))
+        // Drag a row below its next sibling.
+        const siblingsOf = (id: string) => app.doc.nodes[parentOf(app.doc, id)!].children
+        const kids = siblingsOf(target)
+        const a = kids[0]
+        const b = kids[1]
+        const rowA = document.querySelector<HTMLElement>(`.loom .layers [data-layer="${a}"]`)!
+        const rowB = document.querySelector<HTMLElement>(`.loom .layers [data-layer="${b}"]`)!
+        const ra = rowA.getBoundingClientRect()
+        const rb = rowB.getBoundingClientRect()
+        rowA.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: ra.left + 40, clientY: ra.top + 5 }))
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: rb.left + 40, clientY: rb.top + rb.height * 0.2 }))
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: rb.left + 40, clientY: rb.bottom - 2 }))
+        await settle(30)
+        const marked = rowB.className
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: rb.left + 40, clientY: rb.bottom - 2 }))
+        await settle()
+        const order = siblingsOf(a)
+        check('dragging a layer below another reorders it there', order.indexOf(a) === order.indexOf(b) + 1, `marked "${marked}", order ${order.map((x) => app.doc.nodes[x]?.type).join(',')}`)
+        tab('Components')
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 9 (layers) runs to the end', false, String(e))
+    }
+
+    // 10. A clipboard, and a menu with the everyday actions.
+    try {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Stack', null, 0, 0)!
+        app.commit({ op: 'setFlow', id: root, flow: true }, 'flow')
+        const a = app.dropComponent('Caption', root, 0, 0)!
+        const b = app.dropComponent('Label', root, 0, 0)!
+        app.select([a])
+        await settle()
+        key(document.body, 'c', { ctrlKey: true })
+        const h0 = app.history.length
+        key(document.body, 'v', { ctrlKey: true })
+        await settle()
+        const kids = app.doc.nodes[root].children
+        check('Ctrl+C, Ctrl+V pastes a copy just after the original, selected, in one step', kids.length === 3 && kids[1] === app.selection[0] && app.doc.nodes[kids[1]].type === 'Caption' && app.history.length === h0 + 1,
+          kids.map((k) => app.doc.nodes[k]?.type).join(','))
+        app.select([b])
+        key(document.body, 'x', { ctrlKey: true })
+        await settle()
+        const cutGone = !app.doc.nodes[b]
+        app.select([root])
+        key(document.body, 'v', { ctrlKey: true })
+        await settle()
+        check('Ctrl+X removes, and a paste into the selected container brings it back', cutGone && app.doc.nodes[root].children.length === 3 && app.doc.nodes[app.doc.nodes[root].children[2]].type === 'Label')
+        // Typing keeps its own select-all and clipboard.
+        app.select([a])
+        await settle()
+        const field = document.querySelector<HTMLElement>('.loom .inspector textarea, .loom .inspector input[type="text"]')
+        const selBefore = app.selection.join()
+        if (field) key(field, 'a', { ctrlKey: true })
+        await settle()
+        check('Ctrl+A in a field selects its text, not every node', field !== null && app.selection.join() === selBefore)
+        // The menu.
+        const el = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${a}"]`)
+        el?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+        await settle()
+        const items = [...document.querySelectorAll('.ctx-item')].map((x) => x.textContent ?? '')
+        const want = ['Cut', 'Copy', 'Paste', 'Duplicate', 'Bring to front', 'Send to back', 'Wrap in Stack', 'Hide from output', 'Lock']
+        const missing = want.filter((w) => !items.some((t) => t.includes(w)))
+        check('the context menu has the everyday actions', missing.length === 0 && !items.some((t) => t.includes('Set width 200')), `missing ${missing.join(', ')}`)
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        await settle()
+        const h1 = app.history.length
+        const box = app.wrap([app.doc.nodes[root].children[0], app.doc.nodes[root].children[1]])
+        check('wrap puts siblings in a new Stack, in order, where they were, in one step', !!box && app.doc.nodes[root].children[0] === box && app.doc.nodes[box].children.length === 2 && app.history.length === h1 + 1)
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 10 (clipboard and menu) runs to the end', false, String(e))
+    }
+
+    // 11. The inspector leads with the component, folds the rest, and gives
+    // text room.
+    try {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Stack', null, 0, 0)!
+        app.commit({ op: 'setFlow', id: root, flow: true }, 'flow')
+        const cap = app.dropComponent('Caption', root, 0, 0)!
+        app.setProp(cap, 'text', 'Streaming from four sources with a p95 latency of forty-eight milliseconds across every region')
+        app.select([cap])
+        await settle(80)
+        const scroll = document.querySelector('.loom .inspector .insp-scroll')
+        const heads = [...(scroll?.querySelectorAll('h3') ?? [])].map((h) => h.textContent?.replace(/\d+ on$/, '').trim() ?? '')
+        const content = heads.indexOf('Content')
+        const display = heads.findIndex((h) => h.startsWith('Display'))
+        check('the inspector starts with search, then the component\'s own properties', scroll?.firstElementChild?.classList.contains('props-bar') === true && content >= 0 && content < display, heads.join(' > '))
+        const folded = [...document.querySelectorAll<HTMLButtonElement>('.loom .inspector .disclosure-head')].map((b) => `${b.textContent}:${b.getAttribute('aria-expanded')}`)
+        check('Display and Effects are folded until used', folded.some((f) => f.startsWith('Display') && f.endsWith('false')) && folded.some((f) => f.startsWith('Effects') && f.endsWith('false')) && !document.querySelector('.loom .inspector [aria-label="Glass"]'),
+          folded.join(' | '))
+        const ta = document.querySelector<HTMLTextAreaElement>('.loom .inspector textarea[aria-label="Text"]')
+        check('a long text value wraps and grows in its field', ta !== null && ta.getBoundingClientRect().height > 40, `${ta?.getBoundingClientRect().height.toFixed(0)}px`)
+        app.commit({ op: 'setOpacity', id: cap, opacity: 0.5 }, 'op')
+        app.select([])
+        await settle()
+        app.select([cap])
+        await settle()
+        const displayHead = [...document.querySelectorAll<HTMLButtonElement>('.loom .inspector .disclosure-head')].find((b) => b.textContent?.startsWith('Display'))
+        check('a changed Display opens by itself and says what changed', displayHead?.getAttribute('aria-expanded') === 'true' && displayHead.textContent?.includes('50%') === true, displayHead?.textContent ?? '')
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 11 (inspector order) runs to the end', false, String(e))
+    }
+
+    // 12. Several at once: said, arranged, edited together.
+    try {
+        app.loadDocument(emptyDocument())
+        const root = app.dropComponent('Panel', null, 0, 0)!
+        app.commit({ op: 'setFlow', id: root, flow: false }, 'free')
+        const ids = [
+          app.dropComponent('Caption', root, 40, 10)!,
+          app.dropComponent('Caption', root, 100, 60)!,
+          app.dropComponent('Caption', root, 300, 120)!,
+        ]
+        app.setProp(ids[1], 'size', 'lg')
+        app.select(ids)
+        await settle(80)
+        const head = document.querySelector('.loom .inspector .insp-name')?.textContent
+        check('several selected: the inspector says how many, and what', head === '3 selected' && document.querySelector('.loom .inspector .insp-path')?.textContent === '3 Caption', head ?? '')
+        const sizeSel = document.querySelector<HTMLSelectElement>('.loom .inspector select[aria-label="Size"]')
+        check('a value they disagree on reads Mixed', sizeSel?.value === '' && sizeSel.selectedOptions[0]?.textContent === 'Mixed', sizeSel?.selectedOptions[0]?.textContent ?? 'no field')
+        const h0 = app.history.length
+        if (sizeSel) {
+          sizeSel.value = 'sm'
+          sizeSel.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        await settle()
+        check('an edit sets it on every selected node, in one step', ids.every((x) => app.doc.nodes[x].props.size === 'sm') && app.history.length === h0 + 1)
+        const size = () => ({ w: 50, h: 20 })
+        app.align(ids, 'left', size)
+        check('align left lines them up on the leftmost edge', ids.every((x) => app.doc.nodes[x].props.x === 40), ids.map((x) => app.doc.nodes[x].props.x).join(','))
+        app.commitAll([{ op: 'move', id: ids[0], x: 0, y: 0 }, { op: 'move', id: ids[1], x: 70, y: 0 }, { op: 'move', id: ids[2], x: 300, y: 0 }], 'spread')
+        app.distribute(ids, 'horizontal', size)
+        check('distribute spaces them evenly between the outer two', app.doc.nodes[ids[1]].props.x === 150, String(app.doc.nodes[ids[1]].props.x))
+        const alignBtn = document.querySelector<HTMLButtonElement>('.loom .inspector [aria-label="Align left"]')
+        check('the arrange buttons are there for free-positioned siblings', alignBtn !== null && !alignBtn.disabled)
+    } catch (e) {
+      // A throw is a failure of this part, not of the whole suite.
+      check('§102 part 12 (several selected) runs to the end', false, String(e))
     }
 
     app.loadDocument(saved)
