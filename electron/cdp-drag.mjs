@@ -14,9 +14,16 @@ import { spawn } from 'node:child_process'
 import electronPath from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertFreshBuild } from './fresh-build.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(here, '..')
+try {
+  assertFreshBuild(root)
+} catch (e) {
+  console.error(`FAIL  ${e.message}`)
+  process.exit(1)
+}
 const PORT = Number(process.env.LOOM_CDP_PORT || 9335)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
