@@ -1,0 +1,7 @@
+/* The output's base rules, the same ones every HTML export starts with
+   (src/export/html.ts). Every surface that draws the design AS IT SHIPS
+   (the pop-out preview, Run on desktop, the agents' render window) must use
+   them: without border-box sizing a padded, full-width button drew wider
+   than its card on those surfaces while the canvas and the export fit. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }

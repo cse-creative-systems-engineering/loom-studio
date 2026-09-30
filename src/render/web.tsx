@@ -113,6 +113,30 @@ function list(value: PropValue | undefined, delimiter: PropValue | undefined): s
  * coordinate (drop point, drag delta, resize delta) passes through this, so
  * a drag at 200% moves the node half the screen distance — exactly like 100%.
  */
+/**
+ * The shared `justify` vocabulary (start|center|end|between|around|evenly) as
+ * CSS. It used to be written through as-is, and "between", "around" and
+ * "evenly" are not CSS values: the browser dropped them and every row packed to
+ * the start (an AI agent reported it; the markup-diffing prop audit could not
+ * see it, because the attribute DID change).
+ */
+export function justifyCss(v: string): string {
+  switch (v) {
+    case 'start':
+      return 'flex-start'
+    case 'end':
+      return 'flex-end'
+    case 'between':
+      return 'space-between'
+    case 'around':
+      return 'space-around'
+    case 'evenly':
+      return 'space-evenly'
+    default:
+      return v
+  }
+}
+
 export function zoomed(pxValue: number, zoom: number): number {
   const z = typeof zoom === 'number' && Number.isFinite(zoom) && zoom > 0 ? zoom : 1
   return pxValue / z
@@ -455,7 +479,7 @@ function applyCommonStyle(
     const align = str(p.align)
     if (align) s.alignItems = align === 'baseline' ? 'baseline' : align
     const justify = str(p.justify)
-    if (justify) s.justifyContent = justify === 'start' ? 'flex-start' : justify
+    if (justify) s.justifyContent = justifyCss(justify)
     if (p.wrap === true) s.flexWrap = 'wrap'
   }
 
@@ -650,7 +674,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       // only applies flow alignment to a FLEX box, and this box is a grid.
       const align = str(p.align)
       s.alignItems = align === 'start' || align === 'center' || align === 'end' ? align : 'stretch'
-      s.justifyContent = str(p.justify) || 'start'
+      s.justifyContent = justifyCss(str(p.justify) || 'start')
       break
     }
     case 'Button': {
@@ -674,6 +698,9 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       }
       Object.assign(s, variants[str(p.variant)] ?? variants.primary)
       s.padding = `${padY}px ${padX}px`
+      // A button's label is one line: squeezed, "Sign In" broke into "Sign"
+      // over "In" in an agent's export while the canvas drew it on one line.
+      s.whiteSpace = 'nowrap'
       s.borderRadius = `${t.radiusMd}px`
       s.border = `1px solid ${t.borderStrong}`
       s.fontSize = `${fs}px`
@@ -1001,7 +1028,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       // pass only reaches flex boxes, so they are read here.
       const fAlign = str(p.align)
       s.alignItems = fAlign === 'start' || fAlign === 'center' || fAlign === 'end' ? fAlign : 'stretch'
-      s.justifyContent = str(p.justify) || 'start'
+      s.justifyContent = justifyCss(str(p.justify) || 'start')
       break
     }
     case 'BannerBox': {

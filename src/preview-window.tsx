@@ -16,6 +16,7 @@ import type { Document } from './model/types'
 import { pageFill } from './model/page'
 import { AuroraBackdrop } from './render/aurora'
 import { installBehaviourRuntime, installDocumentCss, CONTAINER_CLASS } from './render/behaviour-mount'
+import './render/output-base.css'
 import './preview-window.css'
 import './model/toolbox'
 

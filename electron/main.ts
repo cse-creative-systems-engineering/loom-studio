@@ -8,6 +8,10 @@
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { desktopBounds, type RunTarget } from '../src/model/desktop-run'
+import { startAiSocket, type AiSocket } from './ai-socket'
+import { detectProviders, providerKeyEnv, saveKey, type ProviderInfo } from './ai-providers'
+import { runAgent, type AgentEvent } from './ai-runner'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { autosaveFileName, isExternalUrlAllowed } from './guards'
@@ -305,6 +309,112 @@ function runOnDesktop(payload: { doc: unknown; target: RunTarget }) {
   return bounds
 }
 
+/* ------------------------------------------------------------------ *
+ * The agents' eyes: an offscreen window that draws the design exactly as it
+ * ships (src/render-window.tsx), for `render` (a picture) and `check_layout`
+ * (measurements). Offscreen rendering paints without a visible window, and
+ * capturePage reads that paint.
+ * ------------------------------------------------------------------ */
+
+const SCREENS = { desktop: { w: 1280, h: 800, bp: 'lg' }, tablet: { w: 834, h: 1194, bp: 'md' }, phone: { w: 390, h: 844, bp: 'sm' } } as const
+let renderWin: BrowserWindow | null = null
+let renderReady: Promise<void> | null = null
+const renderWaiting = new Map<string, (r: Record<string, unknown>) => void>()
+
+function renderWindow(): Promise<BrowserWindow> {
+  if (renderWin && !renderWin.isDestroyed() && renderReady) return renderReady.then(() => renderWin!)
+  renderWin = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 800,
+    frame: false,
+    transparent: true,
+    webPreferences: { preload: path.join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, offscreen: true },
+  })
+  renderWin.webContents.setFrameRate(10)
+  const win = renderWin
+  win.on('closed', () => {
+    if (renderWin === win) {
+      renderWin = null
+      renderReady = null
+    }
+  })
+  renderReady = new Promise<void>((r) => win.webContents.once('did-finish-load', () => r()))
+  void win.loadFile(path.join(here, '../renderer/render.html'))
+  return renderReady.then(() => win)
+}
+
+async function renderJob(doc: unknown, screen: keyof typeof SCREENS, want: 'image' | 'measure', nodeId?: string): Promise<Record<string, unknown>> {
+  const win = await renderWindow()
+  const sc = SCREENS[screen]
+  win.setContentSize(sc.w, sc.h)
+  const id = crypto.randomUUID()
+  const reply = new Promise<Record<string, unknown>>((resolve) => {
+    const t = setTimeout(() => {
+      renderWaiting.delete(id)
+      resolve({ ok: false, error: 'the render did not finish in time' })
+    }, 20000)
+    renderWaiting.set(id, (r) => {
+      clearTimeout(t)
+      resolve(r)
+    })
+  })
+  win.webContents.send('render:job', { id, doc, width: sc.w, height: sc.h, viewport: sc.bp, want, nodeId })
+  const r = await reply
+  if (!r.ok || want === 'measure') return r
+  // The page may be taller than the screen: grow the window to take it all.
+  const clip = r.clip as { x: number; y: number; width: number; height: number }
+  if (clip.y + clip.height > sc.h) {
+    win.setContentSize(sc.w, Math.min(4000, clip.y + clip.height))
+    await new Promise((res) => setTimeout(res, 200))
+  }
+  win.webContents.invalidate()
+  await new Promise((res) => setTimeout(res, 150))
+  const img = await win.webContents.capturePage({ x: clip.x, y: clip.y, width: Math.min(clip.width, 4000), height: Math.min(clip.height, 4000) })
+  return { ok: true, png: img.toPNG().toString('base64'), size: img.getSize() }
+}
+
+/** `render` and `check_layout`, answered for the socket (MCP content). */
+async function runLocalTool(name: string, args: Record<string, unknown>, doc: unknown): Promise<unknown> {
+  const screen = args.viewport === 'tablet' || args.viewport === 'phone' ? args.viewport : 'desktop'
+  if (name === 'check_layout') {
+    const r = await renderJob(doc, screen, 'measure')
+    return r.ok ? { ok: true, result: r.result } : r
+  }
+  const nodeId = typeof args.node_id === 'string' && args.node_id ? args.node_id : undefined
+  const r = await renderJob(doc, screen, 'image', nodeId)
+  if (!r.ok) return r
+  const size = r.size as { width: number; height: number }
+  return {
+    ok: true,
+    content: [
+      { type: 'image', data: r.png, mimeType: 'image/png' },
+      { type: 'text', text: `The design at ${screen} (${SCREENS[screen].w}x${SCREENS[screen].h} screen)${nodeId ? `, cropped to ${nodeId}` : ''}; image ${size.width}x${size.height}px.` },
+    ],
+  }
+}
+
+/** For the probes: render the editor's document directly. */
+export function renderForProbe(doc: unknown, screen: 'desktop' | 'tablet' | 'phone', want: 'image' | 'measure', nodeId?: string) {
+  return renderJob(doc, screen, want, nodeId)
+}
+
+/**
+ * The AI agents' way in (see ai-socket.ts). Started with the app; an agent
+ * launched by Loom gets `mcpServerConfig()` so it can reach the live editor.
+ */
+let aiSocket: AiSocket | null = null
+
+/** How an MCP client launches Loom's server: Loom's own Electron, as Node. */
+export function mcpServerConfig(): { command: string; args: string[]; env: Record<string, string> } | null {
+  if (!aiSocket) return null
+  return {
+    command: process.execPath,
+    args: [path.join(here, 'mcp-bridge.cjs')],
+    env: { ELECTRON_RUN_AS_NODE: '1', ...aiSocket.bridgeEnv() },
+  }
+}
+
 app.whenReady().then(() => {
   // The Studio owns its shortcuts. Electron's default menu took them first:
   // Ctrl+R reloaded the editor instead of exporting React, and Ctrl+plus,
@@ -317,6 +427,77 @@ app.whenReady().then(() => {
       : null,
   )
   createWindow()
+  try {
+    aiSocket = startAiSocket(() => editorWin, { names: new Set(['render', 'check_layout']), run: runLocalTool })
+    ipcMain.handle('render:done', (e, id: string, result: Record<string, unknown>) => {
+      if (!renderWin || e.sender !== renderWin.webContents) return false
+      const done = renderWaiting.get(id)
+      if (done) {
+        renderWaiting.delete(id)
+        done(result ?? { ok: false, error: 'no result' })
+      }
+      return true
+    })
+    aiSocket.writeConfig(mcpServerConfig()!)
+  } catch (e) {
+    // No AI this run; the editor itself must still open.
+    console.error(`[loom] AI connection unavailable: ${e instanceof Error ? e.message : String(e)}`)
+    aiSocket = null
+  }
+  app.on('will-quit', () => aiSocket?.close())
+
+  /* ---------------- the Assistant: providers and agent turns ---------------- */
+
+  ipcMain.handle('ai:providers', async (e) => {
+    if (!fromEditor(e)) return []
+    const list: Array<ProviderInfo | Record<string, unknown>> = await detectProviders()
+    // The probes' scripted agent (never offered in normal use).
+    if (process.env.LOOM_AI_TEST_AGENT) list.unshift({ id: 'test', label: 'Test agent', command: process.execPath, found: 'test', signedIn: true, apiKey: null, models: [{ id: 'test', label: 'Scripted' }], ready: true })
+    return list
+  })
+  ipcMain.handle('ai:save-key', (e, provider: string, key: string | null) => {
+    if (!fromEditor(e)) return { ok: false, error: 'forbidden' }
+    if (provider !== 'claude' && provider !== 'codex') return { ok: false, error: 'unknown provider' }
+    return saveKey(provider, typeof key === 'string' ? key : null)
+  })
+  let current: { id: string; cancel: () => void } | null = null
+  ipcMain.handle('ai:send', async (e, req: { provider: string; model: string; prompt: string; sessionId: string | null }) => {
+    if (!fromEditor(e)) return { error: 'forbidden' }
+    if (current) return { error: 'The assistant is still working on the last message.' }
+    const cfg = mcpServerConfig()
+    if (!cfg || !aiSocket) return { error: 'The AI connection is not available in this run of Loom.' }
+    if (typeof req?.prompt !== 'string' || !req.prompt.trim()) return { error: 'Say what to build or change.' }
+    const runId = crypto.randomUUID()
+    const send = (ev: AgentEvent) => {
+      if (ev.kind === 'done' && current?.id === runId) current = null
+      editorWin?.webContents.send('ai:event', runId, ev)
+    }
+    if (req.provider === 'test' && process.env.LOOM_AI_TEST_AGENT) {
+      const handle = runAgent(
+        { provider: 'claude', command: process.execPath, model: '', prompt: req.prompt, sessionId: req.sessionId, mcp: cfg, mcpConfigPath: aiSocket.configPath, env: { ELECTRON_RUN_AS_NODE: '1', LOOM_TEST_AGENT_SCRIPT: process.env.LOOM_AI_TEST_AGENT } },
+        send,
+        [process.env.LOOM_AI_TEST_AGENT],
+      )
+      current = { id: runId, cancel: handle.cancel }
+      return { runId }
+    }
+    if (req.provider !== 'claude' && req.provider !== 'codex') return { error: 'unknown provider' }
+    const info = (await detectProviders()).find((p) => p.id === req.provider)
+    if (!info?.command || !info.ready) return { error: info?.hint ?? 'That assistant is not available.' }
+    const model = typeof req.model === 'string' && /^[A-Za-z0-9._:-]{0,80}$/.test(req.model) ? req.model : ''
+    const handle = runAgent(
+      { provider: req.provider, command: info.command, model, prompt: req.prompt, sessionId: typeof req.sessionId === 'string' ? req.sessionId : null, mcp: cfg, mcpConfigPath: aiSocket.configPath, env: providerKeyEnv(req.provider) },
+      send,
+    )
+    current = { id: runId, cancel: handle.cancel }
+    return { runId }
+  })
+  ipcMain.handle('ai:cancel', (e) => {
+    if (!fromEditor(e)) return false
+    current?.cancel()
+    current = null
+    return true
+  })
 
   ipcMain.handle('desktop:run', (e, payload: { doc: unknown; target: RunTarget }) => {
     if (!fromEditor(e)) return null

@@ -510,6 +510,132 @@
 .tb-run:disabled { opacity: 0.4; cursor: default; }
 .tb-run.on { color: #fff; background: #d6433b; border-color: transparent; }
 
+/* ---------------- the Assistant ---------------- */
+
+/* The dock moves up to the canvas's top-right; the bottom centre is the
+   Assistant's. In Preview (no Assistant) it keeps its old place. */
+.loom:not(.previewing) .dock { top: 10px; right: 12px; bottom: auto; left: auto; transform: none; }
+.loom:not(.previewing) .canvas { padding-bottom: 120px; }
+
+.assistant {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(640px, calc(100% - 32px));
+  display: grid;
+  gap: 8px;
+}
+
+.as-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px;
+  background: rgba(20, 22, 28, 0.9);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px -18px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+.as-composer:focus-within { border-color: rgba(91, 140, 255, 0.55); box-shadow: 0 16px 40px -18px rgba(0, 0, 0, 0.9), 0 0 0 3px rgba(91, 140, 255, 0.14); }
+
+.as-input {
+  flex: 1;
+  min-width: 0;
+  max-height: 160px;
+  min-height: 32px;
+  padding: 7px 6px;
+  resize: none;
+  field-sizing: content;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--ink);
+  font: 13px/1.45 var(--font);
+}
+.as-input::placeholder { color: var(--ink-3); }
+
+.as-send {
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #7b9dff, var(--accent));
+  color: #fff;
+  font: 600 12px var(--font);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset;
+}
+.as-send:disabled { opacity: 0.35; cursor: default; }
+.as-send.stop { background: #d6433b; }
+
+.as-pick { position: relative; }
+.as-chip {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  background: var(--well);
+  border: 0;
+  border-radius: 9px;
+  color: var(--ink-2);
+  font: 550 11.5px var(--font);
+  white-space: nowrap;
+}
+.as-chip:hover:not(:disabled) { color: var(--ink); background: var(--well-hover); }
+.as-chip:disabled { opacity: 0.5; }
+
+.as-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  min-width: 240px;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.as-menu-head { display: flex; justify-content: space-between; gap: 10px; padding: 6px 8px 4px; font: 600 11px var(--font); color: var(--ink-2); }
+.as-menu-head .dim { font-weight: 400; color: var(--ink-3); }
+.as-menu button { display: block; width: 100%; text-align: left; padding: 6px 8px; background: transparent; border: 0; border-radius: 6px; color: var(--ink); font: 12px var(--font); }
+.as-menu button:hover:not(:disabled), .as-menu button[aria-checked='true'] { background: rgba(91, 140, 255, 0.14); }
+.as-menu button:disabled { color: var(--ink-3); }
+
+.as-thread {
+  max-height: min(46vh, 420px);
+  overflow: auto;
+  padding: 4px 12px 12px;
+  background: rgba(20, 22, 28, 0.9);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px -18px rgba(0, 0, 0, 0.9);
+}
+.as-thread-head { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; padding: 8px 0 6px; background: #15171d; font: 600 11px var(--font); color: var(--ink-3); }
+.as-thread-tools button { margin-left: 4px; padding: 2px 8px; background: transparent; border: 0; border-radius: 6px; color: var(--ink-3); font: 11px var(--font); }
+.as-thread-tools button:hover:not(:disabled) { color: var(--ink); background: var(--well); }
+
+.as-msg { margin: 8px 0; font: 13px/1.5 var(--font); }
+.as-msg p { margin: 0; }
+.as-msg.from-user { display: flex; justify-content: flex-end; }
+.as-msg.from-user p { max-width: 80%; padding: 7px 11px; border-radius: 12px 12px 4px 12px; background: rgba(91, 140, 255, 0.16); color: var(--ink); }
+.as-msg.from-agent p { color: var(--ink); }
+.as-working { color: var(--ink-3) !important; animation: as-pulse 1.4s ease-in-out infinite; }
+@keyframes as-pulse { 50% { opacity: 0.45; } }
+.as-error { color: #ff8a80 !important; font-size: 12px; }
+.as-steps { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.as-step { padding: 1px 7px; border-radius: 999px; background: var(--well); color: var(--ink-3); font: 10.5px var(--font); }
+.as-step.more { color: var(--ink-2); }
+
+.as-setup { display: grid; gap: 6px; padding: 10px 12px; background: rgba(20, 22, 28, 0.92); border: 1px solid var(--line-2); border-radius: 12px; font: 12px var(--font); color: var(--ink); }
+.as-setup-row { display: grid; grid-template-columns: 110px 1fr auto; gap: 8px; align-items: center; }
+.as-setup .dim { color: var(--ink-3); font-size: 11px; }
+.as-key { display: flex; gap: 6px; align-items: center; }
+.as-key input { flex: 1; height: 26px; padding: 0 8px; background: var(--well); border: 1px solid transparent; border-radius: 6px; color: var(--ink); }
+
 /* Page background: four choices on their own row, sharing it evenly. */
 .field.stack { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
 .field.stack > :nth-child(n + 2) { grid-column: 1; }
@@ -559,3 +685,26 @@
 .toast-x:hover { background: var(--panel-2); color: var(--ink); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+/* The Assistant while it builds: one live line, so the canvas stays in view. */
+.as-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: center;
+  max-width: 100%;
+  height: 30px;
+  padding: 0 6px 0 12px;
+  background: rgba(20, 22, 28, 0.9);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  box-shadow: 0 10px 28px -16px rgba(0, 0, 0, 0.9);
+  font: 550 12px var(--font);
+  color: var(--ink);
+}
+.as-live-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-live-text .dim { color: var(--ink-3); font-weight: 400; }
+.as-live-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--accent); animation: as-pulse 1.4s ease-in-out infinite; }
+.as-live-show { flex: none; height: 22px; padding: 0 9px; border: 0; border-radius: 999px; background: var(--well); color: var(--ink-2); font: 550 11px var(--font); }
+.as-live-show:hover { color: var(--ink); background: var(--well-hover); }

@@ -90,3 +90,37 @@ contextBridge.exposeInMainWorld('loomDesktop', {
     return () => ipcRenderer.removeListener('desktop:closed', h)
   },
 })
+
+/**
+ * AI agents (editor window only; main checks the sender). Main relays a tool
+ * request from an agent's MCP bridge; the editor runs it against the live
+ * store and answers. The editor never reaches the agent or the socket itself.
+ */
+contextBridge.exposeInMainWorld('loomAi', {
+  onRequest: (cb: (reqId: string, method: string, params: unknown) => void) => {
+    const h = (_e: unknown, reqId: string, method: string, params: unknown) => cb(reqId, method, params)
+    ipcRenderer.on('ai:request', h)
+    return () => ipcRenderer.removeListener('ai:request', h)
+  },
+  respond: (reqId: string, reply: unknown) => ipcRenderer.invoke('ai:response', reqId, reply),
+  /** The Assistant: which agents can run, send a message, stop, keys. */
+  providers: () => ipcRenderer.invoke('ai:providers'),
+  send: (req: unknown) => ipcRenderer.invoke('ai:send', req),
+  cancel: () => ipcRenderer.invoke('ai:cancel'),
+  saveKey: (provider: string, key: string | null) => ipcRenderer.invoke('ai:save-key', provider, key),
+  onEvent: (cb: (runId: string, event: unknown) => void) => {
+    const h = (_e: unknown, runId: string, event: unknown) => cb(runId, event)
+    ipcRenderer.on('ai:event', h)
+    return () => ipcRenderer.removeListener('ai:event', h)
+  },
+})
+
+/** The render window (offscreen): receives a job, reports when it is drawn. */
+contextBridge.exposeInMainWorld('loomRender', {
+  onJob: (cb: (job: unknown) => void) => {
+    const h = (_e: unknown, job: unknown) => cb(job)
+    ipcRenderer.on('render:job', h)
+    return () => ipcRenderer.removeListener('render:job', h)
+  },
+  done: (id: string, result: unknown) => ipcRenderer.invoke('render:done', id, result),
+})

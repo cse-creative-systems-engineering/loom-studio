@@ -36,6 +36,13 @@ export interface HistoryEntry {
   label: string
   before: Document
   after: Document
+  /**
+   * Commits that share a group and follow each other are ONE entry: an AI
+   * agent's turn is many writes and one undo step. A person's own edit in
+   * the middle of a turn is its own entry, so the agent's work on either
+   * side of it stays undoable (and theirs is never folded into the agent's).
+   */
+  group?: string
 }
 
 const HISTORY_LIMIT = 200
@@ -156,13 +163,20 @@ export class EditorStore {
   }
 
   /** Apply one operation as a single undoable step. */
-  commit(op: Op, label: string): boolean {
+  commit(op: Op, label: string, group?: string): boolean {
     const before = this.doc
     const after = apply(before, op)
     if (after === before) return false
     this.doc = after
     this.sealed = after
-    this.pushHistory(label, before, after)
+    const top = this.history[this.history.length - 1]
+    if (group !== undefined && top?.group === group && this.future.length === 0) {
+      top.after = after
+      this.dirty = true
+    } else {
+      this.pushHistory(label, before, after)
+      if (group !== undefined) this.history[this.history.length - 1]!.group = group
+    }
     this.pruneSelection()
     this.emit()
     return true
@@ -217,7 +231,15 @@ export class EditorStore {
     this.emit()
   }
 
+  /**
+   * Set while an agent is building (see `ai/tools.ts` AiTurn). Undo or redo
+   * mid-turn stops the agent first: rewinding work it is still building on
+   * would leave it editing nodes that no longer exist.
+   */
+  interruptTurn: (() => void) | null = null
+
   undo() {
+    this.interruptTurn?.()
     const entry = this.history.pop()
     if (!entry) return
     this.future.push(entry)
@@ -229,6 +251,7 @@ export class EditorStore {
   }
 
   redo() {
+    this.interruptTurn?.()
     const entry = this.future.pop()
     if (!entry) return
     this.history.push(entry)

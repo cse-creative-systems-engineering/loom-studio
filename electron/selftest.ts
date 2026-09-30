@@ -36,6 +36,7 @@ import { GROUP_ORDER } from '../src/model/prop-groups'
 import { ToolThumb } from '../src/tool-card'
 import { cleanPage } from '../src/model/page'
 import { desktopBounds } from '../src/model/desktop-run'
+import { AiTurn, runTool, TOOLS } from '../src/ai/tools'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { unsupportedProps } from '../src/model/registry'
@@ -4035,6 +4036,210 @@ export async function runSelfTest(): Promise<string> {
     check('centre and fill', eq(at('center'), { x: 780, y: 354, width: 360, height: 400 }) && eq(at('fill'), work))
     check('undocked keeps its own place, on the screen', eq(at('none', 360, 400, 100, 50), { x: 100, y: 77, width: 360, height: 400 }) && at('none', 360, 400, 5000, 5000).x === 1560)
     check('never bigger than the usable screen', at('left', 9999, 9999).width === 1920 && at('center', 9999, 9999).height === 1053)
+  }
+
+  // --- 105. the AI agent's building tools ------------------------------------
+  // An agent builds through the same ops a person does, VALIDATED first (a
+  // model's guessed property must never reach the document), and one agent
+  // turn is one undo step.
+  {
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const val = (r: ReturnType<typeof run>) => (r.ok ? (r.result as Record<string, unknown>) : ({ error: r.error } as Record<string, unknown>))
+    check('every tool has a schema and a description', TOOLS.length >= 14 && TOOLS.every((t) => t.description.length > 20 && (t.inputSchema as { type?: string }).type === 'object'))
+    const root = val(run('add_component', { type: 'Panel', parent_id: null, props: { title: 'Home' } })).id as string
+    check('an empty document gets its root from the agent', st.doc.root === root && st.doc.nodes[root]?.props.title === 'Home')
+    check('a container that becomes the root fills the page', st.doc.nodes[root]?.props.anchor === 'fill')
+    check('get_document reports a docked dimension as spanning, not a stale number', JSON.stringify(val(run('get_document'))).includes('spans its parent'))
+    const bad = run('add_component', { type: 'Buton', parent_id: root })
+    check('an unknown component is refused, pointing at the catalogue', !bad.ok && /list_components/.test(bad.ok ? '' : bad.error))
+    const card = val(run('add_component', { type: 'Card', parent_id: root, x: 40, y: 50, props: { padding: '20', nonsense: 1, radius: 9999 } }))
+    const cardId = card.id as string
+    check('valid props land (and "20" becomes 20), invalid ones are refused and said so', st.doc.nodes[cardId]?.props.padding === 20 && Array.isArray(card.rejected) && (card.rejected as string[]).some((r) => r.startsWith('nonsense')))
+    check('numbers are clamped into range', (st.doc.nodes[cardId]?.props.radius as number) <= 64, String(st.doc.nodes[cardId]?.props.radius))
+    const btn = val(run('add_component', { type: 'Button', parent_id: cardId, props: { label: 'Save', variant: 'loud' } }))
+    check('an enum outside its options is refused with the options listed', (btn.rejected as string[]).some((r) => /variant: expected one of/.test(r)))
+    const ro = run('set_props', { id: btn.id, props: { label: 'Save changes', size: 'lg' } })
+    check('set_props applies what is valid', ro.ok && st.doc.nodes[btn.id as string]?.props.label === 'Save changes' && st.doc.nodes[btn.id as string]?.props.size === 'lg')
+    const side = val(run('add_component', { type: 'SidebarPanel', parent_id: root }))
+    run('dock', { id: side.id, anchor: 'left' })
+    check('dock sets the anchor', st.doc.nodes[side.id as string]?.props.anchor === 'left')
+    check('a bad anchor is refused', !run('dock', { id: side.id, anchor: 'sideways' }).ok)
+    run('move_into', { id: btn.id, parent_id: side.id })
+    check('move_into re-parents', st.doc.nodes[side.id as string]?.children.includes(btn.id as string) === true)
+    check('a node cannot move into itself', !run('move_into', { id: side.id, parent_id: btn.id }).ok && !run('move_into', { id: side.id, parent_id: side.id }).ok)
+    const tl = val(run('add_component', { type: 'Timeline', parent_id: root }))
+    run('set_list', { id: tl.id, list: 'events', items: [{ title: 'Shipped', time: 'now', tone: 'success' }, { title: 'Bad tone', tone: 'purple' }] })
+    const events = st.doc.nodes[tl.id as string]?.lists?.events ?? []
+    check('set_list replaces rows, fixing invalid fields to defaults', events.length === 2 && events[0]?.title === 'Shipped' && events[1]?.tone !== 'purple')
+    run('set_page', { background: 'color', color: 'rgba(10, 12, 20, 0.6)', blur: 20 })
+    check('set_page sets a see-through page', st.doc.meta.page?.color === 'rgba(10, 12, 20, 0.6)' && st.doc.meta.page?.blur === 20)
+    check('an unsafe page colour is refused', !run('set_page', { background: 'color', color: 'red;}x{' }).ok)
+    const doc = val(run('get_document'))
+    const flat = JSON.stringify(doc)
+    check('get_document shows the tree with what was set', flat.includes('"Save changes"') && flat.includes('"anchor":"left"') && flat.includes(cardId))
+    const cat = val(run('list_components'))
+    check('the catalogue lists components and starters, without internal pieces', (cat.components as Array<{ name: string }>).some((c) => c.name === 'KpiCard') && !(cat.components as Array<{ name: string }>).some((c) => c.name === 'TabPanel') && (cat.starters as unknown[]).length >= 1)
+    const desc = val(run('describe_component', { type: 'Button' }))
+    check('describe_component gives each property\'s type and options', ((desc.props as Record<string, { options?: string[] }>).variant?.options ?? []).includes('primary'))
+
+    // One turn, many writes, one undo step.
+    const hist = st.history.length
+    const nodes = Object.keys(st.doc.nodes).length
+    turn.begin('AI: add a footer')
+    const f = val(run('add_component', { type: 'FooterBar', parent_id: root }))
+    run('set_props', { id: f.id, props: { text: 'v1.0' } })
+    run('add_starter', { starter: 'chat-sidebar', parent_id: root, x: 700, y: 0 })
+    turn.end()
+    check('an agent turn is one undo step', st.history.length === hist + 1 && st.history[st.history.length - 1]?.label === 'AI: add a footer', `${hist} -> ${st.history.length}`)
+    st.undo()
+    check('undoing the turn removes everything it added', Object.keys(st.doc.nodes).length === nodes, `${nodes} vs ${Object.keys(st.doc.nodes).length}`)
+    run('place', { id: cardId, w: 300, h: 200 })
+    run('place', { id: cardId, h: 'auto' })
+    check('place can hand a size back to the content ("auto")', st.doc.nodes[cardId]?.props.h === undefined && st.doc.nodes[cardId]?.props.w === 300, JSON.stringify({ w: st.doc.nodes[cardId]?.props.w, h: st.doc.nodes[cardId]?.props.h }))
+    const rm = val(run('remove', { ids: [cardId] }))
+    check('remove deletes', rm.removed === 1 && !st.doc.nodes[cardId])
+  }
+
+  // --- 107. a person keeps building while the agent works --------------------
+  // The agent's writes used to be held provisionally (poke) and sealed at the
+  // end, so a person's own edit mid-turn committed the agent's pending work
+  // under THEIR label, and no undo could remove it. Now a turn is a history
+  // group: the person's edit is its own step, the agent's work on either side
+  // stays undoable, and undo mid-turn stops the agent.
+  {
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const id = (r: ReturnType<typeof run>) => (r.ok ? ((r.result as { id: string }).id) : '')
+    const root = id(run('add_component', { type: 'Panel', parent_id: null }))
+    const h0 = st.history.length
+    turn.begin('AI: build')
+    const card = id(run('add_component', { type: 'Card', parent_id: root }))
+    st.dropComponent('Button', root, 10, 10)
+    const head = id(run('add_component', { type: 'Heading', parent_id: root }))
+    run('set_props', { id: head, props: { text: 'Hi' } })
+    turn.end()
+    const labels = st.history.slice(h0).map((e) => e.label)
+    check('an edit mid-turn is its own step between the agent\'s', labels.join(' | ') === 'AI: build | Add Button | AI: build', labels.join(' | '))
+    const has = () => [!!st.doc.nodes[card], Object.values(st.doc.nodes).some((n) => n.type === 'Button'), !!st.doc.nodes[head]].map(Number).join('')
+    const seen = [has()]
+    for (let i = 0; i < 3; i++) {
+      st.undo()
+      seen.push(has())
+    }
+    check('each undo removes exactly its own part, the agent\'s first work included', seen.join(',') === '111,110,100,000', seen.join(','))
+    const st2 = new EditorStore()
+    const t2 = new AiTurn(st2)
+    const made = runTool(st2, t2, 'add_component', { type: 'Panel', parent_id: null })
+    const r2 = made.ok ? (made.result as { id: string }).id : ''
+    let stopped = 0
+    t2.onInterrupt = () => stopped++
+    t2.begin('AI: y')
+    runTool(st2, t2, 'add_component', { type: 'Label', parent_id: r2 })
+    st2.undo()
+    check('undo mid-turn stops the agent and ends the turn', stopped === 1 && !t2.active && st2.interruptTurn === null)
+  }
+
+  // --- 108. the agent can do what a person can -----------------------------
+  // Parity: parts, interaction states, per-breakpoint layout, display basics,
+  // effects, duplicate, paint order, and a whole subtree in one call. Every
+  // write goes through the same validated op as the panel; what is refused
+  // comes back with a reason.
+  {
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const res = (r: ReturnType<typeof run>) => (r.ok ? (r.result as Record<string, unknown>) : ({ error: r.error } as Record<string, unknown>))
+    const b = res(run('build', { parent_id: null, tree: { type: 'Panel', flow: true, ref: 'page', children: [
+      { type: 'Heading', props: { text: 'Models' } },
+      { type: 'Card', ref: 'row', flow: true, children: [{ type: 'Label', props: { text: 'GPT', bogus: 1 } }, { type: 'Button', props: { label: 'Open' } }] },
+      { type: 'DataGrid', ref: 'grid' },
+    ] } }))
+    const refs = (b.refs ?? {}) as Record<string, string>
+    check('build makes a nested subtree in one call and maps refs to ids', b.created === 6 && st.doc.root === refs.page && st.doc.nodes[refs.row!]?.children.length === 2, JSON.stringify(b))
+    check('build refuses bad props with the node\'s path', ((b.rejected ?? []) as string[]).some((r) => /children\[1\]\.children\[0\] Label: bogus/.test(r)))
+    check('build refuses an unknown type before writing anything', !run('build', { parent_id: refs.page, tree: { type: 'Card', children: [{ type: 'Nope' }] } }).ok && Object.keys(st.doc.nodes).length === 6)
+    check('build refuses children under a leaf', !run('build', { parent_id: refs.page, tree: { type: 'Label', children: [{ type: 'Label' }] } }).ok)
+    const sp = res(run('style_part', { id: refs.grid, part: 'header', style: { background: '#101820', fontSize: 12, wobble: 3 } }))
+    check('style_part styles a declared part and reports refused fields', st.doc.nodes[refs.grid!]?.parts?.header?.background === '#101820' && ((sp.rejected ?? []) as string[]).some((r) => r.startsWith('wobble')), JSON.stringify(sp))
+    check('style_part refuses an unknown part, naming the real ones', /parts: /.test(String(res(run('style_part', { id: refs.grid, part: 'nope', style: { color: 'red' } })).error)))
+    check('style_part refuses an unsafe colour', ((res(run('style_part', { id: refs.grid, part: 'header', style: { color: 'red;}x{' } })).rejected ?? []) as string[]).length === 1)
+    run('set_states', { id: refs.row, state: 'hover', style: { lift: 2, shadow: 'lg', blink: true } })
+    check('set_states styles hover', st.doc.nodes[refs.row!]?.states?.hover?.lift === 2 && st.doc.nodes[refs.row!]?.states?.hover?.shadow === 'lg')
+    run('set_responsive', { id: refs.row, breakpoint: 'sm', override: { w: 340, visible: true, colour: 1 } })
+    check('set_responsive writes a phone override', st.doc.nodes[refs.row!]?.responsive?.sm?.w === 340)
+    run('set_display', { id: refs.row, opacity: 0.5, name: 'Model row', locked: true })
+    const row = st.doc.nodes[refs.row!]
+    check('set_display sets opacity, layer name and lock', row?.opacity === 0.5 && row.name === 'Model row' && row.locked === true)
+    run('set_display', { id: refs.row, locked: false })
+    const fx = res(run('set_effects', { id: refs.row, effects: { glow: true, glowColor: '#5b8cff', sparkle: true } }))
+    check('set_effects turns an effect on and refuses unknown keys', (st.doc.nodes[refs.row!]?.effects as Record<string, unknown> | undefined)?.glow === true && ((fx.rejected ?? []) as string[]).some((r) => r.startsWith('sparkle')))
+    const dup = res(run('duplicate', { id: refs.row, count: 3 }))
+    const kids = st.doc.nodes[refs.page!]!.children
+    check('duplicate copies a subtree right after the original, in order', (dup.ids as string[]).length === 3 && kids.indexOf((dup.ids as string[])[0]!) === kids.indexOf(refs.row!) + 1 && kids.indexOf((dup.ids as string[])[2]!) === kids.indexOf(refs.row!) + 3)
+    check('a copy has its own children with fresh ids', st.doc.nodes[(dup.ids as string[])[0]!]!.children.every((c) => !row!.children.includes(c)) && st.doc.nodes[(dup.ids as string[])[0]!]!.children.length === 2)
+    run('arrange', { id: refs.grid, to: 'back' })
+    check('arrange sends a node to the back of its siblings', st.doc.nodes[refs.page!]!.children[0] === refs.grid)
+    check('every new tool is listed with a schema', ['build', 'style_part', 'set_states', 'set_responsive', 'set_display', 'set_effects', 'duplicate', 'arrange'].every((n) => TOOLS.some((t) => t.name === n)))
+  }
+
+  // --- 109. what the OpenRouter run found in Loom ----------------------------
+  // An agent rebuilding a real page reported that `justify: between` did
+  // nothing (the value was written through as CSS, and "between" is not CSS),
+  // that `place` with only a width pinned the height to 40px, and its export
+  // drew "Sign In" on two lines. Each is measured live.
+  {
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', ref: 'page', props: { w: 600 }, children: [
+      { type: 'Stack', ref: 'row', flow: true, props: { direction: 'row', justify: 'between', w: 500 }, children: [{ type: 'Label', ref: 'l', props: { text: 'Left' } }, { type: 'Label', ref: 'r', props: { text: 'Right' } }] },
+      { type: 'Button', ref: 'btn', x: 0, y: 80, props: { label: 'Sign In', w: 40 } },
+    ] } })
+    const refs = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
+    const host = document.createElement('div')
+    host.className = 'loom-container'
+    host.style.cssText = 'position:absolute;left:-10000px;top:0;width:800px;height:600px'
+    host.innerHTML = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview', hookAll: true }, st.doc.root as string))
+    document.body.appendChild(host)
+    const box = (id: string) => host.querySelector(`[data-loom-node="${id}"]`)!.getBoundingClientRect()
+    const row = box(refs.row!), right = box(refs.r!)
+    check('justify "between" puts the last item at the row\'s end', Math.abs(right.right - row.right) <= 1, `row ends ${row.right.toFixed(0)}, item ends ${right.right.toFixed(0)}`)
+    const btnEl = host.querySelector<HTMLElement>(`[data-loom-node="${refs.btn}"]`)!
+    const btnBox = btnEl.getBoundingClientRect()
+    check('a squeezed button keeps its label on one line', btnBox.height < 40, `${btnBox.width.toFixed(0)}x${btnBox.height.toFixed(0)}`)
+    host.remove()
+    const lbl = refs.l!
+    run('place', { id: lbl, w: 120 })
+    check('place with only a width leaves the height alone', st.doc.nodes[lbl]?.props.w === 120 && st.doc.nodes[lbl]?.props.h === undefined, JSON.stringify({ w: st.doc.nodes[lbl]?.props.w, h: st.doc.nodes[lbl]?.props.h }))
+  }
+
+  // --- 106. the Assistant sits bottom-centre of the canvas -----------------
+  // Shane: "at the very bottom of the center of the design screen, instead of
+  // the current controls, we could put the composer for the AI agent".
+  {
+    const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms))
+    const comp = document.querySelector<HTMLElement>('.canvas-wrap .assistant .as-composer')
+    const wrap = document.querySelector<HTMLElement>('.canvas-wrap')!.getBoundingClientRect()
+    const c = comp?.getBoundingClientRect()
+    check('the Assistant composer is bottom-centre of the canvas', !!c && Math.abs(c.left + c.width / 2 - (wrap.left + wrap.width / 2)) <= 2 && wrap.bottom - c.bottom <= 20 && wrap.bottom - c.bottom >= 0, c ? `centre ${(c.left + c.width / 2).toFixed(0)} vs ${(wrap.left + wrap.width / 2).toFixed(0)}, gap ${(wrap.bottom - c.bottom).toFixed(0)}` : 'missing')
+    const dock = document.querySelector<HTMLElement>('.canvas-wrap .dock')?.getBoundingClientRect()
+    check('the view controls moved to the top-right of the canvas', !!dock && dock.top - wrap.top <= 16 && wrap.right - dock.right <= 20, dock ? `${dock.top - wrap.top} / ${wrap.right - dock.right}` : 'missing')
+    const input = document.querySelector<HTMLTextAreaElement>('.assistant .as-input')
+    check('typing in the composer does not trigger editor shortcuts', !!input && (() => {
+      const app = window.__loomStore
+      const before = app.history.length
+      input.focus()
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
+      return app.history.length === before
+    })())
+    ;[...document.querySelectorAll<HTMLButtonElement>('.titlebar .pv-toggle button')].find((b) => b.textContent?.trim() === 'Preview')?.click()
+    await wait(200)
+    check('the Assistant steps aside in Preview', document.querySelector('.assistant') === null)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await wait()
   }
 
   // --- 90. checkbox, radio and select are drawn, not left to the OS -------
