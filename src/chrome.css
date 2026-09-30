@@ -101,7 +101,7 @@
 
 /* Small segmented groups: theme swatches, target. */
 /* A segmented switch is a well; the chosen segment is raised out of it. */
-.seg { display: flex; padding: 2px; gap: 1px; border: 1px solid var(--line); border-radius: 7px; background: rgba(0, 0, 0, 0.22); box-shadow: var(--well-shadow); }
+.seg { display: flex; padding: 2px; gap: 1px; border: 1px solid var(--line); border-radius: 7px; background: var(--sunk); box-shadow: var(--well-shadow); }
 
 .seg button {
   height: 24px;
@@ -124,7 +124,7 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+  box-shadow: 0 0 0 1px var(--line-2);
 }
 
 .seg button.on .theme-swatch { box-shadow: 0 0 0 1.5px var(--ink); }
@@ -221,8 +221,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-.dock button:hover { background: rgba(255, 255, 255, 0.06); color: var(--ink); }
-.dock button.on { background: rgba(91, 140, 255, 0.18); color: #c8d7ff; }
+.dock button:hover { background: var(--tint-2); color: var(--ink); }
+.dock button.on { background: rgba(91, 140, 255, 0.18); color: var(--accent-ink); }
 .dock .dock-zoom { min-width: 44px; }
 .dock .dock-text { padding: 0 10px; font-weight: 600; color: var(--ink); }
 
@@ -270,7 +270,7 @@
    the design is the subject, not the chrome. */
 .loom .toolbox,
 .loom .inspector {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 140px), var(--glass);
+  background: linear-gradient(180deg, var(--tint-1), transparent 140px), var(--glass);
   backdrop-filter: var(--glass-blur);
   border-color: var(--glass-edge);
   box-shadow: var(--glass-hi), var(--glass-depth);
@@ -413,7 +413,7 @@
 .insp-scroll input[type='range']::-webkit-slider-runnable-track {
   height: 3px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--track);
 }
 .insp-scroll input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -441,7 +441,7 @@
   width: 256px;
   padding: 10px 12px 12px;
   /* The Studio's glass, denser: it floats over the design and must read. */
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 60px), rgba(15, 16, 22, 0.88);
+  background: linear-gradient(180deg, var(--tint-1), transparent 60px), var(--overlay);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-edge);
   border-radius: 12px;
