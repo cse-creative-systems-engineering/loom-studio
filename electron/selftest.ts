@@ -4102,6 +4102,120 @@ export async function runSelfTest(): Promise<string> {
     check('remove deletes', rm.removed === 1 && !st.doc.nodes[cardId])
   }
 
+  // --- 107. a person keeps building while the agent works --------------------
+  // The agent's writes used to be held provisionally (poke) and sealed at the
+  // end, so a person's own edit mid-turn committed the agent's pending work
+  // under THEIR label, and no undo could remove it. Now a turn is a history
+  // group: the person's edit is its own step, the agent's work on either side
+  // stays undoable, and undo mid-turn stops the agent.
+  {
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const id = (r: ReturnType<typeof run>) => (r.ok ? ((r.result as { id: string }).id) : '')
+    const root = id(run('add_component', { type: 'Panel', parent_id: null }))
+    const h0 = st.history.length
+    turn.begin('AI: build')
+    const card = id(run('add_component', { type: 'Card', parent_id: root }))
+    st.dropComponent('Button', root, 10, 10)
+    const head = id(run('add_component', { type: 'Heading', parent_id: root }))
+    run('set_props', { id: head, props: { text: 'Hi' } })
+    turn.end()
+    const labels = st.history.slice(h0).map((e) => e.label)
+    check('an edit mid-turn is its own step between the agent\'s', labels.join(' | ') === 'AI: build | Add Button | AI: build', labels.join(' | '))
+    const has = () => [!!st.doc.nodes[card], Object.values(st.doc.nodes).some((n) => n.type === 'Button'), !!st.doc.nodes[head]].map(Number).join('')
+    const seen = [has()]
+    for (let i = 0; i < 3; i++) {
+      st.undo()
+      seen.push(has())
+    }
+    check('each undo removes exactly its own part, the agent\'s first work included', seen.join(',') === '111,110,100,000', seen.join(','))
+    const st2 = new EditorStore()
+    const t2 = new AiTurn(st2)
+    const made = runTool(st2, t2, 'add_component', { type: 'Panel', parent_id: null })
+    const r2 = made.ok ? (made.result as { id: string }).id : ''
+    let stopped = 0
+    t2.onInterrupt = () => stopped++
+    t2.begin('AI: y')
+    runTool(st2, t2, 'add_component', { type: 'Label', parent_id: r2 })
+    st2.undo()
+    check('undo mid-turn stops the agent and ends the turn', stopped === 1 && !t2.active && st2.interruptTurn === null)
+  }
+
+  // --- 108. the agent can do what a person can -----------------------------
+  // Parity: parts, interaction states, per-breakpoint layout, display basics,
+  // effects, duplicate, paint order, and a whole subtree in one call. Every
+  // write goes through the same validated op as the panel; what is refused
+  // comes back with a reason.
+  {
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const res = (r: ReturnType<typeof run>) => (r.ok ? (r.result as Record<string, unknown>) : ({ error: r.error } as Record<string, unknown>))
+    const b = res(run('build', { parent_id: null, tree: { type: 'Panel', flow: true, ref: 'page', children: [
+      { type: 'Heading', props: { text: 'Models' } },
+      { type: 'Card', ref: 'row', flow: true, children: [{ type: 'Label', props: { text: 'GPT', bogus: 1 } }, { type: 'Button', props: { label: 'Open' } }] },
+      { type: 'DataGrid', ref: 'grid' },
+    ] } }))
+    const refs = (b.refs ?? {}) as Record<string, string>
+    check('build makes a nested subtree in one call and maps refs to ids', b.created === 6 && st.doc.root === refs.page && st.doc.nodes[refs.row!]?.children.length === 2, JSON.stringify(b))
+    check('build refuses bad props with the node\'s path', ((b.rejected ?? []) as string[]).some((r) => /children\[1\]\.children\[0\] Label: bogus/.test(r)))
+    check('build refuses an unknown type before writing anything', !run('build', { parent_id: refs.page, tree: { type: 'Card', children: [{ type: 'Nope' }] } }).ok && Object.keys(st.doc.nodes).length === 6)
+    check('build refuses children under a leaf', !run('build', { parent_id: refs.page, tree: { type: 'Label', children: [{ type: 'Label' }] } }).ok)
+    const sp = res(run('style_part', { id: refs.grid, part: 'header', style: { background: '#101820', fontSize: 12, wobble: 3 } }))
+    check('style_part styles a declared part and reports refused fields', st.doc.nodes[refs.grid!]?.parts?.header?.background === '#101820' && ((sp.rejected ?? []) as string[]).some((r) => r.startsWith('wobble')), JSON.stringify(sp))
+    check('style_part refuses an unknown part, naming the real ones', /parts: /.test(String(res(run('style_part', { id: refs.grid, part: 'nope', style: { color: 'red' } })).error)))
+    check('style_part refuses an unsafe colour', ((res(run('style_part', { id: refs.grid, part: 'header', style: { color: 'red;}x{' } })).rejected ?? []) as string[]).length === 1)
+    run('set_states', { id: refs.row, state: 'hover', style: { lift: 2, shadow: 'lg', blink: true } })
+    check('set_states styles hover', st.doc.nodes[refs.row!]?.states?.hover?.lift === 2 && st.doc.nodes[refs.row!]?.states?.hover?.shadow === 'lg')
+    run('set_responsive', { id: refs.row, breakpoint: 'sm', override: { w: 340, visible: true, colour: 1 } })
+    check('set_responsive writes a phone override', st.doc.nodes[refs.row!]?.responsive?.sm?.w === 340)
+    run('set_display', { id: refs.row, opacity: 0.5, name: 'Model row', locked: true })
+    const row = st.doc.nodes[refs.row!]
+    check('set_display sets opacity, layer name and lock', row?.opacity === 0.5 && row.name === 'Model row' && row.locked === true)
+    run('set_display', { id: refs.row, locked: false })
+    const fx = res(run('set_effects', { id: refs.row, effects: { glow: true, glowColor: '#5b8cff', sparkle: true } }))
+    check('set_effects turns an effect on and refuses unknown keys', (st.doc.nodes[refs.row!]?.effects as Record<string, unknown> | undefined)?.glow === true && ((fx.rejected ?? []) as string[]).some((r) => r.startsWith('sparkle')))
+    const dup = res(run('duplicate', { id: refs.row, count: 3 }))
+    const kids = st.doc.nodes[refs.page!]!.children
+    check('duplicate copies a subtree right after the original, in order', (dup.ids as string[]).length === 3 && kids.indexOf((dup.ids as string[])[0]!) === kids.indexOf(refs.row!) + 1 && kids.indexOf((dup.ids as string[])[2]!) === kids.indexOf(refs.row!) + 3)
+    check('a copy has its own children with fresh ids', st.doc.nodes[(dup.ids as string[])[0]!]!.children.every((c) => !row!.children.includes(c)) && st.doc.nodes[(dup.ids as string[])[0]!]!.children.length === 2)
+    run('arrange', { id: refs.grid, to: 'back' })
+    check('arrange sends a node to the back of its siblings', st.doc.nodes[refs.page!]!.children[0] === refs.grid)
+    check('every new tool is listed with a schema', ['build', 'style_part', 'set_states', 'set_responsive', 'set_display', 'set_effects', 'duplicate', 'arrange'].every((n) => TOOLS.some((t) => t.name === n)))
+  }
+
+  // --- 109. what the OpenRouter run found in Loom ----------------------------
+  // An agent rebuilding a real page reported that `justify: between` did
+  // nothing (the value was written through as CSS, and "between" is not CSS),
+  // that `place` with only a width pinned the height to 40px, and its export
+  // drew "Sign In" on two lines. Each is measured live.
+  {
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', ref: 'page', props: { w: 600 }, children: [
+      { type: 'Stack', ref: 'row', flow: true, props: { direction: 'row', justify: 'between', w: 500 }, children: [{ type: 'Label', ref: 'l', props: { text: 'Left' } }, { type: 'Label', ref: 'r', props: { text: 'Right' } }] },
+      { type: 'Button', ref: 'btn', x: 0, y: 80, props: { label: 'Sign In', w: 40 } },
+    ] } })
+    const refs = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
+    const host = document.createElement('div')
+    host.className = 'loom-container'
+    host.style.cssText = 'position:absolute;left:-10000px;top:0;width:800px;height:600px'
+    host.innerHTML = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview', hookAll: true }, st.doc.root as string))
+    document.body.appendChild(host)
+    const box = (id: string) => host.querySelector(`[data-loom-node="${id}"]`)!.getBoundingClientRect()
+    const row = box(refs.row!), right = box(refs.r!)
+    check('justify "between" puts the last item at the row\'s end', Math.abs(right.right - row.right) <= 1, `row ends ${row.right.toFixed(0)}, item ends ${right.right.toFixed(0)}`)
+    const btnEl = host.querySelector<HTMLElement>(`[data-loom-node="${refs.btn}"]`)!
+    const btnBox = btnEl.getBoundingClientRect()
+    check('a squeezed button keeps its label on one line', btnBox.height < 40, `${btnBox.width.toFixed(0)}x${btnBox.height.toFixed(0)}`)
+    host.remove()
+    const lbl = refs.l!
+    run('place', { id: lbl, w: 120 })
+    check('place with only a width leaves the height alone', st.doc.nodes[lbl]?.props.w === 120 && st.doc.nodes[lbl]?.props.h === undefined, JSON.stringify({ w: st.doc.nodes[lbl]?.props.w, h: st.doc.nodes[lbl]?.props.h }))
+  }
+
   // --- 106. the Assistant sits bottom-centre of the canvas -----------------
   // Shane: "at the very bottom of the center of the design screen, instead of
   // the current controls, we could put the composer for the AI agent".

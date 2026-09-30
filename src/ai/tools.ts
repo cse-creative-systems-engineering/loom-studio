@@ -7,8 +7,8 @@
  * op on the ordinary store, so it renders live, and it is VALIDATED here first
  * (a model's guess at a property name or value must never reach the document:
  * `setProp` itself accepts any key, which is fine for the panel and not for
- * this). One agent turn is one undo step: during a turn writes are held
- * provisionally and sealed together (see `AiTurn`).
+ * this). One agent turn is one undo step: its writes are commits in one
+ * history group (see `AiTurn`).
  *
  * Pure over an EditorStore, so the selftest drives it without Electron, and
  * the same definitions are what the MCP bridge lists.
@@ -24,6 +24,10 @@ import { cleanPage } from '../model/page'
 import { THEME_NAMES } from '../render/theme'
 import { descendants, parentOf } from '../model/ops'
 import { itemsOf } from '../model/lists'
+import { cleanPartStyle } from '../render/parts'
+import { cleanStateStyle, isSafeColor } from '../render/states'
+import { DEFAULT_EFFECTS, normalizeEffects } from '../render/effects'
+import { INTERACTION_STATES, type InteractionState } from '../model/types'
 
 /** A JSON-schema'd tool, in the shape MCP `tools/list` returns. */
 export interface ToolDef {
@@ -124,6 +128,57 @@ export const TOOLS: ToolDef[] = [
     inputSchema: obj({ theme: { type: 'string', enum: [...THEME_NAMES] } }, ['theme']),
   },
   {
+    name: 'build',
+    description:
+      'Build a whole subtree in ONE call: a component with its props and children, nested as deep as you need (e.g. a card with its heading, text and buttons, or a list of rows). Far faster than add_component one by one. Each node: {type, props?, flow?, x?, y?, name?, ref?, children?}. "ref" names a node so the reply maps it to its new id. Validated like add_component; the reply lists anything refused. Max 300 nodes per call.',
+    inputSchema: obj(
+      {
+        parent_id: { type: ['string', 'null'], description: 'Container to build into; null only when the document is empty (the tree becomes the root).' },
+        tree: { type: 'object', description: '{type, props?, flow?, x?, y?, name?, ref?, children?: [same shape]}' },
+      },
+      ['parent_id', 'tree'],
+    ),
+  },
+  {
+    name: 'style_part',
+    description:
+      'Style one PART of a component (describe_component -> parts lists them, with the fields each accepts): e.g. a DataGrid\'s header, rows or cells, a KpiCard\'s value, a Field\'s label. Fields: fontSize, fontWeight, color, lineHeight, letterSpacing, textTransform, align, fontFamily (sans|mono), decoration, background, paddingX, paddingY, radius, border, borderWidth, shadow, gap. null clears a field.',
+    inputSchema: obj({ id: str('Node id.'), part: str('Part name.'), style: { type: 'object', description: 'field -> value (null clears)' } }, ['id', 'part', 'style']),
+  },
+  {
+    name: 'set_states',
+    description:
+      'How a node looks while hovered, focused or pressed (the same interaction states as the Properties panel). Fields: background, color, border (colours), shadow (none|sm|md|lg|glow), opacity 0-1, scale 0.5-1.5, lift -24..24 px, brightness 0.5-1.5. null clears a field.',
+    inputSchema: obj({ id: str('Node id.'), state: { type: 'string', enum: ['hover', 'focus', 'pressed'] }, style: { type: 'object' } }, ['id', 'state', 'style']),
+  },
+  {
+    name: 'set_responsive',
+    description:
+      'Override a node at a narrower screen: "sm" (phone, up to 639px) or "md" (tablet, 640-1023px). The base design is desktop. Fields: x, y, w, h (px), flow (boolean), visible (boolean), opacity 0-1. null removes that override.',
+    inputSchema: obj({ id: str('Node id.'), breakpoint: { type: 'string', enum: ['sm', 'md'] }, override: { type: 'object' } }, ['id', 'breakpoint', 'override']),
+  },
+  {
+    name: 'set_display',
+    description: 'A node\'s display basics, as in the Properties panel\'s Display section and Layers: opacity (0-1), visible (hidden nodes stay in the design but do not ship), locked (cannot be moved or deleted), name (its layer name).',
+    inputSchema: obj({ id: str('Node id.'), opacity: num('0-1'), visible: { type: 'boolean' }, locked: { type: 'boolean' }, name: str('Layer name; "" clears it.') }, ['id']),
+  },
+  {
+    name: 'set_effects',
+    description:
+      'Visual effects on a node (the Effects section): grain, glass, aurora, spotlight, shimmer, glow, tilt, chromatic (booleans) and their settings (e.g. glowColor, glowSpread, auroraFrom/Via/To, motion none|fade|scale|blur, hoverScale). Unknown keys are refused.',
+    inputSchema: obj({ id: str('Node id.'), effects: { type: 'object' } }, ['id', 'effects']),
+  },
+  {
+    name: 'duplicate',
+    description: 'Copy a node and everything inside it, next to the original (offset 12px in a free parent, after it in a flow parent). Returns the copy\'s id. Handy for repeated rows or cards: build one, duplicate, then set_props on the copies.',
+    inputSchema: obj({ id: str('Node id.'), count: num('How many copies (default 1, max 50).') }, ['id']),
+  },
+  {
+    name: 'arrange',
+    description: 'Paint order among free siblings: "front" draws it above the others, "back" below.',
+    inputSchema: obj({ id: str('Node id.'), to: { type: 'string', enum: ['front', 'back'] } }, ['id', 'to']),
+  },
+  {
     name: 'render',
     description:
       'LOOK at what you built: an image of the design exactly as it ships (no editor chrome), at a viewport. Use it after building or changing something, judge it like a demanding senior designer (hierarchy, spacing, alignment, balance, polish), and fix what you see. Optionally crop to one node.',
@@ -143,22 +198,36 @@ export const TOOLS: ToolDef[] = [
 ]
 
 /**
- * One agent turn = one undo step. While a turn is open, writes are applied
- * provisionally (live on the canvas) and sealed together at the end under the
- * turn's label; outside a turn each write is its own step.
+ * One agent turn = one undo step. A turn's writes are real commits in one
+ * history GROUP, so consecutive ones merge into a single entry under the
+ * turn's label (live on the canvas as they land). A person keeps building
+ * while the agent works: their own edit mid-turn is its own entry, and the
+ * agent's work before and after it stays undoable. Undo or redo during a
+ * turn stops the agent first (`onInterrupt`, wired by the Assistant).
  */
 export class AiTurn {
   private open: string | null = null
+  private group = ''
+  private count = 0
+  /** Called when the person undoes/redoes mid-turn: stop the agent. */
+  onInterrupt: (() => void) | null = null
   constructor(private store: EditorStore) {}
   begin(label: string) {
     if (this.open !== null) this.end()
-    this.store.seal('Before AI')
+    // A gesture in progress is the person's, not the agent's.
+    this.store.seal('Edit')
     this.open = label
+    this.group = `ai-${Date.now().toString(36)}-${++this.count}`
+    this.store.interruptTurn = () => {
+      const stop = this.onInterrupt
+      this.end()
+      stop?.()
+    }
   }
   end() {
     if (this.open === null) return
-    this.store.seal(this.open)
     this.open = null
+    this.store.interruptTurn = null
   }
   get active(): boolean {
     return this.open !== null
@@ -166,9 +235,7 @@ export class AiTurn {
   /** Apply an op; true when it changed the document. */
   write(op: Op, label: string): boolean {
     if (this.open === null) return this.store.commit(op, label)
-    const before = this.store.doc
-    this.store.poke(op)
-    return this.store.doc !== before && JSON.stringify(this.store.doc) !== JSON.stringify(before)
+    return this.store.commit(op, this.open, this.group)
   }
 }
 
@@ -411,10 +478,11 @@ const HANDLERS: Record<string, Handler> = {
     for (const k of ['w', 'h'] as const) {
       if (a[k] === 'auto') t.write({ op: 'setProp', id, key: k, value: undefined as unknown as PropValue }, `Auto ${k === 'w' ? 'width' : 'height'}`)
     }
-    if (w !== undefined || h !== undefined) {
-      const cur = s.doc.nodes[id]!
-      t.write({ op: 'resize', id, w: Math.max(1, Math.round(w ?? (Number(cur.props.w) || 100))), h: Math.max(1, Math.round(h ?? (Number(cur.props.h) || 40))) }, 'Resize')
-    }
+    // Only the axes given: a width alone used to also pin the height to 40px
+    // (resize writes both), which an agent then had to set back to auto.
+    if (w !== undefined && h !== undefined) t.write({ op: 'resize', id, w: Math.max(1, Math.round(w)), h: Math.max(1, Math.round(h)) }, 'Resize')
+    else if (w !== undefined) t.write({ op: 'setProp', id, key: 'w', value: Math.max(1, Math.round(w)) }, 'Width')
+    else if (h !== undefined) t.write({ op: 'setProp', id, key: 'h', value: Math.max(1, Math.round(h)) }, 'Height')
     const after = s.doc.nodes[id]!.props
     return { x: after.x, y: after.y, w: after.w, h: after.h }
   },
@@ -489,11 +557,208 @@ const HANDLERS: Record<string, Handler> = {
     return { theme }
   },
 
+  build: (s, t, a) => {
+    const parent = a.parent_id === null || a.parent_id === undefined ? null : String(a.parent_id)
+    if (parent === null && s.doc.root !== null) throw new Error('the document already has a root; pass its id (or another container) as parent_id')
+    if (parent !== null) nodeOf(s, parent)
+    const rejected: string[] = []
+    const refs: Record<string, string> = {}
+    const tree: Record<NodeId, Node> = {}
+    let count = 0
+    const make = (raw: unknown, hostType: string | null, hostFlow: boolean, path: string, depth: number): Node | null => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${path}: a node must be an object {type, props?, children?}`)
+      const src = raw as Record<string, unknown>
+      const type = typeof src.type === 'string' ? src.type : ''
+      if (!getComponent(type)) throw new Error(`${path}: unknown component "${type}" (list_components has the names)`)
+      if (hostType !== null) {
+        if (!getComponent(hostType)?.container) throw new Error(`${path}: ${hostType} is not a container, so it cannot hold ${type}`)
+        if (!acceptsChild(hostType, type)) throw new Error(`${path}: ${hostType} only accepts ${getComponent(hostType)?.childTypes?.join(', ')}`)
+      }
+      if (depth > 24) throw new Error(`${path}: nested too deep`)
+      if (++count > 300) throw new Error('more than 300 nodes in one build; split it')
+      const { ok, rejected: bad } = validProps(type, src.props)
+      for (const r of bad) rejected.push(`${path} ${type}: ${r}`)
+      const id = `n${Math.random().toString(36).slice(2, 9)}`
+      const x = hostFlow ? 0 : finite(src.x) ?? 0
+      const y = hostFlow ? 0 : finite(src.y) ?? 0
+      const node = instantiateFor(type, ok, x, y, id, hostFlow)
+      if (typeof src.flow === 'boolean' && getComponent(type)?.container) node.flow = src.flow
+      if (typeof src.name === 'string' && src.name) node.name = src.name.slice(0, 80)
+      if (typeof src.ref === 'string' && src.ref) refs[src.ref] = id
+      const kids = Array.isArray(src.children) ? src.children : []
+      if (kids.length && !getComponent(type)?.container) throw new Error(`${path}: ${type} is not a container, so it cannot have children`)
+      node.children = kids.map((c, i) => {
+        const k = make(c, type, node.flow, `${path}.children[${i}]`, depth + 1)!
+        tree[k.id] = k
+        return k.id
+      })
+      return node
+    }
+    const hostType = parent === null ? null : s.doc.nodes[parent]!.type
+    const hostFlow = parent !== null && s.doc.nodes[parent]!.flow === true
+    const root = make(a.tree, hostType, hostFlow, 'tree', 0)!
+    const spec = getComponent(root.type)!
+    if (parent === null && spec.container && root.props.anchor === 'none' && !['x', 'y', 'w', 'h'].some((k) => (a.tree as Record<string, unknown>)[k] !== undefined || ((a.tree as { props?: Record<string, unknown> }).props ?? {})[k] !== undefined)) {
+      root.props.anchor = 'fill'
+    }
+    if (!t.write({ op: 'insert', parent, node: root, tree }, `Build ${root.type}`)) throw new Error('could not build it there')
+    return { id: root.id, created: count, ...(Object.keys(refs).length ? { refs } : {}), ...(rejected.length ? { rejected } : {}) }
+  },
+
+  style_part: (s, t, a) => {
+    const id = need(a, 'id')
+    const n = nodeOf(s, id)
+    const part = need(a, 'part')
+    const parts = getComponent(n.type)?.parts
+    if (!parts?.[part]) throw new Error(`${n.type} has no part "${part}"${parts ? ` (parts: ${Object.keys(parts).join(', ')})` : ' (it declares no parts)'}`)
+    const raw = (a.style && typeof a.style === 'object' && !Array.isArray(a.style) ? a.style : null) as Record<string, unknown> | null
+    if (!raw) throw new Error('"style" must be an object')
+    const clears = Object.keys(raw).filter((k) => raw[k] === null)
+    const { style, dropped } = cleanPartStyle(n.type, part, Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== null)))
+    const patch: Record<string, string | number | null> = { ...style }
+    for (const k of clears) patch[k] = null
+    if (Object.keys(patch).length) t.write({ op: 'setPartStyle', id, part, patch }, `Style ${part}`)
+    return { part, style: s.doc.nodes[id]?.parts?.[part] ?? {}, ...(dropped.length ? { rejected: dropped } : {}) }
+  },
+
+  set_states: (s, t, a) => {
+    const id = need(a, 'id')
+    nodeOf(s, id)
+    const state = need(a, 'state') as InteractionState
+    if (!INTERACTION_STATES.includes(state)) throw new Error('state must be hover, focus or pressed')
+    const raw = (a.style && typeof a.style === 'object' && !Array.isArray(a.style) ? a.style : null) as Record<string, unknown> | null
+    if (!raw) throw new Error('"style" must be an object')
+    const clears = Object.keys(raw).filter((k) => raw[k] === null)
+    const { style, dropped } = cleanStateStyle(Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== null)))
+    const patch: Record<string, string | number | null> = { ...style }
+    for (const k of clears) patch[k] = null
+    if (Object.keys(patch).length) t.write({ op: 'setStateStyle', id, state, patch }, `${state} style`)
+    return { state, style: s.doc.nodes[id]?.states?.[state] ?? {}, ...(dropped.length ? { rejected: dropped } : {}) }
+  },
+
+  set_responsive: (s, t, a) => {
+    const id = need(a, 'id')
+    nodeOf(s, id)
+    const bp = need(a, 'breakpoint')
+    if (bp !== 'sm' && bp !== 'md') throw new Error('breakpoint must be sm (phone) or md (tablet); the base design is desktop')
+    const raw = (a.override && typeof a.override === 'object' && !Array.isArray(a.override) ? a.override : null) as Record<string, unknown> | null
+    if (!raw) throw new Error('"override" must be an object')
+    const patch: Record<string, number | boolean | null> = {}
+    const rejected: string[] = []
+    for (const [k, v] of Object.entries(raw)) {
+      if (v === null && ['x', 'y', 'w', 'h', 'flow', 'visible', 'opacity'].includes(k)) patch[k] = null
+      else if (['x', 'y', 'w', 'h'].includes(k) && finite(v) !== undefined) patch[k] = Math.round(finite(v)!)
+      else if (k === 'opacity' && finite(v) !== undefined) patch[k] = Math.min(1, Math.max(0, finite(v)!))
+      else if ((k === 'flow' || k === 'visible') && typeof v === 'boolean') patch[k] = v
+      else rejected.push(`${k} (${['x', 'y', 'w', 'h', 'opacity'].includes(k) ? 'not a finite number' : k === 'flow' || k === 'visible' ? 'not a boolean' : 'unknown: x, y, w, h, flow, visible, opacity'})`)
+    }
+    if (Object.keys(patch).length) t.write({ op: 'setResponsive', id, breakpoint: bp, patch }, `${bp === 'sm' ? 'Phone' : 'Tablet'} layout`)
+    return { breakpoint: bp, override: s.doc.nodes[id]?.responsive?.[bp] ?? {}, ...(rejected.length ? { rejected } : {}) }
+  },
+
+  set_display: (s, t, a) => {
+    const id = need(a, 'id')
+    nodeOf(s, id)
+    const done: Record<string, unknown> = {}
+    if (a.opacity !== undefined) {
+      const o = finite(a.opacity)
+      if (o === undefined) throw new Error('opacity must be a number 0-1')
+      t.write({ op: 'setOpacity', id, opacity: Math.min(1, Math.max(0, o)) }, 'Opacity')
+      done.opacity = s.doc.nodes[id]!.opacity
+    }
+    if (a.visible !== undefined) {
+      if (typeof a.visible !== 'boolean') throw new Error('visible must be true or false')
+      t.write({ op: 'setVisible', id, visible: a.visible }, a.visible ? 'Show' : 'Hide')
+      done.visible = a.visible
+    }
+    if (a.locked !== undefined) {
+      if (typeof a.locked !== 'boolean') throw new Error('locked must be true or false')
+      t.write({ op: 'setLocked', id, locked: a.locked }, a.locked ? 'Lock' : 'Unlock')
+      done.locked = a.locked
+    }
+    if (a.name !== undefined) {
+      if (typeof a.name !== 'string') throw new Error('name must be a string')
+      t.write({ op: 'setName', id, name: a.name.slice(0, 80) }, 'Rename layer')
+      done.name = a.name.slice(0, 80)
+    }
+    return done
+  },
+
+  set_effects: (s, t, a) => {
+    const id = need(a, 'id')
+    nodeOf(s, id)
+    const raw = (a.effects && typeof a.effects === 'object' && !Array.isArray(a.effects) ? a.effects : null) as Record<string, unknown> | null
+    if (!raw) throw new Error('"effects" must be an object')
+    const known = new Set(Object.keys(DEFAULT_EFFECTS))
+    const patch: Record<string, unknown> = {}
+    const rejected: string[] = []
+    for (const [k, v] of Object.entries(raw)) {
+      if (!known.has(k)) { rejected.push(`${k} (unknown effect setting)`); continue }
+      const d = (DEFAULT_EFFECTS as unknown as Record<string, unknown>)[k]
+      if (typeof d !== typeof v) { rejected.push(`${k} (expected a ${typeof d})`); continue }
+      if (typeof v === 'string' && typeof d === 'string' && d.startsWith('#') || /Color|From|Via|To$/.test(k)) {
+        if (typeof v === 'string' && !isSafeColor(v)) { rejected.push(`${k} (not a colour)`); continue }
+      }
+      patch[k] = v
+    }
+    if (Object.keys(patch).length) t.write({ op: 'setEffects', id, patch }, 'Effects')
+    const after = normalizeEffects(s.doc.nodes[id]?.effects)
+    for (const k of Object.keys(patch)) if ((after as unknown as Record<string, unknown>)[k] !== patch[k]) rejected.push(`${k} (out of range; now ${JSON.stringify((after as unknown as Record<string, unknown>)[k])})`)
+    return { applied: Object.keys(patch).length, ...(rejected.length ? { rejected } : {}) }
+  },
+
+  duplicate: (s, t, a) => {
+    const id = need(a, 'id')
+    const n = nodeOf(s, id)
+    if (id === s.doc.root) throw new Error('the root cannot be duplicated (no parent could hold the copy)')
+    const parent = parentOf(s.doc, id)!
+    const count = Math.max(1, Math.min(50, Math.round(finite(a.count) ?? 1)))
+    const ids: string[] = []
+    const inFlow = s.doc.nodes[parent]?.flow === true
+    for (let i = 1; i <= count; i++) {
+      const { root, tree } = copySubtree(s.doc, id)
+      if (!inFlow) root.props = { ...root.props, x: (Number(n.props.x) || 0) + 12 * i, y: (Number(n.props.y) || 0) + 12 * i }
+      const at = s.doc.nodes[parent]!.children.indexOf(ids.length ? ids[ids.length - 1]! : id) + 1
+      if (!t.write({ op: 'insert', parent, node: root, tree, index: at }, `Duplicate ${n.type}`)) throw new Error('could not duplicate it')
+      ids.push(root.id)
+    }
+    return { ids }
+  },
+
+  arrange: (s, t, a) => {
+    const id = need(a, 'id')
+    nodeOf(s, id)
+    const to = need(a, 'to')
+    if (to !== 'front' && to !== 'back') throw new Error('to must be front or back')
+    const parent = parentOf(s.doc, id)
+    if (!parent) throw new Error('the root has no siblings to arrange among')
+    const index = to === 'front' ? s.doc.nodes[parent]!.children.length - 1 : 0
+    t.write({ op: 'reparent', id, parent, index }, to === 'front' ? 'Bring to front' : 'Send to back')
+    return { index: s.doc.nodes[parent]!.children.indexOf(id) }
+  },
+
   select: (s, _t, a) => {
     const ids = Array.isArray(a.ids) ? a.ids.filter((x): x is string => typeof x === 'string' && !!s.doc.nodes[x]) : []
     s.select(ids)
     return { selected: ids }
   },
+}
+
+/** A deep copy of a subtree with fresh ids (as duplicate in the Studio). */
+function copySubtree(doc: EditorStore['doc'], id: NodeId): { root: Node; tree: Record<NodeId, Node> } {
+  const tree: Record<NodeId, Node> = {}
+  const copy = (src: Node): Node => {
+    const next: Node = JSON.parse(JSON.stringify(src))
+    next.id = `n${Math.random().toString(36).slice(2, 9)}`
+    next.locked = false
+    next.children = src.children.map((c) => {
+      const k = copy(doc.nodes[c]!)
+      tree[k.id] = k
+      return k.id
+    })
+    return next
+  }
+  return { root: copy(doc.nodes[id]!), tree }
 }
 
 /** A node as a toolbox drop makes it (defaults, drop size), with these props. */

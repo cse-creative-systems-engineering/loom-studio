@@ -101,6 +101,8 @@ export function Assistant({ s }: { s: EditorStore }) {
   const [draft, setDraft] = React.useState('')
   const [messages, setMessages] = React.useState<Message[]>([])
   const [open, setOpen] = React.useState(true)
+  // Opened the conversation during this turn's build (otherwise it folds).
+  const [peek, setPeek] = React.useState(false)
   const [runId, setRunId] = React.useState<string | null>(null)
   const [menu, setMenu] = React.useState(false)
   const [keyFor, setKeyFor] = React.useState<string | null>(null)
@@ -165,6 +167,15 @@ export function Assistant({ s }: { s: EditorStore }) {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight })
   }, [messages])
 
+  // Undo/redo while the agent works stops it (the store ends the turn).
+  React.useEffect(() => {
+    const t = aiTurn(s)
+    t.onInterrupt = () => void api()?.cancel()
+    return () => {
+      t.onInterrupt = null
+    }
+  }, [s])
+
   const chosen = providers?.find((p) => p.id === pick.provider)
   const ready = providers?.some((p) => p.ready) ?? false
 
@@ -173,6 +184,7 @@ export function Assistant({ s }: { s: EditorStore }) {
     if (!text || runId || !chosen?.ready) return
     setDraft('')
     setOpen(true)
+    setPeek(false)
     setMessages((ms) => [...ms, { role: 'user', text, steps: [] }, { role: 'assistant', text: '', steps: [], working: true }])
     // The whole turn, however many changes, is one undo step.
     aiTurn(s).begin(`AI: ${text.length > 40 ? text.slice(0, 40) + '…' : text}`)
@@ -213,11 +225,27 @@ export function Assistant({ s }: { s: EditorStore }) {
     } else setKeyError(r?.error ?? 'Could not save the key.')
   }
 
+  // While the agent builds, the conversation folds to one live line so the
+  // canvas it is building on stays in view; "Show" opens it anyway.
+  const last = messages[messages.length - 1]
+  const live = runId && !peek && last?.role === 'assistant' && last.working ? last : null
+
   if (!api()) return null
 
   return (
     <div className="assistant" data-open={open && messages.length > 0 ? 'true' : 'false'}>
-      {messages.length > 0 && open && (
+      {live && (
+        <div className="as-live" role="status" aria-live="polite">
+          <span className="as-live-dot" aria-hidden="true" />
+          <span className="as-live-text">
+            Building<span className="dim"> · {live.steps.length} {live.steps.length === 1 ? 'step' : 'steps'}{live.steps.length ? ` · ${live.steps[live.steps.length - 1]}` : ''}</span>
+          </span>
+          <button type="button" className="as-live-show" onClick={() => setPeek(true)} title="Show the conversation while it builds">
+            Show
+          </button>
+        </div>
+      )}
+      {messages.length > 0 && open && !live && (
         <div className="as-thread" ref={threadRef} aria-live="polite">
           <div className="as-thread-head">
             <span>Assistant</span>

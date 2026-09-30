@@ -15,7 +15,7 @@ import { getComponent } from '../model/registry'
 export interface LayoutIssue {
   id: string
   type: string
-  kind: 'clipped-text' | 'overflows-parent' | 'offscreen' | 'overlap' | 'small-target' | 'low-contrast' | 'zero-size'
+  kind: 'clipped-text' | 'wrapped' | 'overflows-parent' | 'offscreen' | 'overlap' | 'small-target' | 'low-contrast' | 'zero-size'
   detail: string
 }
 
@@ -29,6 +29,9 @@ export interface LayoutReport {
   /** Every node's drawn box, rounded, relative to the screen. */
   boxes: Array<{ id: string; type: string; x: number; y: number; w: number; h: number }>
 }
+
+/** Controls that are one line by nature: wrapping means they were squeezed. */
+const SINGLE_LINE = new Set(['Button', 'IconButton', 'Link', 'ToggleButton', 'DropdownButton', 'BackButton', 'Badge', 'Tag', 'Kbd', 'Select', 'SearchBox', 'Input'])
 
 const INTERACTIVE = new Set(['Button', 'IconButton', 'Link', 'Input', 'PasswordInput', 'SearchBox', 'Select', 'ComboBox', 'Checkbox', 'Switch', 'ToggleButton', 'DropdownButton', 'NumberInput', 'DatePicker', 'TimePicker', 'TextArea', 'BackButton'])
 
@@ -90,6 +93,16 @@ export function measureLayout(stage: HTMLElement, doc: Document, screen: { width
         return clips && (x.textContent ?? '').trim() !== '' && (x.scrollWidth > x.clientWidth + 1 || x.scrollHeight > x.clientHeight + 2)
       })
       if (cut) issues.push({ id: n.id, type: n.type, kind: 'clipped-text', detail: `${name(n)}: its text needs ${cut.scrollWidth}x${cut.scrollHeight}px but has ${cut.clientWidth}x${cut.clientHeight}px, so part of it is cut off` })
+    }
+
+    // A one-line control whose words broke onto a second line ("Sign" over
+    // "In"): not clipped, so the check above misses it, and it reads broken.
+    if (SINGLE_LINE.has(n.type)) {
+      const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.3
+      const text = (e.textContent ?? '').trim()
+      if (text.includes(' ') && r.height > lh * 1.8 + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)) {
+        issues.push({ id: n.id, type: n.type, kind: 'wrapped', detail: `${name(n)} wraps onto more than one line at ${box.w}px wide: give it room (or a width of "auto")` })
+      }
     }
 
     // Beyond its container (the root is measured against the screen).

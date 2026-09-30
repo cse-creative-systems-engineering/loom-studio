@@ -4,3 +4,4 @@ dist/
 
 # agent scratch: live-DOM probe harness, regenerated on demand
 .probe/
+.audit-tmp/

@@ -278,6 +278,14 @@ async function run() {
     const n0 = await win.webContents.executeJavaScript(`Object.keys(window.__loomStore.doc.nodes).length`, true)
     await ask('slow card: never')
     await new Promise((r) => setTimeout(r, 900))
+    // While it builds, the conversation folds to one live line so the canvas
+    // stays in view; "Show" opens it anyway.
+    const folded = await win.webContents.executeJavaScript(`(() => { const live = document.querySelector('.assistant .as-live'); const wrap = document.querySelector('.canvas-wrap').getBoundingClientRect(); const r = live?.getBoundingClientRect(); return { live: !!live, thread: !!document.querySelector('.assistant .as-thread'), text: live?.textContent ?? '', h: r ? Math.round(r.height) : 0, share: r ? +(r.height / wrap.height).toFixed(3) : 1 } })()`, true)
+    step('while the agent builds, the conversation is one live line, not a panel over the canvas', folded.live && !folded.thread && /Building/.test(folded.text) && folded.h <= 36, JSON.stringify(folded))
+    await win.webContents.executeJavaScript(`document.querySelector('.assistant .as-live-show')?.click()`, true)
+    await new Promise((r) => setTimeout(r, 150))
+    const shown = await win.webContents.executeJavaScript(`!!document.querySelector('.assistant .as-thread') && !document.querySelector('.assistant .as-live')`, true)
+    step('Show opens the conversation mid-turn', shown === true)
     await win.webContents.executeJavaScript(`document.querySelector('.assistant .as-send.stop')?.click()`, true)
     const stopped = await idle(5000)
     await new Promise((r) => setTimeout(r, 4500))
