@@ -5498,6 +5498,10 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     'data-loom-vacant': isContainer && node.children.length === 0 ? 'true' : 'false',
     'data-loom-hidden': node.visible === false ? 'true' : 'false',
     'data-loom-locked': node.locked === true ? 'true' : 'false',
+    // On the canvas the design is edited, not used: its own buttons and links
+    // are not tab stops (Tab walked into the design's Apply and Reset before
+    // the Studio's controls). Layers is the keyboard's way to its nodes.
+    tabIndex: -1,
     ...(ctx.forceState?.id === id ? { [FORCE_ATTR]: ctx.forceState.state } : {}),
     style: authored,
     onPointerDown: (e: React.PointerEvent) => ctx.onPointerDownNode?.(id, e),

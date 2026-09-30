@@ -7,7 +7,7 @@
   min-width: 208px;
   padding: 4px;
   /* The Studio's glass (ui.css tokens), a touch denser: a menu is read fast. */
-  background: rgba(15, 16, 22, 0.86);
+  background: var(--overlay);
   border: 1px solid var(--glass-edge);
   border-radius: 10px;
   box-shadow: var(--glass-hi), 0 18px 48px -12px rgba(0, 0, 0, 0.92);
@@ -62,9 +62,9 @@
 }
 
 .ctx-item:hover:not(:disabled) { background: var(--panel-2); }
-.ctx-item:disabled { color: #3d4453; cursor: default; }
+.ctx-item:disabled { color: var(--ink-4); cursor: default; }
 
-.ctx-item.danger { color: #f08a82; }
+.ctx-item.danger { color: var(--danger-ink); }
 .ctx-item.danger:hover { background: rgba(226, 86, 77, 0.14); }
 
 .ctx-k {

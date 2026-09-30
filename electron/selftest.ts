@@ -15,7 +15,7 @@ import { isSafeColor, stateCss, STATE_PRESETS } from '../src/render/states'
 import { documentCss } from '../src/render/document-css'
 import { fieldsFor } from '../src/render/parts'
 import type { Document, Node as LoomNode } from '../src/model/types'
-import { descendants, parentOf } from '../src/model/ops'
+import { ancestry, descendants, parentOf } from '../src/model/ops'
 import { defineComponent, allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
 import { emitHtml, exportFilenameFor } from '../src/export/html'
 import { emitReact, reactFilenameFor } from '../src/export/react'
@@ -5304,6 +5304,95 @@ export async function runSelfTest(): Promise<string> {
         .filter(({ r }) => r.width > 0 && (r.width < 23.5 || r.height < 23.5))
         .map(({ b, r }) => `${(b.getAttribute('aria-label') || b.title || b.textContent || b.className).trim().slice(0, 20)} ${r.width.toFixed(0)}x${r.height.toFixed(0)}`)
       check('every Studio control is at least 24px to hit', small.length === 0, small.slice(0, 6).join(' | '))
+    })
+
+    app.loadDocument(saved)
+    app.select([])
+    await settle()
+  }
+
+  // --- 104. markers explained, a way up, named groups, daylight, stillness,
+  // and a tab order that stays in the Studio (UI/UX review, batch D) ----------
+  {
+    const app = window.__loomStore
+    const saved = app.doc
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+    const part = async (label: string, body: () => Promise<void>) => {
+      try {
+        await body()
+      } catch (e) {
+        check(`§104 part ${label} runs to the end`, false, String(e))
+      }
+    }
+    const sd = new EditorStore()
+    seedDemo(sd)
+    app.loadDocument(sd.doc)
+    await settle(80)
+
+    // 19. The row markers have a key; the path up is clickable.
+    await part('19 (markers and path)', async () => {
+      const gauge = Object.values(app.doc.nodes).find((n) => n.type === 'Gauge')!
+      app.select([gauge.id])
+      await settle(80)
+      const legend = document.querySelector('.loom .inspector .props-legend')?.textContent ?? ''
+      check('the inspector explains its row markers', /changed from its default/.test(legend) && /bound to data/.test(legend), legend)
+      check('the bindable marker is a drawn icon, not a text glyph', !(document.querySelector('.loom .inspector')?.textContent ?? '').includes('◈'))
+      const crumbs = [...document.querySelectorAll<HTMLButtonElement>('.loom .inspector .crumbs .crumb')]
+      const chain = ancestry(app.doc, gauge.id).slice(0, -1)
+      check('the inspector shows the path up, one crumb per ancestor', crumbs.length === chain.length && crumbs.length >= 3, `${crumbs.map((c) => c.textContent).join(' > ')}`)
+      crumbs[1]?.click()
+      await settle()
+      check('a crumb selects that ancestor', app.selection[0] === chain[1], `${app.doc.nodes[app.selection[0]]?.type}`)
+    })
+
+    // 20. The title bar says which group is which.
+    await part('20 (labels)', async () => {
+      const labels = [...document.querySelectorAll('.loom .titlebar .seg-label')].map((l) => l.textContent)
+      const target = [...document.querySelectorAll<HTMLButtonElement>('.loom [aria-label="Export target"] button')]
+      check('the title bar names the design theme and the build target', labels.includes('Theme') && labels.includes('Target') && !!document.querySelector('.loom [aria-label="Design theme"]'), labels.join(', '))
+      check('each target explains itself', target.length === 2 && target.every((b) => b.title.length > 20), target.map((b) => b.title).join(' | '))
+    })
+
+    // 21. A light Studio, chosen (dark stays the default), and still when asked.
+    await part('21 (appearance and motion)', async () => {
+      const root = document.documentElement
+      const btn = document.querySelector<HTMLButtonElement>('.loom [aria-label^="Studio appearance"]')
+      const before = root.dataset.appearance
+      btn?.click()
+      await settle(80)
+      const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
+      const lum = ([r, g, b]: number[]) => {
+        const f = (v: number) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+      }
+      const ratio = (a: number[], b: number[]) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05) }
+      const tok = (v: string) => { const h = getComputedStyle(root).getPropertyValue(v).trim().replace('#', ''); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) }
+      const light = root.dataset.appearance === 'light'
+      const inkOk = Math.min(ratio(tok('--ink'), tok('--panel')), ratio(tok('--ink-3'), tok('--panel')), ratio(tok('--ink-3'), tok('--panel-2')))
+      let stored = ''
+      try { stored = window.localStorage.getItem('loom.appearance') ?? '' } catch { /* no storage */ }
+      check('the Studio has a light appearance, chosen in the title bar and remembered', before === 'dark' && light && stored === 'light' && lum(tok('--panel')) > 0.8 && getComputedStyle(root).colorScheme === 'light', `${before} -> ${root.dataset.appearance}, stored ${stored}`)
+      check('light text keeps the contrast floor (4.5:1, tertiary included)', inkOk >= 4.5, `${inkOk.toFixed(2)}:1`)
+      const fieldsLight = rgb(getComputedStyle(document.querySelector('.loom .inspector') ?? root).color)
+      check('the panels use the light ink', lum(fieldsLight) < 0.1, fieldsLight.join(','))
+      btn?.click() // light -> system
+      await settle()
+      btn?.click() // system -> dark
+      await settle()
+      check('the appearance cycles back to the Studio\'s dark default', root.dataset.appearance === 'dark')
+      const rules = [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules] } catch { return [] } })
+      const still = rules.some((r) => r instanceof CSSMediaRule && r.conditionText.includes('prefers-reduced-motion') && /\.loom/.test(r.cssText) && /transition-duration/.test(r.cssText) && /:not\(\.surface/.test(r.cssText))
+      check('under reduced motion the Studio chrome holds still (and leaves the design alone)', still)
+    })
+
+    // 22. Tab stays in the Studio: the design on the canvas is edited, not used.
+    await part('22 (tab order)', async () => {
+      await settle(60)
+      const surface = document.querySelector('.loom .surface')!
+      const stops = [...surface.querySelectorAll<HTMLElement>('button, a[href], input, select, textarea, [tabindex]')].filter((el) => el.tabIndex >= 0 && !el.closest('[inert]'))
+      check('nothing in the design on the canvas is a tab stop', stops.length === 0, stops.slice(0, 4).map((e) => `${e.tagName}.${e.dataset.loomType ?? ''}`).join(', '))
+      const all = [...document.querySelectorAll<HTMLElement>('.loom button, .loom input, .loom select, .loom textarea, .loom [tabindex]')].filter((el) => el.tabIndex >= 0 && !el.closest('[inert]') && el.getClientRects().length > 0)
+      check('the first tab stop is the title bar\'s', all[0]?.closest('.titlebar') !== null, all[0] ? `${all[0].tagName} ${all[0].getAttribute('aria-label') ?? all[0].textContent}` : 'none')
     })
 
     app.loadDocument(saved)

@@ -69,6 +69,18 @@ declare global {
  * user backs out of the unsaved-changes confirmation. Shared by the New
  * button and Ctrl+N so the two can never disagree.
  */
+/** The Studio's own appearance (never the design's theme): its dark look by default. */
+type Appearance = 'dark' | 'light' | 'system'
+const APPEARANCE_KEY = 'loom.appearance'
+function readAppearance(): Appearance {
+  try {
+    const v = window.localStorage.getItem(APPEARANCE_KEY)
+    return v === 'light' || v === 'system' ? v : 'dark'
+  } catch {
+    return 'dark'
+  }
+}
+
 /** The side panels: shown or folded away, and how wide (remembered per machine). */
 interface Panels {
   left: boolean
@@ -157,6 +169,18 @@ export function App() {
   }
   const panelsRef = React.useRef(panels)
   panelsRef.current = panels
+  const [appearance, setAppearanceState] = React.useState<Appearance>(readAppearance)
+  const setAppearance = (a: Appearance) => {
+    setAppearanceState(a)
+    try {
+      window.localStorage.setItem(APPEARANCE_KEY, a)
+    } catch {
+      // Not remembered; still applied for this session.
+    }
+  }
+  React.useEffect(() => {
+    document.documentElement.dataset.appearance = appearance
+  }, [appearance])
   const [room, setRoom] = React.useState(0)
   // Design or preview, IN PLACE: the canvas becomes the running artifact at
   // the same viewport and zoom, and the panels step aside. A separate window
@@ -441,7 +465,7 @@ export function App() {
 
   return (
     <div className={`loom ${mode === 'preview' ? 'previewing' : ''}`}>
-      <TitleBar s={s} mode={mode} onMode={setMode} previewOpen={previewOpen} onTogglePreview={togglePreview} running={running} onToggleRun={() => setRunning((r) => !r)} panels={panels} onPanels={setPanels} />
+      <TitleBar s={s} mode={mode} onMode={setMode} previewOpen={previewOpen} onTogglePreview={togglePreview} running={running} onToggleRun={() => setRunning((r) => !r)} panels={panels} onPanels={setPanels} appearance={appearance} onAppearance={setAppearance} />
       <div
         className="body"
         style={mode === 'design' ? { gridTemplateColumns: [panels.left ? `${panels.lw}px` : '', 'minmax(0, 1fr)', panels.right ? `${panels.rw}px` : ''].filter(Boolean).join(' ') } : undefined}
@@ -643,6 +667,8 @@ function TitleBar({
   onToggleRun,
   panels,
   onPanels,
+  appearance,
+  onAppearance,
 }: {
   s: EditorStore
   mode: 'design' | 'preview'
@@ -653,6 +679,8 @@ function TitleBar({
   onToggleRun: () => void
   panels: Panels
   onPanels: (p: Panels) => void
+  appearance: Appearance
+  onAppearance: (a: Appearance) => void
 }) {
   const [exportOpen, setExportOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
@@ -758,7 +786,17 @@ function TitleBar({
       </div>
 
       <div className="tb-right">
-        <div className="seg" role="group" aria-label="Output theme">
+        <button
+          type="button"
+          className="tb-btn"
+          onClick={() => onAppearance(appearance === 'dark' ? 'light' : appearance === 'light' ? 'system' : 'dark')}
+          title={`Studio appearance: ${appearance === 'system' ? 'follows the system' : appearance} (the Studio, not your design). Click to change.`}
+          aria-label={`Studio appearance: ${appearance}`}
+        >
+          <Ico name={appearance === 'dark' ? 'moon' : appearance === 'light' ? 'sun' : 'monitor'} />
+        </button>
+        <span className="seg-label" aria-hidden="true">Theme</span>
+        <div className="seg" role="group" aria-label="Design theme">
           {THEME_NAMES.map((n) => (
             <button
               key={n}
@@ -772,9 +810,16 @@ function TitleBar({
             </button>
           ))}
         </div>
+        <span className="seg-label" aria-hidden="true">Target</span>
         <div className="seg" role="group" aria-label="Export target">
           {(['web', 'desktop'] as const).map((t) => (
-            <button key={t} className={s.target === t ? 'on' : ''} aria-pressed={s.target === t} onClick={() => s.setTarget(t)}>
+            <button
+              key={t}
+              className={s.target === t ? 'on' : ''}
+              aria-pressed={s.target === t}
+              onClick={() => s.setTarget(t)}
+              title={t === 'web' ? 'Build for the web: a page in any browser' : 'Build for a desktop app (Chromium): every effect available'}
+            >
               {t === 'web' ? 'Web' : 'Desktop'}
             </button>
           ))}
@@ -2347,7 +2392,6 @@ function Inspector({
   ].sort((a, b) => GROUP_ORDER.indexOf(a.name as never) - GROUP_ORDER.indexOf(b.name as never))
 
   const chain = ancestry(s.doc, node.id)
-  const parent = parentOf(s.doc, node.id)
   // What the folded Display section holds, when it differs from the default.
   const displaySummary = [
     (node.opacity ?? 1) < 1 ? `${Math.round((node.opacity ?? 1) * 100)}%` : '',
@@ -2361,10 +2405,22 @@ function Inspector({
         <span className="insp-icon"><Glyph markup={toolGlyph(spec.name, spec.category)} size={16} /></span>
         <div>
           <div className="insp-name">{spec.name}</div>
-          <div className="insp-path">
-            {chain.length > 1 ? `${chain.length} deep` : 'root'}
-            {parent ? ` · parent ${s.doc.nodes[parent]?.type ?? '?'}` : ''}
-          </div>
+          {/* Where it sits, and a way up: each ancestor selects on a click
+              ("3 deep · parent Panel" named them and went nowhere). */}
+          <nav className="insp-path crumbs" aria-label="Ancestors">
+            {chain.length <= 1 ? (
+              'root'
+            ) : (
+              chain.slice(0, -1).map((a, i) => (
+                <React.Fragment key={a}>
+                  {i > 0 && <Ico name="chevron-right" size={10} />}
+                  <button type="button" className="crumb" onClick={() => s.select([a])} title={`Select this ${s.doc.nodes[a]?.type}`}>
+                    {s.doc.nodes[a]?.name ?? s.doc.nodes[a]?.type ?? '?'}
+                  </button>
+                </React.Fragment>
+              ))
+            )}
+          </nav>
         </div>
       </div>
 
@@ -2407,6 +2463,27 @@ function Inspector({
           renderField={(key, ps, value, onChange) => <Field name={key} ps={ps} value={value} onChange={onChange} />}
         />
 
+
+        {(() => {
+          // A key to the row markers, when any row carries one.
+          const rows = view.groups.flatMap((g) => g.rows)
+          const changed = rows.some((r) => r.modified)
+          const bindable = rows.some((r) => r.spec.bindable)
+          return changed || bindable ? (
+            <p className="props-legend">
+              {changed && (
+                <span>
+                  <span className="mod-dot" aria-hidden="true" /> changed from its default
+                </span>
+              )}
+              {bindable && (
+                <span>
+                  <span className="bind" aria-hidden="true"><Ico name="database" size={10} /></span> can be bound to data
+                </span>
+              )}
+            </p>
+          ) : null
+        })()}
 
         {view.groups.length === 0 && query.trim() !== '' && (
           <p className="props-empty">No properties match “{query.trim()}”.</p>
@@ -2692,7 +2769,7 @@ function Field({ name, ps, value, onChange, badge, modified, onReset, refs, mixe
         <label title={name}>
           {modified && <span className="mod-dot" aria-label="Changed from default" title="Changed from default" />}
           {label}
-          {ps.bindable && <span className="bind" title="Can be bound to a data source">◈</span>}
+          {ps.bindable && <span className="bind" title="Can be bound to a data source" aria-label="can be bound to data"><Ico name="database" size={10} /></span>}
           {badge && <span className="gate-badge" title={`${badge} only`}>{badge} only</span>}
         </label>
         {modified && onReset && (
