@@ -264,6 +264,15 @@ export function apply(doc: Document, op: Op): Document {
       return next
     }
 
+    case 'setName': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      const name = op.name.trim().slice(0, 80)
+      if (name === '') delete node.name
+      else node.name = name
+      return next
+    }
+
     case 'setOpacity': {
       const node = next.nodes[op.id]
       if (!node) return doc
@@ -457,6 +466,11 @@ export function invert(doc: Document, op: Op): Op | undefined {
       if (!node) return undefined
       return { op: 'setLocked', id: op.id, locked: node.locked }
     }
+    case 'setName': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      return { op: 'setName', id: op.id, name: node.name ?? '' }
+    }
     case 'setOpacity': {
       const node = doc.nodes[op.id]
       if (!node) return undefined
@@ -518,6 +532,22 @@ export function duplicateSubtree(
   if (!src || id === doc.root) return undefined
   const captured = captureSubtree(doc, id)
   if (!captured[id]) return undefined
+  return reidentify(captured, id, dx, dy)
+}
+
+/**
+ * A captured subtree with FRESH ids throughout, its root offset by dx/dy:
+ * what duplicate and paste insert. The capture is untouched, so a clipboard
+ * can paste the same subtree any number of times, even after a cut removed
+ * the original.
+ */
+export function reidentify(
+  captured: Record<NodeId, Node>,
+  id: NodeId,
+  dx = 0,
+  dy = 0,
+): { node: Node; tree: Record<NodeId, Node> } | undefined {
+  if (!captured[id]) return undefined
   const remap = new Map<NodeId, NodeId>()
   for (const old of Object.keys(captured)) remap.set(old, newId())
   const tree: Record<NodeId, Node> = {}
@@ -526,7 +556,7 @@ export function duplicateSubtree(
     if (!nid) return undefined
     const isRoot = old === id
     tree[nid] = {
-      ...n,
+      ...cloneNode(n),
       id: nid,
       props: {
         ...n.props,

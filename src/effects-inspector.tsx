@@ -1,3 +1,4 @@
+import React from 'react'
 /**
  * Effects inspector panel.
  *
@@ -8,7 +9,7 @@
  */
 
 import { DEFAULT_EFFECTS, type EffectValues } from './render/effects'
-import { Toggle } from './ui-primitives'
+import { Ico, Toggle } from './ui-primitives'
 
 /** One editable field, declared once. */
 interface EffectField {
@@ -67,21 +68,31 @@ export function EffectsPanel({
   effects,
   onChange,
   onCommit,
+  startOpen,
 }: {
   effects: EffectValues
+  /** Open on first render; by default only when an effect is on. */
+  startOpen?: boolean
   /** Live update during a drag of a slider. */
   onChange: (patch: Record<string, unknown>) => void
   /** Commit the gesture. */
   onCommit: () => void
 }) {
   const active = TOGGLES.filter((t) => effects[t.key] === true).length
+  // Folded until used: eight switches for every Caption and Label pushed the
+  // component's own properties down. Open when any effect is on.
+  const [open, setOpen] = React.useState(startOpen ?? active > 0)
 
   return (
-    <section className="eff">
+    <section className={`eff disclosure${open ? ' open' : ''}`}>
       <h3>
-        Effects
-        {active > 0 && <span className="eff-count">{active} on</span>}
+        <button type="button" className="disclosure-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <Ico name="chevron-right" size={12} />
+          <span>Effects</span>
+          {active > 0 && <span className="eff-count">{active} on</span>}
+        </button>
       </h3>
+      {open && (<>
 
       <div className="eff-toggles">
         {TOGGLES.map((t) => (
@@ -125,6 +136,7 @@ export function EffectsPanel({
           </button>
         </div>
       )}
+      </>)}
     </section>
   )
 }
