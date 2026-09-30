@@ -4261,6 +4261,123 @@ export async function runSelfTest(): Promise<string> {
     host.remove()
   }
 
+  // --- 113. Phase 2: controls act on other components (model/actions.ts) -----
+  // Standing rule 8: a List/Table toggle shows the table; a Filters button
+  // toggles its panel; a button opens a dialog. Wired in the model, carried in
+  // the output, run by the one runtime, measured live.
+  {
+    installBehaviourRuntime()
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', flow: true, ref: 'page', w: 900, children: [
+      { type: 'Segmented', ref: 'seg', props: { options: 'List,Table', value: 'List' } },
+      { type: 'Button', ref: 'filters', props: { label: 'Filters' } },
+      { type: 'Button', ref: 'newBtn', props: { label: 'New' } },
+      { type: 'Card', ref: 'panel', children: [{ type: 'Label', props: { text: 'Filter options' } }] },
+      { type: 'Stack', ref: 'list', flow: true, children: [{ type: 'Heading', props: { text: 'List view' } }] },
+      { type: 'DataGrid', ref: 'grid' },
+      { type: 'Select', ref: 'sel', props: { options: 'One,Two', value: 'One' } },
+      { type: 'Label', ref: 'one', props: { text: 'One' } },
+      { type: 'Label', ref: 'two', props: { text: 'Two' } },
+      { type: 'Switch', ref: 'sw' },
+      { type: 'Label', ref: 'onText', props: { text: 'On' } },
+      { type: 'TabBar', ref: 'tabs' },
+      { type: 'Modal', ref: 'modal', props: { open: false } },
+    ] } })
+    const R = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
+    const bad = run('set_actions', { id: R.seg, views: { List: R.list, Grid: R.grid } })
+    check('a choice that the control does not offer is refused, naming its choices', ((bad.ok ? (bad.result as { rejected?: string[] }).rejected : []) ?? []).some((m) => /"Grid" is not one of its choices \(List, Table\)/.test(m)))
+    check('a missing target is refused for the agent', !run('set_actions', { id: R.filters, click: [{ verb: 'toggle', target: 'nope' }] }).ok)
+    const onLabel = run('set_actions', { id: R.one, click: [{ verb: 'show', target: R.two }] })
+    check('a Label cannot carry click actions', onLabel.ok && (((onLabel.result as { rejected?: string[] }).rejected) ?? []).length > 0)
+    run('set_actions', { id: R.seg, views: { List: R.list, Table: R.grid } })
+    run('set_actions', { id: R.filters, click: [{ verb: 'toggle', target: R.panel }], starts_hidden: [R.panel] })
+    run('set_actions', { id: R.newBtn, click: [{ verb: 'open', target: R.modal }] })
+    run('set_actions', { id: R.sel, views: { One: R.one, Two: R.two } })
+    run('set_actions', { id: R.sw, views: { on: R.onText } })
+    check('the wiring is in the document, and get_document reports it', st.doc.nodes[R.seg]?.actions?.views?.Table === R.grid && JSON.stringify(run('get_document')).includes('"startsHidden":true'))
+
+    // Undo is exact, one step per edit.
+    const h = st.history.length
+    st.commit({ op: 'setActions', id: R.seg, actions: null }, 'clear')
+    check('clearing actions is one undo step', !st.doc.nodes[R.seg]?.actions && st.history.length === h + 1)
+    st.undo()
+    check('undo restores the views exactly', st.doc.nodes[R.seg]?.actions?.views?.List === R.list && st.doc.nodes[R.seg]?.actions?.views?.Table === R.grid)
+
+    // Output carries it; the canvas shows every view.
+    const out = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview', hookAll: true }, st.doc.root as string))
+    const canvas = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set() }, st.doc.root as string))
+    check('output names what a control changes (aria-controls) and carries its actions', out.includes(`aria-controls="${R.list} ${R.grid}"`) && out.includes('data-loom-do='))
+    check('the canvas shows every view so each can be edited', !canvas.includes('data-loom-shown="0"') && out.includes('data-loom-shown="0"'))
+
+    const host = document.createElement('div')
+    host.className = 'loom-container'
+    host.style.cssText = 'position:absolute;left:-10000px;top:0;width:900px'
+    host.innerHTML = out
+    document.body.appendChild(host)
+    const el = (id: string) => host.querySelector<HTMLElement>(`[data-loom-node="${id}"]`)!
+    const shown = (id: string) => getComputedStyle(el(id)).display !== 'none'
+    const tick = () => new Promise((r) => setTimeout(r, 10))
+    check('the static output starts on the right view, and the panel starts hidden', shown(R.list) && !shown(R.grid) && !shown(R.panel) && shown(R.one) && !shown(R.two) && !shown(R.onText))
+    host.querySelector<HTMLElement>(`[data-loom-node="${R.seg}"] [data-loom-choice="Table"]`)!.click()
+    await tick()
+    check('choosing Table shows the table and hides the list', shown(R.grid) && !shown(R.list))
+    host.querySelector<HTMLElement>(`[data-loom-node="${R.seg}"] [data-loom-choice="List"]`)!.click()
+    await tick()
+    check('and List brings the list back', shown(R.list) && !shown(R.grid))
+    const fb = host.querySelector<HTMLElement>(`[data-loom-node="${R.filters}"]`)!
+    const filterBtn = fb.matches('button') ? fb : fb.querySelector('button')!
+    filterBtn.click()
+    const opened = shown(R.panel) && filterBtn.closest('[aria-expanded]')?.getAttribute('aria-expanded') === 'true'
+    filterBtn.click()
+    check('a Filters button toggles its panel, and says whether it is open', opened && !shown(R.panel) && filterBtn.closest('[aria-expanded]')?.getAttribute('aria-expanded') === 'false')
+    const nb = host.querySelector<HTMLElement>(`[data-loom-node="${R.newBtn}"]`)!
+    ;(nb.matches('button') ? nb : nb.querySelector('button')!).click()
+    check('a button opens a Modal', el(R.modal).getAttribute('data-loom-open') === '1')
+    const selRoot = el(R.sel)
+    const select = (selRoot.matches('select') ? selRoot : selRoot.querySelector('select')) as HTMLSelectElement
+    select.value = 'Two'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    await tick()
+    check('a Select switches views on change', shown(R.two) && !shown(R.one))
+    const swEl = el(R.sw)
+    swEl.click()
+    await tick()
+    check('a Switch shows its "on" view when turned on', shown(R.onText), swEl.getAttribute('data-loom-on') ?? '')
+    const tabs = [...host.querySelectorAll<HTMLElement>(`[data-loom-node="${R.tabs}"] [role=tab]`)]
+    tabs[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    check('the arrow keys move between tabs and choose one', tabs[1]!.getAttribute('aria-selected') === 'true' || tabs[1]!.getAttribute('data-loom-active') === '1')
+    el(R.modal).querySelector<HTMLElement>('[data-loom-close]')?.click()
+    host.remove()
+
+    // Loading keeps a broken target and says so; startsHidden survives.
+    const file = JSON.parse(JSON.stringify(st.doc)) as Document
+    file.nodes[R.filters]!.actions = { click: [{ verb: 'toggle', target: 'gone123' }] }
+    const loaded = validate(file)
+    check('a wired target missing from a file is kept and reported, not guessed', loaded.doc?.nodes[R.filters]?.actions?.click?.[0]?.target === 'gone123' && loaded.issues.some((i) => /targets missing node "gone123"/.test(i.message)))
+    check('starts-hidden survives save and load', loaded.doc?.nodes[R.panel]?.startsHidden === true)
+
+    // A duplicated switch switches ITS OWN views.
+    const s2 = new EditorStore()
+    const r2 = runTool(s2, new AiTurn(s2), 'build', { parent_id: null, tree: { type: 'Panel', flow: true, children: [{ type: 'Stack', ref: 'group', flow: true, children: [
+      { type: 'Segmented', ref: 'seg', props: { options: 'A,B', value: 'A' } }, { type: 'Label', ref: 'a', props: { text: 'A' } }, { type: 'Label', ref: 'b', props: { text: 'B' } },
+    ] }] } })
+    const R2 = (r2.ok ? (r2.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
+    s2.commit({ op: 'setActions', id: R2.seg!, actions: { views: { A: R2.a!, B: R2.b! } } }, 'wire')
+    const copy = s2.duplicate(R2.group!)
+    const kids = copy ? s2.doc.nodes[copy]!.children : []
+    const cSeg = s2.doc.nodes[kids[0]!]
+    check('a duplicated view switch is wired to the duplicated views', !!cSeg && cSeg.actions?.views?.A === kids[1] && cSeg.actions?.views?.B === kids[2] && s2.doc.nodes[R2.seg!]?.actions?.views?.A === R2.a, JSON.stringify(cSeg?.actions))
+
+    // Pick mode: the next canvas pick answers the question and clears it.
+    let picked = ''
+    s2.startPick('What A shows', (id) => (picked = id))
+    const was = s2.picking?.forLabel
+    s2.endPick(R2.b)
+    check('pick mode hands the picked node over and ends', was === 'What A shows' && picked === R2.b && s2.picking === null)
+  }
+
   // --- 112. Phase 1: overlays, the page under an export, tones ---------------
   // Findings 1, 2, 3, 13 and 29 of the output audit.
   {

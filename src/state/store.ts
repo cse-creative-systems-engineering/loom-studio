@@ -238,6 +238,25 @@ export class EditorStore {
    */
   interruptTurn: (() => void) | null = null
 
+  /**
+   * Pick mode: while set, the next node clicked on the canvas is handed to
+   * this instead of being selected (choosing what a control acts on). Esc
+   * or picking clears it.
+   */
+  picking: { forLabel: string; done: (id: NodeId) => void } | null = null
+
+  startPick(forLabel: string, done: (id: NodeId) => void) {
+    this.picking = { forLabel, done }
+    this.emit()
+  }
+
+  endPick(id?: NodeId) {
+    const p = this.picking
+    this.picking = null
+    this.emit()
+    if (p && id) p.done(id)
+  }
+
   undo() {
     this.interruptTurn?.()
     const entry = this.history.pop()

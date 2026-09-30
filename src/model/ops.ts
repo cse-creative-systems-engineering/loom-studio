@@ -7,6 +7,7 @@
  * operation set be driven by a human drag or by an AI assistant.
  */
 
+import { cleanActions } from './actions'
 import type { Document, Node, NodeId, Op, PropValue } from './types'
 import { cleanPage } from './page'
 import { acceptsChild, getComponent, normalizeProps } from './registry'
@@ -204,6 +205,26 @@ export function apply(doc: Document, op: Op): Document {
       return next
     }
 
+    case 'setActions': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      // Cleaned against the document it lands in: nothing malformed can be
+      // stored, and a missing target is kept (flagged elsewhere) so undoing
+      // its deletion brings the wiring back.
+      const { actions } = cleanActions(node, op.actions)
+      if (actions) node.actions = actions
+      else delete node.actions
+      return next
+    }
+
+    case 'setStartsHidden': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      if (op.on) node.startsHidden = true
+      else delete node.startsHidden
+      return next
+    }
+
     case 'setPartStyle': {
       const node = next.nodes[op.id]
       if (!node) return doc
@@ -337,6 +358,8 @@ function cloneNode(node: Node): Node {
     props: normalizeProps(node.type, node.props),
     children: [...node.children],
     ...(getComponent(node.type)?.lists ? { lists: normalizeLists(node) } : {}),
+    // Its own copy: a duplicate's wiring is remapped in place (remapRefs).
+    ...(node.actions ? { actions: JSON.parse(JSON.stringify(node.actions)) } : {}),
     z: clampZ(node.z ?? 0),
   }
 }
@@ -427,6 +450,18 @@ export function invert(doc: Document, op: Op): Op | undefined {
       const node = doc.nodes[op.id]
       if (!node) return undefined
       return { op: 'setList', id: op.id, key: op.key, items: itemsOf(node, op.key).map((it) => ({ ...it })) }
+    }
+
+    case 'setActions': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      return { op: 'setActions', id: op.id, actions: node.actions ? JSON.parse(JSON.stringify(node.actions)) : null }
+    }
+
+    case 'setStartsHidden': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      return { op: 'setStartsHidden', id: op.id, on: node.startsHidden === true }
     }
 
     case 'setPartStyle': {
@@ -589,4 +624,9 @@ export function remapRefs(node: Node, remap: Map<NodeId, NodeId>): void {
     const ref = node.props[key]
     if (typeof ref === 'string' && remap.has(ref)) node.props[key] = remap.get(ref) as string
   }
+  // Actions follow the copy the same way: a duplicated List/Table switch
+  // switches the DUPLICATED views; a target outside the copy stays put.
+  for (const a of node.actions?.click ?? []) if (remap.has(a.target)) a.target = remap.get(a.target) as NodeId
+  const views = node.actions?.views
+  if (views) for (const k of Object.keys(views)) if (remap.has(views[k]!)) views[k] = remap.get(views[k]!) as NodeId
 }

@@ -1674,3 +1674,23 @@ button.layer-twist:hover { color: var(--ink); background: var(--panel-2); }
     animation-iteration-count: 1 !important;
   }
 }
+
+/* ---------------- behaviour: what a control does to other components ---------------- */
+.act-panel .act-empty { margin: 2px 0 6px; font-size: 11px; line-height: 1.4; }
+.act-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; margin: 4px 0; }
+.act-row .act-verb { width: 84px; }
+.act-row .act-choice { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ink-2); }
+.act-panel .act-row:has(.act-choice) { grid-template-columns: 70px minmax(0, 1fr); }
+.act-target { display: flex; gap: 4px; min-width: 0; }
+.act-target .select-wrap { flex: 1; min-width: 0; }
+.act-target .select-wrap.broken select { color: #ff8a80; }
+.act-pick.on { color: #fff; background: var(--accent); }
+.act-remove { padding: 0 6px; }
+.act-link { background: transparent; border: 0; padding: 2px 0; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
+.act-link:hover { text-decoration: underline; }
+.canvas-wrap.picking .surface, .canvas-wrap.picking .surface * { cursor: crosshair !important; }
+.act-links { position: absolute; inset: 0; pointer-events: none; z-index: 5; overflow: visible; }
+.act-links-line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0.9; }
+.act-links-target { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: 0.8; }
+.act-links-dot { fill: var(--accent); }
+.act-links-label { fill: var(--accent); font: 600 10.5px var(--font); letter-spacing: 0.02em; paint-order: stroke; stroke: var(--bg, #111); stroke-width: 3px; }

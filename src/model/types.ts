@@ -12,6 +12,7 @@
  */
 
 import type { EffectValues } from '../render/effects'
+import type { NodeActions } from './actions'
 
 export type NodeId = string
 
@@ -97,6 +98,18 @@ export interface Node {
    * person has to find, drag and stack by hand.
    */
   lists?: NodeLists
+  /**
+   * What this control does to OTHER components (`model/actions.ts`): a
+   * pressable's click actions, a choice control's views. Optional, carried
+   * only by controls that are wired.
+   */
+  actions?: NodeActions
+  /**
+   * Starts hidden in output until a control shows it (a filter panel a
+   * Filters button opens). Unlike `visible: false` it IS in the output; only
+   * meaningful for a node some control acts on. Optional.
+   */
+  startsHidden?: boolean
 }
 
 /** One row of an item list: field name to value, validated per field. */
@@ -327,6 +340,9 @@ export type Op =
    * validated against the list's declared fields on apply.
    */
   | { op: 'setList'; id: NodeId; key: string; items: ListItem[] }
+  /** Replace a control's actions whole (null clears them). */
+  | { op: 'setActions'; id: NodeId; actions: NodeActions | null }
+  | { op: 'setStartsHidden'; id: NodeId; on: boolean }
   | { op: 'rename'; name: string }
   /**
    * Set the document's design theme. `null` clears it back to the default.
