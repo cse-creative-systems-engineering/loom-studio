@@ -5074,6 +5074,243 @@ export async function runSelfTest(): Promise<string> {
     await settle()
   }
 
+  // --- 103. zoom and pan, typing in place, getting back, starting well, room
+  // to work, room to click (UI/UX review, batch C) ----------------------------
+  {
+    const app = window.__loomStore
+    const saved = app.doc
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+    const key = (target: EventTarget, k: string, init: KeyboardEventInit = {}) =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    const zoomPct = () => Number(document.querySelector<HTMLElement>('.loom .surface')?.dataset.zoom ?? 0)
+    const part = async (label: string, body: () => Promise<void>) => {
+      try {
+        await body()
+      } catch (e) {
+        check(`§103 part ${label} runs to the end`, false, String(e))
+      }
+    }
+    const demo = () => {
+      const sd = new EditorStore()
+      seedDemo(sd)
+      app.loadDocument(sd.doc)
+    }
+
+    // 13. Zoom from the keyboard and the wheel; pan with Space or the middle button.
+    await part('13 (zoom and pan)', async () => {
+      demo()
+      await settle(80)
+      key(document.body, '!', { shiftKey: true })
+      await settle()
+      const fit = zoomPct()
+      key(document.body, '=', { ctrlKey: true })
+      await settle()
+      const zin = zoomPct()
+      key(document.body, '0', { ctrlKey: true })
+      await settle()
+      const one = zoomPct()
+      key(document.body, '-', { ctrlKey: true })
+      await settle()
+      const zout = zoomPct()
+      check('Ctrl+=, Ctrl+0 and Ctrl+- zoom the canvas', zin > fit && one === 100 && zout < 100, `fit ${fit} -> in ${zin}, 0 -> ${one}, out ${zout}`)
+      key(document.body, '!', { shiftKey: true })
+      await settle()
+      check('Shift+1 fits the canvas again', zoomPct() === fit, `${zoomPct()} vs ${fit}`)
+      // Ctrl+wheel: the design point under the pointer stays under it. At a
+      // zoom where the canvas can scroll both ways: a canvas smaller than its
+      // window has nothing to scroll, so nothing can hold the point there.
+      key(document.body, '0', { ctrlKey: true })
+      key(document.body, '=', { ctrlKey: true })
+      key(document.body, '=', { ctrlKey: true })
+      await settle(80)
+      const canvas = document.querySelector<HTMLElement>('.loom .canvas')!
+      const surface = document.querySelector<HTMLElement>('.loom .surface')!
+      const r0 = surface.getBoundingClientRect()
+      const px = r0.left + r0.width * 0.7
+      const py = r0.top + r0.height * 0.4
+      const z0 = zoomPct() / 100
+      const dx = (px - r0.left) / z0
+      const dy = (py - r0.top) / z0
+      canvas.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: -200, clientX: px, clientY: py, bubbles: true, cancelable: true }))
+      await settle(80)
+      const z1 = zoomPct() / 100
+      const r1 = surface.getBoundingClientRect()
+      const drift = Math.hypot(r1.left + dx * z1 - px, r1.top + dy * z1 - py)
+      check('Ctrl+wheel zooms at the pointer, keeping the point under it', z1 > z0 * 1.2 && drift < 3, `zoom ${z0.toFixed(2)} -> ${z1.toFixed(2)}, drift ${drift.toFixed(1)}px`)
+      // Pan: Space held, then a drag; and the middle button on its own.
+      const pan = async (button: number, withSpace: boolean) => {
+        canvas.scrollLeft = 100
+        canvas.scrollTop = 60
+        const before = [canvas.scrollLeft, canvas.scrollTop]
+        if (withSpace) window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true }))
+        await settle()
+        const cr = canvas.getBoundingClientRect()
+        const x = cr.left + cr.width / 2
+        const y = cr.top + cr.height / 2
+        canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button, clientX: x, clientY: y }))
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: x - 60, clientY: y - 30 }))
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: x - 60, clientY: y - 30 }))
+        if (withSpace) window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space', key: ' ', bubbles: true }))
+        await settle()
+        return [canvas.scrollLeft - before[0], canvas.scrollTop - before[1]]
+      }
+      const selBefore = app.selection.join()
+      const spaced = await pan(0, true)
+      check('Space+drag pans the canvas (and selects nothing)', spaced[0] === 60 && spaced[1] === 30 && app.selection.join() === selBefore, `moved ${spaced.join(',')}`)
+      const middle = await pan(1, false)
+      check('a middle-button drag pans the canvas', middle[0] === 60 && middle[1] === 30, `moved ${middle.join(',')}`)
+      key(document.body, '!', { shiftKey: true })
+      await settle()
+    })
+
+    // 14. Double-click a component to type its text where it is.
+    await part('14 (type in place)', async () => {
+      demo()
+      await settle(80)
+      const label = Object.values(app.doc.nodes).find((n) => n.type === 'Label')!
+      const el = document.querySelector<HTMLElement>(`.loom .surface [data-loom-id="${label.id}"]`)!
+      el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+      await settle()
+      const ed = document.querySelector<HTMLTextAreaElement>('.loom .surface textarea.inline-edit')
+      const at = ed?.getBoundingClientRect()
+      const lr = el.getBoundingClientRect()
+      check('double-clicking a component opens its text, over it', ed !== null && ed.value === String(label.props.text) && at !== undefined && Math.abs(at.left - lr.left) < 3 && Math.abs(at.top - lr.top) < 3,
+        ed ? `"${ed.value}" at ${at?.left.toFixed(0)},${at?.top.toFixed(0)} over ${lr.left.toFixed(0)},${lr.top.toFixed(0)}` : 'no editor')
+      const h0 = app.history.length
+      if (ed) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ed, 'Fleet Console')
+        key(ed, 'Enter')
+      }
+      await settle()
+      check('Enter keeps the new text, in one undo step', app.doc.nodes[label.id].props.text === 'Fleet Console' && app.history.length === h0 + 1 && !document.querySelector('.loom textarea.inline-edit'))
+      el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+      await settle()
+      const ed2 = document.querySelector<HTMLTextAreaElement>('.loom .surface textarea.inline-edit')
+      if (ed2) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ed2, 'nope')
+        key(ed2, 'Escape')
+      }
+      await settle()
+      check('Escape leaves the text as it was', app.doc.nodes[label.id].props.text === 'Fleet Console' && !document.querySelector('.loom textarea.inline-edit'))
+    })
+
+    // 15. What a crash or a closed window left is offered back, never loaded unasked.
+    await part('15 (recovery)', async () => {
+      const realHost = app.host
+      const lost = new EditorStore()
+      seedDemo(lost)
+      lost.commit({ op: 'rename', name: 'Quarterly review' }, 'name')
+      try {
+        app.host = { ...(realHost ?? {}), latestAutosave: async () => ({ ok: true, name: 'quarterly-review.loom.json', mtime: Date.now() - 5 * 60000, contents: serialize(lost.doc) }) } as LoomHost
+        app.loadDocument(emptyDocument())
+        await settle(150)
+        const offer = document.querySelector<HTMLButtonElement>('.loom .empty-recover')
+        check('an empty document offers what an earlier session left, by name and age', offer !== null && /Quarterly review/.test(offer.textContent ?? '') && /5 min ago/.test(offer.textContent ?? '') && app.doc.root === null,
+          offer?.textContent ?? 'no offer')
+        offer?.click()
+        await settle()
+        check('continuing loads it as unsaved work, and says so', app.doc.meta.name === 'Quarterly review' && app.doc.root !== null && app.dirty && /Recovered/.test(app.notice?.text ?? ''), app.notice?.text ?? '')
+        app.host = { ...(realHost ?? {}), latestAutosave: async () => ({ ok: false }) } as LoomHost
+        app.loadDocument(emptyDocument())
+        await settle(150)
+        check('with nothing left over, nothing is offered', document.querySelector('.loom .empty-recover') === null)
+      } finally {
+        app.host = realHost
+        if (app.notice) app.dismissNotice(app.notice.id)
+      }
+    })
+
+    // 16. The welcome is readable at any zoom and starts somewhere real.
+    await part('16 (first run)', async () => {
+      app.loadDocument(emptyDocument())
+      await settle(100)
+      const title = document.querySelector<HTMLElement>('.loom .empty-hint-title')
+      const h = title?.getBoundingClientRect().height ?? 0
+      check('the welcome card is drawn at the Studio\'s size, not the zoom\'s', zoomPct() < 100 && h >= 17, `zoom ${zoomPct()}%, title ${h.toFixed(1)}px tall`)
+      const starts = [...document.querySelectorAll('.loom .empty-start')].map((b) => b.textContent?.trim())
+      check('there are starters for the everyday screens', STARTERS.length >= 5 && ['Dashboard', 'Settings page', 'Sign-in', 'Landing hero'].every((n) => starts.includes(n)), starts.join(', '))
+      const broken: string[] = []
+      for (const st of STARTERS) {
+        const t = new EditorStore()
+        const id = t.addStarter(st.id, null, 0, 0)
+        if (!id || Object.values(t.doc.nodes).some((n) => !getComponent(n.type))) broken.push(st.id)
+        else if (!emitHtml(t.doc).includes('data-loom')) broken.push(`${st.id} (no output)`)
+      }
+      check('every starter builds from real tools and exports', broken.length === 0, broken.join(', '))
+      // The KPI card's bar visual draws (its row collapsed to nothing).
+      const host = document.createElement('div')
+      host.style.cssText = 'position:fixed;left:0;top:0;width:600px'
+      document.body.appendChild(host)
+      const rk = createRoot(host)
+      const ks = new EditorStore()
+      const kid = ks.dropComponent('KpiCard', withRoot(ks), 0, 0)!
+      ks.setProp(kid, 'visual', 'bars')
+      rk.render(renderNode({ doc: ks.doc, selected: new Set(), mode: 'preview' }, kid))
+      await settle(40)
+      const bars = [...host.querySelectorAll<HTMLElement>('div')].filter((d) => d.style.flex === '1 1 0%' || d.style.flex === '1')
+      const drawn = bars.filter((b) => b.getBoundingClientRect().width > 2).length
+      rk.unmount()
+      host.remove()
+      check('a KPI card\'s bars draw', bars.length >= 6 && drawn === bars.length, `${drawn}/${bars.length} bars have width`)
+    })
+
+    // 17. The panels fold away and resize, and remember.
+    await part('17 (panels)', async () => {
+      demo()
+      await settle(80)
+      const canvasW = () => document.querySelector('.loom .canvas-wrap')?.getBoundingClientRect().width ?? 0
+      const w0 = canvasW()
+      document.querySelector<HTMLButtonElement>('.loom [aria-label="Components panel"]')?.click()
+      await settle(80)
+      const w1 = canvasW()
+      check('the components panel folds away, and the canvas takes the room', !document.querySelector('.loom .toolbox') && w1 > w0 + 150, `${w0.toFixed(0)} -> ${w1.toFixed(0)}px`)
+      document.querySelector<HTMLButtonElement>('.loom [aria-label="Components panel"]')?.click()
+      await settle(80)
+      key(document.body, '\\', { ctrlKey: true })
+      await settle(80)
+      const bothGone = !document.querySelector('.loom .toolbox') && !document.querySelector('.loom .inspector')
+      key(document.body, '\\', { ctrlKey: true })
+      await settle(80)
+      check('Ctrl+\\ folds both panels away and brings them back', bothGone && !!document.querySelector('.loom .toolbox') && !!document.querySelector('.loom .inspector'))
+      const edge = document.querySelector<HTMLElement>('.loom .panel-edge.right')
+      const iw0 = document.querySelector('.loom .inspector')?.getBoundingClientRect().width ?? 0
+      if (edge) for (let i = 0; i < 4; i++) {
+        key(edge, 'ArrowLeft')
+        await settle(30)
+      }
+      await settle(50)
+      const iw1 = document.querySelector('.loom .inspector')?.getBoundingClientRect().width ?? 0
+      let stored = ''
+      try { stored = window.localStorage.getItem('loom.panels') ?? '' } catch { /* no storage */ }
+      check('a panel edge resizes the panel, and the width is remembered', edge !== null && Math.round(iw1 - iw0) === 40 && stored.includes(`"rw":${Math.round(iw1)}`), `${iw0.toFixed(0)} -> ${iw1.toFixed(0)}px, stored ${stored}`)
+      edge?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+      await settle(80)
+    })
+
+    // 18. Every Studio control is at least 24px to hit (WCAG 2.2 target size).
+    await part('18 (targets)', async () => {
+      demo()
+      const cap = Object.values(app.doc.nodes).find((n) => n.type === 'Caption')!
+      app.select([cap.id])
+      await settle(80)
+      for (const head of document.querySelectorAll<HTMLButtonElement>('.loom .inspector .disclosure-head[aria-expanded="false"]')) head.click()
+      await settle(60)
+      const surface = document.querySelector('.loom .surface')
+      const small = [...document.querySelectorAll<HTMLElement>('.loom button, .loom input, .loom select, .loom textarea, .loom [role="switch"], .loom [role="tab"], .loom [role="treeitem"]')]
+        // The design's own controls are the design's, and a separator is a
+        // drag strip with a keyboard equivalent (arrow keys when focused).
+        .filter((b) => !surface?.contains(b) && b.getAttribute('role') !== 'separator' && b.getClientRects().length > 0 && getComputedStyle(b).visibility !== 'hidden' && !(b as HTMLInputElement).type?.startsWith('color'))
+        .map((b) => ({ b, r: b.getBoundingClientRect() }))
+        .filter(({ r }) => r.width > 0 && (r.width < 23.5 || r.height < 23.5))
+        .map(({ b, r }) => `${(b.getAttribute('aria-label') || b.title || b.textContent || b.className).trim().slice(0, 20)} ${r.width.toFixed(0)}x${r.height.toFixed(0)}`)
+      check('every Studio control is at least 24px to hit', small.length === 0, small.slice(0, 6).join(' | '))
+    })
+
+    app.loadDocument(saved)
+    app.select([])
+    await settle()
+  }
+
   // Interchange, effects, tokens, snap, and z-clamp — the layers added after
   // the Atelier bundle review.
   for (const c of await bundleTests()) {

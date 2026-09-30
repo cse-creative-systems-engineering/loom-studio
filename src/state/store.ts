@@ -25,6 +25,8 @@ export interface LoomHost {
   open: () => Promise<{ ok: boolean; path?: string; contents?: string; error?: string; canceled?: boolean }>
   autosave: (name: string, contents: string) => Promise<{ ok: boolean; path?: string }>
   readAutosave: (name: string) => Promise<{ ok: boolean; path?: string; contents?: string }>
+  /** The newest autosave of any document (current hosts only). */
+  latestAutosave?: () => Promise<{ ok: boolean; name?: string; mtime?: number; contents?: string }>
   /** Present on current hosts; older hosts fall back to `save`. */
   exportHtml?: (name: string, contents: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean }>
   exportReact?: (name: string, contents: string) => Promise<{ ok: boolean; path?: string; error?: string; canceled?: boolean }>
@@ -704,6 +706,25 @@ export class EditorStore {
     const api = this.host
     if (!api || !this.dirty) return
     await api.autosave(this.autosaveName(), serialize(this.doc))
+  }
+
+  /**
+   * What an earlier session left unsaved, if anything: the newest autosave,
+   * validated, for the welcome card to offer. Never loaded here.
+   */
+  async findRecovery(): Promise<{ doc: Document; name: string; mtime: number } | null> {
+    const res = await this.host?.latestAutosave?.()
+    if (!res?.ok || !res.contents || !res.mtime) return null
+    const parsed = validate(res.contents)
+    if (!parsed.doc || parsed.doc.root === null) return null
+    return { doc: parsed.doc, name: parsed.doc.meta.name, mtime: res.mtime }
+  }
+
+  /** Continue from a recovered document: loaded as unsaved work, one choice by the person. */
+  recover(doc: Document) {
+    this.loadDocument(doc)
+    this.dirty = true
+    this.notify('ok', `Recovered "${doc.meta.name}". Save it to keep it.`)
   }
 
   async restoreAutosave() {

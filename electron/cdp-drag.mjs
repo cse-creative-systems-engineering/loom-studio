@@ -260,7 +260,8 @@ try {
   // are skipped: a Button is not a tab).
   const kinds = await evaluate(
     ews,
-    `(() => { const seen = new Set(); return [...document.querySelectorAll('.toolbox .tool .tool-name')].map((e) => e.textContent.trim()).filter((n) => !/ /.test(n) && !seen.has(n) && seen.add(n)) })()`,
+    // Component tools only: the starters are arrangements, not kinds.
+    `(() => { const seen = new Set(); return [...document.querySelectorAll('.toolbox section[data-cat]:not([data-cat="Starters"]) .tool .tool-name')].map((e) => e.textContent.trim()).filter((n) => !seen.has(n) && seen.add(n)) })()`,
   )
   const refused = []
   let tried = 0
