@@ -223,6 +223,13 @@ const DAYLIGHT: Theme = {
   accent: '#2f5fe0',
   accentHover: '#1f4bc4',
   textOnAccent: '#ffffff',
+  // Tones of their own: the base ones are tuned for dark surfaces, and on
+  // white the success green measured 2.34:1, the danger red 3.70:1 and the
+  // warning amber 2.2:1. These pass AA as text on the page and on a surface,
+  // and under white text on a filled button.
+  danger: '#c9352c',
+  success: '#15803d',
+  warning: '#b45309',
   colorScheme: 'light',
   aurora: ['#c7d2fe', '#ddd6fe', '#bae6fd', '#fbcfe8'],
   auroraOpacity: 0.85,
@@ -259,6 +266,8 @@ const CONTRAST: Theme = {
   accent: '#7ea6ff',
   accentHover: '#9dbcff',
   textOnAccent: '#0a0f1c',
+  // The base red measured 3.93:1 on this theme's surfaces: not high contrast.
+  danger: '#ff7a70',
   // Contrast keeps its colour quieter: the text above it comes first.
   auroraOpacity: 0.32,
   bg: '#000000',

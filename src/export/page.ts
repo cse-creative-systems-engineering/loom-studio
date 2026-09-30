@@ -43,6 +43,13 @@ export function exportPageCss(doc: Document, theme: Theme, scope: 'document' | '
     '/* The output typeface, embedded: the design looks the same on every machine. */',
     fontFaceCss(),
     doc.meta.page?.background === 'aurora' ? auroraCss() : '',
+    // The page declares the theme's scheme. With no page background chosen
+    // the browser's own canvas shows through, and without this it followed
+    // the VIEWER's OS: a midnight export opened in light mode sat on white,
+    // its translucent surfaces went mid-grey and most of its text failed
+    // contrast. Declared here, "no background" is the theme's dark (or light)
+    // canvas for everyone. (The React export's page belongs to its host.)
+    scope === 'document' ? `:root{color-scheme:${theme.colorScheme}}` : '',
     scope === 'document' ? `body{${ink}}` : '',
     `.loom-export{position:relative;isolation:isolate;min-height:100vh;width:100%${scope === 'component' ? `;${ink}` : ''}}`,
     rootIsPage(doc) ? '.loom-export>:first-child{position:relative !important;left:auto !important;top:auto !important;width:100% !important;min-height:100vh}' : '',

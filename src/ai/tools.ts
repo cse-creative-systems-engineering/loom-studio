@@ -71,6 +71,8 @@ export const TOOLS: ToolDef[] = [
         parent_id: { type: ['string', 'null'], description: 'The container to add it to; null only when the document is empty.' },
         x: num('Left, in px, inside a free parent.'),
         y: num('Top, in px, inside a free parent.'),
+        w: { type: ['number', 'string'], description: 'Width in px, or "auto".' },
+        h: { type: ['number', 'string'], description: 'Height in px, or "auto".' },
         props: { type: 'object', description: 'Initial property values (validated like set_props).' },
       },
       ['type', 'parent_id'],
@@ -130,11 +132,11 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'build',
     description:
-      'Build a whole subtree in ONE call: a component with its props and children, nested as deep as you need (e.g. a card with its heading, text and buttons, or a list of rows). Far faster than add_component one by one. Each node: {type, props?, flow?, x?, y?, name?, ref?, children?}. "ref" names a node so the reply maps it to its new id. Validated like add_component; the reply lists anything refused. Max 300 nodes per call.',
+      'Build a whole subtree in ONE call: a component with its props and children, nested as deep as you need (e.g. a card with its heading, text and buttons, or a list of rows). Far faster than add_component one by one. Each node: {type, props?, flow?, x?, y?, w?, h?, name?, ref?, children?}. "ref" names a node so the reply maps it to its new id. Validated like add_component; the reply lists anything refused. Max 300 nodes per call.',
     inputSchema: obj(
       {
         parent_id: { type: ['string', 'null'], description: 'Container to build into; null only when the document is empty (the tree becomes the root).' },
-        tree: { type: 'object', description: '{type, props?, flow?, x?, y?, name?, ref?, children?: [same shape]}' },
+        tree: { type: 'object', description: '{type, props?, flow?, x?, y?, w?, h? (px or "auto"), name?, ref?, children?: [same shape]}. A node given no children arrives as the toolbox drops it (Tabs with its panels, Accordion with its items).' },
       },
       ['parent_id', 'tree'],
     ),
@@ -430,8 +432,11 @@ const HANDLERS: Record<string, Handler> = {
     if (parent === null && spec.container && made.props.anchor === 'none' && !['x', 'y', 'w', 'h'].some((k) => finite(a[k]) !== undefined || (ok as Record<string, unknown>)[k] !== undefined)) {
       made.props.anchor = 'fill'
     }
-    if (!t.write({ op: 'insert', parent, node: made }, `Add ${type}`)) throw new Error(`could not add ${type} there`)
-    return { id, ...(rejected.length ? { rejected } : {}) }
+    sizeInto(made, a)
+    const tree: Record<NodeId, Node> = {}
+    seedInto(made, tree)
+    if (!t.write({ op: 'insert', parent, node: made, ...(Object.keys(tree).length ? { tree } : {}) }, `Add ${type}`)) throw new Error(`could not add ${type} there`)
+    return { id, ...(made.children.length ? { children: made.children.map((c) => ({ id: c, type: tree[c]!.type })) } : {}), ...(rejected.length ? { rejected } : {}) }
   },
 
   add_starter: (s, t, a) => {
@@ -585,6 +590,7 @@ const HANDLERS: Record<string, Handler> = {
       if (typeof src.flow === 'boolean' && getComponent(type)?.container) node.flow = src.flow
       if (typeof src.name === 'string' && src.name) node.name = src.name.slice(0, 80)
       if (typeof src.ref === 'string' && src.ref) refs[src.ref] = id
+      sizeInto(node, src)
       const kids = Array.isArray(src.children) ? src.children : []
       if (kids.length && !getComponent(type)?.container) throw new Error(`${path}: ${type} is not a container, so it cannot have children`)
       node.children = kids.map((c, i) => {
@@ -592,6 +598,12 @@ const HANDLERS: Record<string, Handler> = {
         tree[k.id] = k
         return k.id
       })
+      // No children given: it arrives the way the toolbox drops it.
+      if (!kids.length) {
+        const before = Object.keys(tree).length
+        seedInto(node, tree)
+        count += Object.keys(tree).length - before
+      }
       return node
     }
     const hostType = parent === null ? null : s.doc.nodes[parent]!.type
@@ -742,6 +754,37 @@ const HANDLERS: Record<string, Handler> = {
     s.select(ids)
     return { selected: ids }
   },
+}
+
+/**
+ * What a toolbox drop brings with it (`store.dropComponent`): a Tabs arrives
+ * with its panels, an Accordion with its items, a SettingsSection with its
+ * rows, arranged in flow. Code-built nodes arrived bare, so an agent's Tabs had
+ * no tabs at all.
+ */
+function seedInto(node: Node, tree: Record<NodeId, Node>): void {
+  const seed = getComponent(node.type)?.seed
+  if (!seed?.length || node.children.length) return
+  node.flow = true
+  const make = (under: Node, list: NonNullable<typeof seed>) => {
+    for (const c of list) {
+      const kid = instantiateFor(c.type, (c.props ?? {}) as Record<string, PropValue>, 0, 0, `n${Math.random().toString(36).slice(2, 9)}`, true)
+      if (c.seed?.length) kid.flow = true
+      tree[kid.id] = kid
+      under.children.push(kid.id)
+      if (c.seed?.length) make(kid, c.seed)
+    }
+  }
+  make(node, seed)
+}
+
+/** A node's own size, given as w/h beside x/y: px, or "auto" to hug content. */
+function sizeInto(node: Node, src: Record<string, unknown>): void {
+  for (const k of ['w', 'h'] as const) {
+    const v = src[k]
+    if (v === 'auto') delete node.props[k]
+    else if (finite(v) !== undefined) node.props[k] = Math.max(1, Math.round(finite(v)!))
+  }
 }
 
 /** A deep copy of a subtree with fresh ids (as duplicate in the Studio). */

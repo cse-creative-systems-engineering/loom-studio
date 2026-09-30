@@ -28,6 +28,7 @@ import { ICONS, ICON_NAMES, resolveIcon } from '../src/render/icons'
 import { buildTooltip, tooltipFor } from '../src/model/tooltip'
 import { auditReport, KNOWN_INERT } from './prop-audit'
 import { auditAreas } from './area-audit'
+import { auditInteractions } from './interaction-audit'
 import { KNOWN_UNREACHABLE } from './area-backlog'
 import { installBehaviourRuntime } from '../src/render/behaviour-mount'
 import { STARTERS } from '../src/model/starters'
@@ -4185,6 +4186,158 @@ export async function runSelfTest(): Promise<string> {
     check('every new tool is listed with a schema', ['build', 'style_part', 'set_states', 'set_responsive', 'set_display', 'set_effects', 'duplicate', 'arrange'].every((n) => TOOLS.some((t) => t.name === n)))
   }
 
+  // --- 110. Phase 1: a trustworthy floor (docs/plan-of-attack.md) ------------
+  // Findings 4, 5, 6, 6b and 11 of docs/reviews/output-quality-audit.md,
+  // measured on real output with the real runtime: every close control closes
+  // and names its event; Enter/Space do what a click does on everything
+  // operable; the unreachable items are tab stops; the state a screen reader
+  // hears follows the state on screen; controls speak the design's typeface.
+  {
+    installBehaviourRuntime()
+    const st = new EditorStore()
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, new AiTurn(st), name, args)
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', flow: true, ref: 'page', w: 900, children: [
+      { type: 'Alert', ref: 'alert', props: { dismissible: true } },
+      { type: 'ConfirmDialog', ref: 'dlg' },
+      { type: 'ConfirmDialog', ref: 'dlg2' },
+      { type: 'ErrorSummary', ref: 'errs' },
+      { type: 'Tabs', ref: 'tabs' },
+      { type: 'Accordion', ref: 'acc' },
+      { type: 'DataGrid', ref: 'grid' },
+      { type: 'TreeList', ref: 'tree' },
+      { type: 'ProgressDots', ref: 'dots' },
+      { type: 'Rating', ref: 'rate' },
+      { type: 'SearchBox', ref: 'search' },
+    ] } })
+    const refs = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
+    // Built with no children, Tabs and Accordion arrive as the toolbox drops them.
+    const accId = refs.acc!
+    check('an agent-built Tabs and Accordion arrive with their panels and items', st.doc.nodes[refs.tabs!]!.children.length > 0 && st.doc.nodes[accId]!.children.length > 0)
+    const host = document.createElement('div')
+    host.className = 'loom-container'
+    host.style.cssText = 'position:absolute;left:-10000px;top:0;width:900px'
+    host.innerHTML = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview', hookAll: true }, st.doc.root as string))
+    document.body.appendChild(host)
+    const node = (id: string) => host.querySelector<HTMLElement>(`[data-loom-node="${id}"]`)!
+    const shown = (el: Element) => el.getClientRects().length > 0 && getComputedStyle(el).display !== 'none'
+    const key = (el: Element, k: string) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+    const heard: string[] = []
+    const listen = (ev: Event) => heard.push(ev.type)
+    for (const ev of ['loom:dismiss', 'loom:cancel', 'loom:confirm']) host.addEventListener(ev, listen)
+
+    const theme = getComputedStyle(node(refs.page!)).fontFamily
+    const tabBtn = node(refs.tabs!).querySelector('button')!
+    check('generated controls use the design\'s typeface, not the browser\'s', getComputedStyle(tabBtn).fontFamily === theme, `${getComputedStyle(tabBtn).fontFamily} vs ${theme}`)
+    check('ErrorSummary\'s default lists two errors', node(refs.errs!).querySelectorAll('li').length === 2)
+
+    node(refs.alert!).querySelector<HTMLElement>('[data-loom-dismiss]')!.click()
+    check('an Alert\'s x dismisses it', !shown(node(refs.alert!)))
+    const cancel = [...node(refs.dlg!).querySelectorAll('button')].find((x) => /cancel/i.test(x.textContent ?? ''))!
+    cancel.click()
+    const confirm = [...node(refs.dlg2!).querySelectorAll('button')].filter((x) => !/cancel/i.test(x.textContent ?? ''))[0]!
+    confirm.click()
+    check('ConfirmDialog\'s Cancel and its confirm button both close it', !shown(node(refs.dlg!)) && !shown(node(refs.dlg2!)))
+    check('closing names what happened: dismiss, cancel, confirm', heard.join(',') === 'loom:dismiss,loom:cancel,loom:confirm', heard.join(','))
+
+    const summary = node(accId).querySelector<HTMLElement>('[data-loom-summary]')!
+    key(summary, 'Enter')
+    check('Enter opens an accordion item, and its summary says it is expanded', summary.parentElement!.getAttribute('data-loom-open') === '1' && summary.getAttribute('aria-expanded') === 'true', `${summary.parentElement!.getAttribute('data-loom-open')} / ${summary.getAttribute('aria-expanded')}`)
+    key(summary, ' ')
+    check('Space closes it again', summary.parentElement!.getAttribute('data-loom-open') === '0' && summary.getAttribute('aria-expanded') === 'false')
+
+    const th = node(refs.grid!).querySelector<HTMLElement>('th[data-loom-b="sort"]')!
+    check('a sortable column header is a tab stop', th.tabIndex === 0)
+    key(th, 'Enter')
+    check('Enter sorts the column, and aria-sort says so', th.getAttribute('data-loom-sort') === 'asc' && th.getAttribute('aria-sort') === 'ascending', `${th.getAttribute('data-loom-sort')} / ${th.getAttribute('aria-sort')}`)
+    const expander = node(refs.tree!).querySelector<HTMLElement>('[data-loom-b="expand"]')!
+    const dot = node(refs.dots!).querySelector<HTMLElement>('[data-loom-b="dot"]')!
+    check('tree expanders and progress dots are named tab stops', expander.tabIndex === 0 && !!expander.getAttribute('aria-label') && dot.tabIndex === 0 && !!dot.getAttribute('aria-label'))
+    const rate = node(refs.rate!)
+    const v0 = Number(rate.getAttribute('data-loom-value'))
+    key(rate, 'ArrowRight')
+    check('a Rating is a slider the arrow keys move', rate.tabIndex === 0 && rate.getAttribute('role') === 'slider' && Number(rate.getAttribute('data-loom-value')) === Math.min(v0 + 1, rate.querySelectorAll('[data-loom-star]').length) && rate.getAttribute('aria-valuenow') === rate.getAttribute('data-loom-value'), `${v0} -> ${rate.getAttribute('data-loom-value')}`)
+    const css = behaviourCss()
+    check('a borderless input\'s well is ringed while it has focus', /:has\(> :is\(input,textarea\):is\(\[style\*="outline:none"\],\[style\*="outline: none"\]\):focus-visible\)\{outline:2px/.test(css))
+    host.remove()
+  }
+
+  // --- 112. Phase 1: overlays, the page under an export, tones ---------------
+  // Findings 1, 2, 3, 13 and 29 of the output audit.
+  {
+    installBehaviourRuntime()
+    const st = new EditorStore()
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, new AiTurn(st), name, args)
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', ref: 'page', props: { surface: 'glass' }, children: [
+      { type: 'Modal', ref: 'modal', x: 40, y: 40 },
+      { type: 'Stepper', ref: 'steps', x: 40, y: 400 },
+      { type: 'EmptyState', ref: 'empty', x: 40, y: 480 },
+      { type: 'BackButton', ref: 'back', x: 600, y: 400 },
+    ] } })
+    const refs = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
+    const out = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview', hookAll: true }, st.doc.root as string))
+    const canvas = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set() }, st.doc.root as string))
+    check('in output a Modal is a top-layer popover; on the canvas it is drawn in place', /data-loom-modal="" popover="manual"/.test(out) && !/popover=/.test(canvas))
+    check('the canvas never dims the design behind an open modal', behaviourCss().includes('.surface [data-loom-scrim]{display:none !important}'))
+    const host = document.createElement('div')
+    host.className = 'loom-container'
+    host.style.cssText = 'position:absolute;left:0;top:0;width:900px;height:700px'
+    host.innerHTML = out
+    document.body.appendChild(host)
+    await new Promise((r) => setTimeout(r, 30))
+    const modal = host.querySelector<HTMLElement>(`[data-loom-node="${refs.modal}"]`)!
+    const inTop = (() => { try { return modal.matches(':popover-open') } catch { return false } })()
+    check('an open Modal is shown in the top layer, even inside a glass panel', inTop)
+    const save = [...modal.querySelectorAll('button')].find((x) => x.textContent?.trim() === 'Save')!
+    const r = save.getBoundingClientRect()
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    check('the Modal\'s own buttons are what a click lands on (its scrim used to cover them)', !!hit && (hit === save || save.contains(hit)), hit ? `${hit.tagName} ${hit.getAttribute('data-loom-scrim') ?? ''}` : 'nothing')
+    const said: string[] = []
+    host.addEventListener('loom:save', () => said.push('save'))
+    save.click()
+    check('a dialog action closes the dialog and names itself', modal.getAttribute('data-loom-open') === '0' && said.join() === 'save' && !(() => { try { return modal.matches(':popover-open') } catch { return false } })())
+    const steps = [...host.querySelectorAll<HTMLElement>(`[data-loom-node="${refs.steps}"] [data-loom-b="step"]`)]
+    steps[2]?.click()
+    check('clicking a step goes to it', steps[2]?.getAttribute('aria-current') === 'step' && steps[2]?.getAttribute('data-loom-state') === 'now' && steps[0]?.getAttribute('data-loom-state') === 'done' && steps.every((x) => x.tabIndex === 0))
+    const act: string[] = []
+    host.addEventListener('loom:clear.filters', () => act.push('clear'))
+    host.querySelector<HTMLElement>(`[data-loom-node="${refs.empty}"] button`)?.click()
+    check('an empty state\'s action is announced by name', act.length === 1)
+    const back = host.querySelector<HTMLElement>(`[data-loom-node="${refs.back}"]`)!
+    check('a ghost BackButton has no browser button face', getComputedStyle(back).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(back).borderStyle === 'none')
+    host.remove()
+    // The page under an export declares the theme's scheme, so "no page"
+    // is the theme's canvas for every viewer.
+    check('an HTML export declares its theme\'s colour scheme', /:root\{color-scheme:dark\}/.test(emitHtml(st.doc)))
+    // Tones that pass AA as text on daylight's page and surface, and under white text.
+    const L = (h: string) => { const c = (h.match(/\w\w/g) ?? []).map((x) => parseInt(x, 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]! }
+    const ratio = (a: string, b: string) => { const [x, y] = [L(a), L(b)].sort((p, q) => q - p); return (x! + 0.05) / (y! + 0.05) }
+    const day = getTheme('daylight')
+    const tones = [day.success, day.danger, day.warning]
+    check('daylight\'s success, danger and warning pass AA on its page and surface', tones.every((c) => ratio(c, day.bg) >= 4.5 && ratio(c, day.surface) >= 4.5), tones.map((c) => `${c} ${ratio(c, day.bg).toFixed(2)}`).join(', '))
+  }
+
+  // --- 111. the interaction audit (standing rule 8) --------------------------
+  // Every operable element of every toolbox tool, dropped as the toolbox drops
+  // it and operated in real output with the real runtime, must change
+  // something or emit a named loom:* event, and must be reachable by Tab.
+  // KNOWN_DEAD is the ratchet: it is empty, and a new entry needs a reason.
+  {
+    const KNOWN_DEAD: Record<string, string> = {}
+    installBehaviourRuntime()
+    const a = auditInteractions()
+    const found = new Map(a.dead.map((d) => [`${d.tool}|${d.what}`, d]))
+    const fresh = [...found].filter(([k]) => !KNOWN_DEAD[k]).map(([k, d]) => `${d.why}: ${k}`)
+    check('nothing that looks operable does nothing, or is mouse-only', fresh.length === 0, fresh.slice(0, 12).join(' | '))
+    check('the dead-control backlog has no stale entries', Object.keys(KNOWN_DEAD).every((k) => found.has(k)))
+    check('the interaction audit actually operates the catalogue', a.tools === allComponents().length - addedTypes().size && a.operated > 60, `${a.tools} tools, ${a.operated} controls operated`)
+    // It bites: put back the old Alert (an x with no dismiss wiring) and it is caught.
+    const old = auditInteractions({
+      only: ['Alert'],
+      tamper: (tool) => tool.querySelectorAll('[data-loom-dismiss]').forEach((b) => b.removeAttribute('data-loom-dismiss')),
+    })
+    check('the audit catches a close button that closes nothing', old.dead.some((d) => d.tool === 'Alert' && d.why === 'inert' && /dismiss/.test(d.what)), JSON.stringify(old.dead))
+  }
+
   // --- 109. what the OpenRouter run found in Loom ----------------------------
   // An agent rebuilding a real page reported that `justify: between` did
   // nothing (the value was written through as CSS, and "between" is not CSS),
@@ -4194,9 +4347,9 @@ export async function runSelfTest(): Promise<string> {
     const st = new EditorStore()
     const turn = new AiTurn(st)
     const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
-    const b = run('build', { parent_id: null, tree: { type: 'Panel', ref: 'page', props: { w: 600 }, children: [
-      { type: 'Stack', ref: 'row', flow: true, props: { direction: 'row', justify: 'between', w: 500 }, children: [{ type: 'Label', ref: 'l', props: { text: 'Left' } }, { type: 'Label', ref: 'r', props: { text: 'Right' } }] },
-      { type: 'Button', ref: 'btn', x: 0, y: 80, props: { label: 'Sign In', w: 40 } },
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', ref: 'page', w: 600, children: [
+      { type: 'Stack', ref: 'row', flow: true, w: 500, props: { direction: 'row', justify: 'between' }, children: [{ type: 'Label', ref: 'l', props: { text: 'Left' } }, { type: 'Label', ref: 'r', props: { text: 'Right' } }] },
+      { type: 'Button', ref: 'btn', x: 0, y: 80, w: 40, props: { label: 'Sign In' } },
     ] } })
     const refs = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
     const host = document.createElement('div')
