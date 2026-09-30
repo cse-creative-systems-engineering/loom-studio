@@ -16,8 +16,13 @@ fi
 
 cd "$CLAUDE_PROJECT_DIR"
 
-# Dependencies (npm install, not ci: it reuses the cached node_modules).
-npm install --no-audit --no-fund
+# Dependencies, exactly as locked. `npm install` would rewrite
+# package-lock.json with whatever npm the container has (dirtying the tree
+# every session), so install with `npm ci`, and only when node_modules is
+# missing or older than the lockfile; otherwise the cached install stands.
+if [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
+  npm ci --no-audit --no-fund
+fi
 if [ ! -x node_modules/electron/dist/electron ]; then
   node node_modules/electron/install.js
 fi
