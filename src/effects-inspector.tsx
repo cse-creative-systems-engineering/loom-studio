@@ -90,6 +90,7 @@ export function EffectsPanel({
               <span>{t.label}</span>
             </div>
             <Toggle
+              label={t.label}
               checked={effects[t.key] === true}
               onChange={(v) => {
                 // One op, one undo step: patch the toggle and seal together.

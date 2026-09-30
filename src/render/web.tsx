@@ -5523,14 +5523,15 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
       : React.Children.map(own.children, (c) =>
           React.isValidElement(c) && typeof c.type === 'string' ? React.cloneElement(c as React.ReactElement<{ inert?: boolean }>, { inert: true }) : c,
         )
-    const handles = ctx.selected.has(id)
-      ? CORNERS.map((corner) => <span key={corner} className="loom-handle" data-corner={corner} data-loom-handle={corner} />)
-      : null
+    // Resize handles are NOT drawn here: inside the node they were positioned
+    // against its padding box and clipped by its own overflow (a scrolling
+    // list's sat a scrollbar in; a clipped card's were cut off). The canvas
+    // draws them in one layer over the whole design (app.tsx, SelectionLayer).
     if (body.type === LabelledDivider) {
       // A labelled divider is drawn by a small component; it takes the editor
       // attributes and chrome through its own props.
       const { style: _s, ...attrs } = common
-      return React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { attrs, extra: [eff.layers, handles] })
+      return React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { attrs, extra: eff.layers })
     }
     if (typeof body.type !== 'string') throw new Error(`${node.type}: the canvas can only draw an element or LabelledDivider as a body`)
     if (CHILDLESS.has(body.type)) {
@@ -5548,14 +5549,13 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
         <div key={key} {...common} style={outer}>
           {eff.layers}
           {React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { style: fill, inert: true, tabIndex: -1 })}
-          {handles}
         </div>
       )
     }
     return React.cloneElement(
       body,
       { ...common, style: own.style, key } as Record<string, unknown>,
-      ...([eff.layers, inner, handles] as never[]),
+      ...([eff.layers, inner] as never[]),
     )
   }
 

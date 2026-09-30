@@ -17,7 +17,8 @@
   --well-hover: rgba(255, 255, 255, 0.07);
   --ink: #ededf0;
   --ink-2: #a3a6b0;
-  --ink-3: #6e717c;
+  /* Tertiary text still reads: 4.5:1 on the panels (it was 3.5-3.8:1). */
+  --ink-3: #8b8e99;
   /* Chrome accent: selection + focus in the TOOL only. */
   --accent: #5b8cff;
   --accent-2: #a06bff;
@@ -257,6 +258,10 @@ input, select { font-family: inherit; font-size: 12px; }
    border said "empty dropzone placeholder". */
 .surface {
   position: relative;
+  /* The artboard IS the design's viewport: a fixed overlay (a command
+     palette, a scrim) is fixed to it, as it will be to the page. Without
+     this it was fixed to the Studio window and covered the whole editor. */
+  contain: layout;
   /* The width IS the viewport's (set inline); the border sits outside it, so
      the content box is exactly 1280 / 834 / 390 like the preview's. No
      min-width: a floor of 720px made the 390px phone a 720px phone. */
@@ -416,35 +421,53 @@ input, select { font-family: inherit; font-size: 12px; }
   outline-offset: -1px;
 }
 
+/* Selection chrome is drawn inside the zoomed surface, so every length here is
+   divided by the zoom (--loom-zoom, set on the surface): an outline, a handle
+   and its offset are the same size on screen at 37% as at 200%. At 69% the
+   8px handles were 5.5px, and 3px at 37%: too small to find, let alone grab. */
+
 /* Hover: a faint selection-hue outline on the INNERMOST element under the
    pointer only. Plain :hover also matches every ancestor, which drew the
    element, its card and its panel at once. */
 .surface [data-loom-id]:hover:not(:has([data-loom-id]:hover)) {
-  outline: 1px solid rgba(255, 178, 36, 0.45);
-  outline-offset: 1px;
+  outline: calc(1px / var(--loom-zoom, 1)) solid rgba(255, 178, 36, 0.45);
+  outline-offset: calc(1px / var(--loom-zoom, 1));
 }
 
 /* Selected: its own hue so it never reads as one of the user's blue buttons. */
 .surface [data-loom-id][data-selected='true'] {
-  outline: 1.5px solid var(--select);
-  outline-offset: 1px;
+  outline: calc(1.5px / var(--loom-zoom, 1)) solid var(--select);
+  outline-offset: calc(1px / var(--loom-zoom, 1));
 }
 
-/* Corner handles — the visible promise that resize exists. */
-.surface [data-loom-id][data-selected='true'] .loom-handle {
+/* Corner handles: the visible promise that resize exists. They live in one
+   layer over the design (SelectionLayer), on each selected node's border
+   box: never clipped by the node's own overflow, never placed against some
+   other ancestor. The layer takes no pointer; the handles do. */
+.surface .sel-layer {
   position: absolute;
-  width: 8px;
-  height: 8px;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483000;
+}
+.surface .sel-box { position: absolute; }
+.surface .sel-box .loom-handle {
+  pointer-events: auto;
+  --h: calc(8px / var(--loom-zoom, 1));
+  --o: calc(-4px / var(--loom-zoom, 1));
+  position: absolute;
+  width: var(--h);
+  height: var(--h);
   background: #0f1219;
-  border: 1.5px solid var(--select);
-  border-radius: 2px;
+  border: calc(1.5px / var(--loom-zoom, 1)) solid var(--select);
+  border-radius: calc(2px / var(--loom-zoom, 1));
   z-index: 5;
 }
 
-.surface .loom-handle[data-corner='nw'] { top: -5px; left: -5px; cursor: nwse-resize; }
-.surface .loom-handle[data-corner='ne'] { top: -5px; right: -5px; cursor: nesw-resize; }
-.surface .loom-handle[data-corner='sw'] { bottom: -5px; left: -5px; cursor: nesw-resize; }
-.surface .loom-handle[data-corner='se'] { bottom: -5px; right: -5px; cursor: nwse-resize; }
+.surface .loom-handle[data-corner='nw'] { top: var(--o); left: var(--o); cursor: nwse-resize; }
+.surface .loom-handle[data-corner='ne'] { top: var(--o); right: var(--o); cursor: nesw-resize; }
+.surface .loom-handle[data-corner='sw'] { bottom: var(--o); left: var(--o); cursor: nesw-resize; }
+.surface .loom-handle[data-corner='se'] { bottom: var(--o); right: var(--o); cursor: nwse-resize; }
 
 /* ---------------- inspector ---------------- */
 
@@ -1257,3 +1280,18 @@ input, select { font-family: inherit; font-size: 12px; }
 .num input:hover:not(:focus),
 .search:hover:not(:focus),
 .props-search:hover:not(:focus) { background: var(--well-hover); border-color: transparent; }
+
+/* A field's focus is a ring, not just a tinted 1px edge (which, on a dark
+   well, was easy to lose). One rule for every well the Studio draws: they
+   all set `outline: none` for their own look, so the global ring never
+   reached them. */
+.search:focus-visible,
+.props-search:focus-visible,
+.field input[type='text']:focus-visible,
+.field select:focus-visible,
+.num input:focus-visible,
+.select-wrap select:focus-visible,
+.slide-field input[type='number']:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--well-shadow), 0 0 0 2px rgba(91, 140, 255, 0.45);
+}

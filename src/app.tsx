@@ -20,7 +20,7 @@ import { GROUP_ORDER } from './model/prop-groups'
 import { pageFill, MAX_PAGE_BLUR } from './model/page'
 import { AuroraBackdrop } from './render/aurora'
 import type { RunTarget } from './model/desktop-run'
-import { renderNode, isFlowChild, zoomed, type Corner } from './render/web'
+import { renderNode, isFlowChild, zoomed, CORNERS, type Corner } from './render/web'
 import { EffectsPanel } from './effects-inspector'
 import { STARTERS, getStarter } from './model/starters'
 import { starterGlyph, toolGlyph } from './tool-icons'
@@ -75,6 +75,14 @@ function confirmNewWorkspace(s: EditorStore): boolean {
   }
   s.loadDocument(emptyDocument())
   return true
+}
+/**
+ * Open a document, asking first when that would throw away unsaved work
+ * (New always asked; Open replaced the document without a word).
+ */
+function openDocument(s: EditorStore): void {
+  if (s.dirty && !window.confirm('Open another document? Unsaved changes will be lost.')) return
+  void s.open()
 }
 if (typeof window !== 'undefined') window.__loomStore = store
 
@@ -231,8 +239,10 @@ export function App() {
           e.preventDefault()
           s.redo()
         } else if (e.key === 'd') {
+          // Duplicate, as in every design tool. (It once deleted: a designer
+          // reaching for "duplicate" lost what they had selected.)
           e.preventDefault()
-          s.remove(s.selection)
+          s.duplicateAll(s.selection)
         } else if (e.key === 'a') {
           e.preventDefault()
           s.select(Object.keys(s.doc.nodes).filter((id) => id !== s.doc.root))
@@ -253,7 +263,7 @@ export function App() {
           confirmNewWorkspace(s)
         } else if (e.key === 'o') {
           e.preventDefault()
-          void s.open()
+          openDocument(s)
         }
         return
       }
@@ -328,6 +338,113 @@ export function App() {
         {mode === 'design' && <Inspector s={s} viewport={viewport} editState={editState} onEditState={setEditState} />}
       </div>
       {menu && <ContextMenu s={s} state={menu} onClose={() => setMenu(null)} />}
+      <Toast s={s} />
+    </div>
+  )
+}
+
+/**
+ * The selected nodes' resize handles, in one layer over the whole design.
+ *
+ * They used to be drawn inside each node, where they were positioned against
+ * its padding box and clipped by its own overflow: a flow child's landed on
+ * whichever ancestor was positioned, a scrolling list's sat a scrollbar in, a
+ * clipped card's were cut off. Here each selected node is measured and its
+ * handles are placed on its border box, above everything, in design units
+ * (the layer is inside the zoomed surface, like the design).
+ */
+function SelectionLayer({
+  s,
+  surface,
+  zoom,
+  viewport,
+  onPointerDownNode,
+}: {
+  s: EditorStore
+  surface: React.RefObject<HTMLDivElement | null>
+  zoom: number
+  viewport: Breakpoint
+  onPointerDownNode: (id: NodeId, e: React.PointerEvent) => void
+}) {
+  const [boxes, setBoxes] = React.useState<Array<{ id: NodeId; x: number; y: number; w: number; h: number }>>([])
+  const ids = s.selection.filter((id) => s.doc.nodes[id] && !s.doc.nodes[id].locked)
+  const key = ids.join(' ')
+  const measure = React.useCallback(() => {
+    const host = surface.current
+    if (!host) return
+    const sr = host.getBoundingClientRect()
+    // Rects are on screen (zoomed); the layer is in design units.
+    const z = zoom || 1
+    const next = key === '' ? [] : key.split(' ').flatMap((id) => {
+      const el = host.querySelector<HTMLElement>(`[data-loom-id="${CSS.escape(id)}"]`)
+      if (!el) return []
+      const r = el.getBoundingClientRect()
+      if (r.width === 0 && r.height === 0) return []
+      return [{ id, x: (r.left - sr.left) / z - host.clientLeft, y: (r.top - sr.top) / z - host.clientTop, w: r.width / z, h: r.height / z }]
+    })
+    setBoxes((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next))
+  }, [surface, zoom, key])
+  // Whatever moves a node moves its handles: an edit, a zoom, a width, a
+  // font arriving, an inner scroll.
+  React.useLayoutEffect(measure, [measure, s.doc, viewport])
+  React.useEffect(() => {
+    const host = surface.current
+    if (!host) return
+    const ro = new ResizeObserver(() => measure())
+    ro.observe(host)
+    for (const id of key === '' ? [] : key.split(' ')) {
+      const el = host.querySelector(`[data-loom-id="${CSS.escape(id)}"]`)
+      if (el) ro.observe(el)
+    }
+    host.addEventListener('scroll', measure, true)
+    return () => {
+      ro.disconnect()
+      host.removeEventListener('scroll', measure, true)
+    }
+  }, [surface, key, measure, s.doc])
+  if (boxes.length === 0) return null
+  return (
+    <div className="sel-layer" aria-hidden="true">
+      {boxes.map((b) => (
+        <div key={b.id} className="sel-box" data-for={b.id} style={{ left: b.x, top: b.y, width: b.w, height: b.h }}>
+          {CORNERS.map((corner) => (
+            <span
+              key={corner}
+              className="loom-handle"
+              data-corner={corner}
+              data-loom-handle={corner}
+              onPointerDown={(e) => onPointerDownNode(b.id, e)}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The outcome of the last file action (see `EditorStore.notice`). A status
+ * region, so a screen reader announces it too; errors stay until dismissed,
+ * success fades on its own.
+ */
+function Toast({ s }: { s: EditorStore }) {
+  const n = s.notice
+  React.useEffect(() => {
+    if (!n || n.tone === 'error') return
+    const t = window.setTimeout(() => s.dismissNotice(n.id), 3200)
+    return () => window.clearTimeout(t)
+  }, [n, s])
+  return (
+    <div className="toast-region" role="status" aria-live="polite">
+      {n && (
+        <div className={`toast ${n.tone}`} key={n.id}>
+          <Ico name={n.tone === 'ok' ? 'check' : 'info'} size={14} />
+          <span>{n.text}</span>
+          <button type="button" className="toast-x" aria-label="Dismiss" onClick={() => s.dismissNotice(n.id)}>
+            <Ico name="x" size={12} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -404,7 +521,7 @@ function TitleBar({
           <button className="tb-btn" onClick={() => confirmNewWorkspace(s)} title="New empty workspace (Ctrl+N)" aria-label="New">
             <Ico name="file" />
           </button>
-          <button className="tb-btn" onClick={() => void s.open()} title="Open a document (Ctrl+O)" aria-label="Open">
+          <button className="tb-btn" onClick={() => openDocument(s)} title="Open a document (Ctrl+O)" aria-label="Open">
             <Ico name="folder" />
           </button>
           <button className="tb-btn" onClick={() => void s.save()} title="Save (Ctrl+S)" aria-label="Save">
@@ -1248,7 +1365,11 @@ function Canvas({
   const startResize = (e: React.PointerEvent, id: NodeId, corner: Corner) => {
     e.stopPropagation()
     if (s.doc.nodes[id]?.locked) return
-    const el = e.currentTarget as HTMLElement
+    // The node's own box (the handle is in the selection layer, not in it).
+    // An Alt-drag copy is not drawn yet: its source has the same size.
+    const byId = (n: string) => surfaceRef.current?.querySelector<HTMLElement>(`[data-loom-id="${CSS.escape(n)}"]`)
+    const el = byId(id) ?? byId((e.target as HTMLElement).closest('.sel-box')?.getAttribute('data-for') ?? '')
+    if (!el) return
     const rect = el.getBoundingClientRect()
     // Screen rects are zoomed pixels; the resize op speaks doc units.
     const originW = zoomed(rect.width, zoom)
@@ -1415,7 +1536,7 @@ function Canvas({
           // Exactly the viewport's width, never squeezed to the canvas: the
           // zoom fits it instead, so positions match the preview.
           ref={surfaceRef}
-          style={{ zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily, isolation: 'isolate', ...(fill ? { backgroundColor: fill } : {}) }}
+          style={{ zoom, ['--loom-zoom' as string]: zoom, width: viewportWidth, height: screenHeight, fontFamily: getTheme(s.doc.meta.theme).fontFamily, isolation: 'isolate', ...(fill ? { backgroundColor: fill } : {}) }}
         >
           {s.doc.root !== null && (
             renderNode(
@@ -1430,6 +1551,7 @@ function Canvas({
               s.doc.root,
             )
           )}
+          <SelectionLayer s={s} surface={surfaceRef} zoom={zoom} viewport={viewport} onPointerDownNode={onPointerDownNode} />
           {s.doc.root === null && (
             <div className="empty-hint">
               {/* A card, not a caption: the first thing a new document shows.
@@ -1611,7 +1733,7 @@ function Inspector({
   const flowRow = spec.container ? (
     <div className="field" key="flow">
       <label title="Off: children position freely. On: this container arranges them in order.">Flow layout</label>
-      <Toggle checked={node.flow} onChange={(v) => s.commit({ op: 'setFlow', id: node.id, flow: v }, v ? 'Flow on' : 'Flow off')} />
+      <Toggle label="Flow layout" checked={node.flow} onChange={(v) => s.commit({ op: 'setFlow', id: node.id, flow: v }, v ? 'Flow on' : 'Flow off')} />
     </div>
   ) : null
   // A free node's Position section holds its rotate/sticky rows too, so there
@@ -1669,6 +1791,7 @@ function Inspector({
           <div className="field">
             <label title="Visible in output">Visible</label>
             <Toggle
+              label="Visible"
               checked={node.visible !== false}
               onChange={(v) => s.commit({ op: 'setVisible', id: node.id, visible: v }, v ? 'Show' : 'Hide')}
             />
@@ -1676,6 +1799,7 @@ function Inspector({
           <div className="field">
             <label title="Locked: no drag, resize, or delete">Locked</label>
             <Toggle
+              label="Locked"
               checked={node.locked === true}
               onChange={(v) => s.commit({ op: 'setLocked', id: node.id, locked: v }, v ? 'Lock' : 'Unlock')}
             />
@@ -1857,11 +1981,11 @@ function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: Fi
         )}
       </div>
       {ps.type === 'boolean' && (
-        <Toggle checked={value === true} onChange={(v) => onChange(v)} />
+        <Toggle label={label} checked={value === true} onChange={(v) => onChange(v)} />
       )}
       {ps.type === 'enum' && (
         <div className="select-wrap">
-          <select value={String(value ?? ps.default)} onChange={(e) => onChange(e.target.value)}>
+          <select aria-label={label} value={String(value ?? ps.default)} onChange={(e) => onChange(e.target.value)}>
             {(ps.options ?? []).map((o) => (
               <option key={o} value={o}>
                 {o}
@@ -1873,7 +1997,7 @@ function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: Fi
       )}
       {ps.type === 'delimiter' && (
         <div className="select-wrap">
-          <select value={String(value ?? ps.default)} onChange={(e) => onChange(e.target.value)}>
+          <select aria-label={label} value={String(value ?? ps.default)} onChange={(e) => onChange(e.target.value)}>
             {Object.keys(DELIMITERS).map((d) => (
               <option key={d} value={d}>
                 {delimiterLabel(d)}
@@ -1886,11 +2010,12 @@ function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: Fi
       {ps.type === 'string' && (
         <input
           type="text"
+          aria-label={label}
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
         />
       )}
-      {ps.type === 'color' && <ColorField value={String(value ?? '')} onChange={onChange} />}
+      {ps.type === 'color' && <ColorField label={label} value={String(value ?? '')} onChange={onChange} />}
       {ps.type === 'node' && (
         <div className="select-wrap">
           <select aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
@@ -1928,7 +2053,7 @@ function Field({ name, ps, value, onChange, badge, modified, onReset, refs }: Fi
  * Swatch + hex. A full-width native color well shows no value and reads as a
  * stock control; a design tool needs the hex visible and editable.
  */
-function ColorField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   const hex = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#ffffff'
   // An empty colour means "the component's own colour", not white; the swatch
   // must not claim a colour that will not render.
@@ -1946,6 +2071,7 @@ function ColorField({ value, onChange }: { value: string; onChange: (v: string) 
       <input
         type="text"
         className="hex"
+        aria-label={`${label} (hex)`}
         value={value}
         placeholder="default"
         spellCheck={false}

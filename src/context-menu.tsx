@@ -140,6 +140,16 @@ export function ContextMenu({ s, state, onClose }: Props) {
             <span className="ctx-k"><Ico name="ruler" size={13} /></span> Set width 200
           </button>
 
+          <button
+            className="ctx-item"
+            role="menuitem"
+            onClick={run(() => s.duplicateAll([id]))}
+            disabled={node.locked === true}
+          >
+            <span className="ctx-k"><Ico name="copy" size={13} /></span> Duplicate
+            <span className="ctx-note">Ctrl+D</span>
+          </button>
+
           <div className="ctx-sep" />
 
           <button

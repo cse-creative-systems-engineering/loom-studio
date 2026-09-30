@@ -233,7 +233,9 @@
 .canvas.previewing .stage { position: relative; }
 /* The page fills the screen, as <body> does in an export: something docked
    top-to-bottom is as tall as the screen, not as tall as its content. */
-.canvas.previewing .preview-stage { position: relative; height: var(--screen-h, 800px); }
+/* The stage is the viewport being previewed: fixed overlays are fixed to it
+   (see .surface), not to the Studio window. */
+.canvas.previewing .preview-stage { position: relative; contain: layout; height: var(--screen-h, 800px); }
 
 /* The screen the artifact runs on: a page with an edge, filling the height,
    so the artifact's own position on it reads as a layout, not as drift. */
@@ -294,9 +296,10 @@
 /* The one primary action carries a little light: a lit top edge and depth. */
 .tb-primary {
   background: linear-gradient(180deg, #7b9dff, var(--accent));
-  color: #fff;
+  /* Dark ink, as the output's own primary buttons: white on this blue was
+     2.7:1, under even the large-text minimum, on the one call to action. */
+  color: #0b1020;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.28) inset, 0 0 0 1px rgba(91, 140, 255, 0.6), 0 6px 16px -6px rgba(91, 140, 255, 0.7);
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
 }
 
 /* The frame: its name above, the artboard below, one unit centred on the
@@ -509,3 +512,48 @@
 .field.stack { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
 .field.stack > :nth-child(n + 2) { grid-column: 1; }
 .page-seg button { flex: 1; min-width: 0; }
+
+/* ---------------- toast: the outcome of a file action ---------------- */
+.toast-region {
+  position: fixed;
+  left: 50%;
+  bottom: 72px;
+  transform: translateX(-50%);
+  z-index: 60;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 9px 10px 9px 14px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-depth);
+  backdrop-filter: var(--glass-blur);
+  animation: toast-in 180ms ease-out;
+}
+.toast.ok > .ico:first-child { color: var(--ok, #4ade80); }
+.toast.error { border-color: rgba(248, 113, 113, 0.55); }
+.toast.error > .ico:first-child { color: #f87171; }
+.toast-x {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--ink-2);
+}
+.toast-x:hover { background: var(--panel-2); color: var(--ink); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }

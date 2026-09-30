@@ -78,6 +78,34 @@ export class EditorStore {
   lastSavedPath: string | null = null
 
   /**
+   * The outcome of the last file action (save, open, export), for the Studio
+   * to show. Every such action used to finish silently: a failed save, or an
+   * opened file that was not a Loom document, looked exactly like success. A
+   * cancelled dialog is not an outcome and leaves no notice.
+   */
+  notice: { id: number; tone: 'ok' | 'error'; text: string } | null = null
+  private noticeSeq = 0
+
+  notify(tone: 'ok' | 'error', text: string) {
+    this.notice = { id: ++this.noticeSeq, tone, text }
+    this.emit()
+  }
+
+  dismissNotice(id: number) {
+    if (this.notice?.id !== id) return
+    this.notice = null
+    this.emit()
+  }
+
+  /** Report a host file action: success names the file, failure says why. */
+  private report(res: { ok: boolean; path?: string; error?: string; canceled?: boolean }, done: string, failed: string) {
+    if (res.canceled) return
+    const file = res.path ? res.path.split(/[\\/]/).pop() : undefined
+    if (res.ok) this.notify('ok', file ? `${done} ${file}` : done)
+    else this.notify('error', `${failed}${res.error ? `: ${res.error}` : ''}`)
+  }
+
+  /**
    * The document as it exists on disk (last save or open), or null when this
    * work has never been written. Undo/redo compare against it by identity —
    * history holds the exact document objects, so stepping back to the saved
@@ -387,6 +415,7 @@ export class EditorStore {
       this.lastSavedPath = res.path ?? null
       this.emit()
     }
+    this.report(res, 'Saved', "Couldn't save")
     return res
   }
 
@@ -414,10 +443,13 @@ export class EditorStore {
     try {
       html = emitHtml(this.doc)
     } catch (e) {
+      this.notify('error', `Couldn't export the HTML: ${String(e)}`)
       return { ok: false, error: String(e) }
     }
     const saver = api.exportHtml ?? api.save
-    return saver(this.exportFilename(), html)
+    const res = await saver(this.exportFilename(), html)
+    this.report(res, 'Exported', "Couldn't export the HTML")
+    return res
   }
 
   /** Standalone React filename, derived from the document name. */
@@ -441,26 +473,34 @@ export class EditorStore {
     try {
       src = emitReact(this.doc)
     } catch (e) {
+      this.notify('error', `Couldn't export the React component: ${String(e)}`)
       return { ok: false, error: String(e) }
     }
     const saver = api.exportReact ?? api.save
-    return saver(this.reactFilename(), src)
+    const res = await saver(this.reactFilename(), src)
+    this.report(res, 'Exported', "Couldn't export the React component")
+    return res
   }
 
   async open() {
     const api = this.host
     if (!api) return { ok: false as const, error: 'no host bridge' }
     const res = await api.open()
-    if (!res.ok) return res
+    if (!res.ok) {
+      this.report(res, 'Opened', "Couldn't open the file")
+      return res
+    }
     const parsed = validate(res.contents)
     if (!parsed.doc) {
+      const file = res.path?.split(/[\\/]/).pop()
+      this.notify('error', `${file ?? 'That file'} isn't a Loom document, so nothing was opened.`)
       return { ok: false as const, error: 'invalid document', issues: parsed.issues }
     }
     this.loadDocument(parsed.doc)
     // An opened file is what is on disk.
     this.savedDoc = parsed.doc
     this.lastSavedPath = res.path ?? null
-    this.emit()
+    this.report(res, 'Opened', "Couldn't open the file")
     return { ok: true as const, issues: parsed.issues }
   }
 
@@ -520,20 +560,47 @@ export class EditorStore {
    * Used by Alt-drag; locked nodes and the root refuse.
    */
   duplicate(id: NodeId): NodeId | undefined {
-    const src = this.doc.nodes[id]
-    if (!src || src.locked || id === this.doc.root) return undefined
-    const parent = parentOf(this.doc, id)
-    if (!parent) return undefined
-    const index = this.doc.nodes[parent].children.indexOf(id)
-    const dup = duplicateSubtree(this.doc, id)
-    if (!dup) return undefined
-    const newId = dup.node.id
-    const ok = this.commit(
-      { op: 'insert', parent, index: index + 1, node: dup.node, tree: dup.tree },
-      `Duplicate ${src.type}`,
-    )
-    if (ok) this.select([newId])
-    return ok ? newId : undefined
+    return this.duplicateAll([id])[0]
+  }
+
+  /**
+   * Duplicate several nodes as ONE undoable step (Ctrl+D, the context menu),
+   * each copy just after its source, selecting the copies. A node inside
+   * another selected node travels with that one's copy, not twice.
+   */
+  duplicateAll(ids: NodeId[]): NodeId[] {
+    const picked = new Set(ids)
+    const within = (id: NodeId): boolean => {
+      for (let p = parentOf(this.doc, id); p; p = parentOf(this.doc, p)) if (picked.has(p)) return true
+      return false
+    }
+    const sources = ids
+      .filter((id) => {
+        const n = this.doc.nodes[id]
+        return n && !n.locked && id !== this.doc.root && !within(id)
+      })
+      .map((id) => {
+        const parent = parentOf(this.doc, id)!
+        return { id, parent, index: this.doc.nodes[parent].children.indexOf(id) }
+      })
+      // Later siblings first: inserting after them never shifts an earlier one.
+      .sort((a, b) => (a.parent === b.parent ? b.index - a.index : 0))
+    const ops: Op[] = []
+    const copyOf = new Map<NodeId, NodeId>()
+    for (const src of sources) {
+      const dup = duplicateSubtree(this.doc, src.id)
+      if (!dup) continue
+      ops.push({ op: 'insert', parent: src.parent, index: src.index + 1, node: dup.node, tree: dup.tree })
+      copyOf.set(src.id, dup.node.id)
+    }
+    if (ops.length === 0) return []
+    const only = sources.length === 1 ? this.doc.nodes[sources[0].id]?.type : undefined
+    const ok = this.commitAll(ops, only ? `Duplicate ${only}` : `Duplicate ${ops.length} items`)
+    if (!ok) return []
+    // In the order they were asked for, not the insertion order.
+    const ordered = ids.flatMap((id) => copyOf.get(id) ?? [])
+    this.select(ordered)
+    return ordered
   }
 }
 
