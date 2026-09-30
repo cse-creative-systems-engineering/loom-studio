@@ -128,7 +128,7 @@ calls undoing them).
 - **Benchmark**: OpenRouter re-run — the filter sidebar and search really
   filter the models.
 
-### Phase 6 — F1: explain, teach, do (large)
+### Phase 6 — F1: explain, teach, do (large; Explain + Do move up to right after Phase 2, Teach after Phase 5 — decision 3)
 
 - **Every piece of the Studio says what it is**: help identities on panel rows,
   toolbox entries, parts, menus and chrome (reusing registry descriptions and
@@ -194,10 +194,29 @@ UI-only output can do (screens, data). 6 can start any time after 2 (it needs
 something to explain) and could move earlier if help matters more than depth.
 7–9 are the depth that makes intermediate and advanced designers want it.
 
-## Decisions for Shane
+## Decisions (Shane, 2026-09-30)
 
-1. Phase 0: merge the agent branch to master, or keep it experimental?
-2. Phase 4: multi-screen export as one file with hash routes — agreed?
-3. Phase 6 placement: after Phase 2 (as written) or sooner?
-4. Phase 9: expressions at all, or plain words and variables only?
-5. F1's second key (proposal: `?` when not typing, plus the context menu).
+1. **The agent branch merges to master** (Phase 0). The Assistant is part of
+   the Studio from here on.
+2. **Multi-screen export: one self-contained file with hash routes**
+   (`#pricing`) in the HTML export. Recommended because an export must open
+   from disk with no server: history-API routes break on `file://`, hash routes
+   do not, and one file keeps "opens and works with no network". The React
+   export switches screens from state and exposes the current screen as a
+   prop and a callback, so a host app can map it onto its own router.
+3. **F1 is split.** *Explain* (instant, from Loom's own knowledge, offline) and
+   *Do it for me* (the Assistant scoped to the selection) ship right after
+   Phase 2 — they are cheap on the existing agent and make every later phase
+   easier to learn. *Teach me* (point-at, wait-for, coach marks) ships after
+   Phase 5, when there is enough behaviour to teach.
+4. **An expression language — intuitive and familiar.** It reads like a
+   spreadsheet formula that people already know from Excel, Sheets, Airtable
+   and Notion: `price < 1 and provider = "Anthropic"`, `count(selected) > 0`,
+   `if(plan = "Pro", "Upgrade", "Manage")`, `contains(name, search)`. Names come
+   from the document with autocomplete; every expression shows its live value
+   beside it in Preview; errors say what is wrong in words ("*Plan* is text,
+   so it can't be compared with 3"). Validated and sandboxed — never arbitrary
+   JavaScript — so exports stay safe and readable. Plain-word conditions stay
+   the first surface; an expression is the same condition opened up.
+5. **F1's keys**: F1, `?` when not typing, and "Ask about this" in the
+   right-click menu.
