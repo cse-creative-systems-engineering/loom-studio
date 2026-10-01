@@ -149,7 +149,7 @@ interface Compiled {
 }
 
 /** One look as declarations (all !important: the base look is inline). */
-export function compileLook(l: Look, light: SceneLight, shade: Shade): Compiled {
+export function compileLook(l: Look, light: SceneLight, shade: Shade, isState = false): Compiled {
   const d: string[] = []
   // --- every shadow, in one list, in a fixed stacking order -------------
   const touchesShadow = l.z !== undefined || l.strokes !== undefined || l.glows !== undefined || l.bevel !== undefined || l.inset !== undefined
@@ -161,7 +161,11 @@ export function compileLook(l: Look, light: SceneLight, shade: Shade): Compiled 
     const well = insetShadows(l.inset ?? 0, light, shade)
     const lift = elevationShadows(l.z ?? 0, light, shade)
     const all = [...strokes, ...bevel, ...well, ...glowsIn, ...glowsOut, ...lift]
-    d.push(`box-shadow:${all.length ? all.join(',') : 'none'}`)
+    // A base look with nothing to cast leaves the component's own edge and
+    // shadow alone (a card's hairline is a shadow too); a STATE that lowers
+    // everything to nothing does mean "no shadow now".
+    if (all.length) d.push(`box-shadow:${all.join(',')}`)
+    else if (isState) d.push('box-shadow:none')
   }
   // --- surface layers -----------------------------------------------------
   const images: string[] = []
@@ -257,8 +261,8 @@ export function lookCss(doc: Document, theme: Theme = resolveTheme(doc.meta.them
       const set: LookSet | null = cleanLookSet(raw).set
       if (!set) continue
       const sel = target === '' ? root : partSelector(node.id, target)
-      const emit = (selectors: string[], look: Look, into: string[]) => {
-        const c = compileLook(look, light, shade)
+      const emit = (selectors: string[], look: Look, into: string[], isState = false) => {
+        const c = compileLook(look, light, shade, isState)
         if (c.decls.length) into.push(`${selectors.join(',')}{${c.decls.join(';')}}`)
         if (c.before) {
           traces = true
@@ -300,9 +304,9 @@ export function lookCss(doc: Document, theme: Theme = resolveTheme(doc.meta.them
         if (state === 'hover') {
           const live = selectors.filter((s) => !s.includes(FORCE_ATTR))
           const forced = selectors.filter((s) => s.includes(FORCE_ATTR))
-          emit(live, look, hover)
-          if (forced.length) emit(forced, look, rest)
-        } else emit(selectors, look, rest)
+          emit(live, look, hover, true)
+          if (forced.length) emit(forced, look, rest, true)
+        } else emit(selectors, look, rest, true)
       }
     }
   }
