@@ -184,6 +184,23 @@ instances that override content but inherit behaviour; the ROADMAP's
   placeholder content…) judged on the specimen board, in gaps between phases.
 - **Visual overhaul** of the Studio continues on its own track.
 
+### Appearance: make every tool physical (in progress, 2026-10-01)
+
+The direction Shane set on 2026-09-30: the user can change the physical and
+structural look of any tool. Give something height and a shadow proportionate
+to it falls from a light source; edit borders, bevels, glowing outlines and
+animated light effects on click; all of it editable on every tool.
+
+- **Done:** looks on any component or part (layers, depth, states, motion,
+  click effects); one scene light that every shadow, bevel and sheen is
+  derived from; the sun on the canvas; ten built-in styles, saved styles, and
+  copy/paste look; the assistant's `set_look` / `set_light`; the Light study
+  starter; classic interaction styles move into Appearance on request.
+- **Next:** default looks per tool as each tool gets its pass (the bar in
+  `docs/component-depth.md` now includes "takes a look well"); light-aware
+  text (engraved and embossed type); a point light (a lamp near the page) for
+  free layouts; folding the Effects (atmosphere) layer into looks.
+
 ## Order and why
 
 1 → 2 is the critical path: nothing about behaviour can be trusted while
