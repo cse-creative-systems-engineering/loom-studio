@@ -4658,6 +4658,8 @@ export async function runSelfTest(): Promise<string> {
 
     // Every built-in style compiles to something real.
     check('every built-in style compiles and survives the sanitiser (Flat is "no look")', BUILTIN_STYLES.every((x) => (x.id === 'flat' ? cleanLookSet(x.set).set === null : cleanLookSet(x.set).set !== null && compileLook(x.set.base, DEFAULT_LIGHT, shade).decls.length > 0)))
+    const typed = compileLook({ cornerShape: 'squircle', textRelief: 'emboss', textGlow: { color: '#ff0000', size: 6 } }, DEFAULT_LIGHT, shade).decls.join(';')
+    check('corner shape and lit type compile (type lit from the scene light)', typed.includes('corner-shape:squircle') && /text-shadow:[^;]*rgb\(255 255 255/.test(typed) && typed.includes('0 0 6px #ff0000'), typed)
     check('a base look with nothing to cast keeps the component\'s own shadow; a state can still clear it', !compileLook({ z: 0 }, DEFAULT_LIGHT, shade).decls.some((d) => d.startsWith('box-shadow')) && compileLook({ z: 0 }, DEFAULT_LIGHT, shade, true).decls.some((d) => d.startsWith('box-shadow:none')))
 
     // The editor's Play and the runtime draw the same layers.
