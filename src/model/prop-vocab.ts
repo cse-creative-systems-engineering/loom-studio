@@ -115,7 +115,7 @@ export const controlProps = (options?: string[], defaultVariant = 'default'): Pr
   size: choice(['sm', 'md', 'lg'], 'md', 'Size'),
   variant: options
     ? choice(options, defaultVariant, 'Style')
-    : choice(['default', 'primary', 'secondary', 'ghost', 'danger'], defaultVariant, 'Style'),
+    : choice(['filled', 'outline', 'soft', 'underline', 'ghost'], defaultVariant === 'default' ? 'filled' : defaultVariant, 'Style'),
   disabled: bool(false, 'State'),
   required: bool(false, 'State'),
   readOnly: bool(false, 'State'),
@@ -123,7 +123,7 @@ export const controlProps = (options?: string[], defaultVariant = 'default'): Pr
 
 /** Semantic colour, for anything that reports a condition. */
 export const toneProps = (): Props => ({
-  tone: choice(['neutral', 'info', 'success', 'warning', 'danger'], 'neutral', 'State'),
+  tone: choice(['neutral', 'accent', 'info', 'success', 'warning', 'danger'], 'neutral', 'State'),
 })
 
 /** A value plus the things you need to display a number honestly. */
@@ -288,3 +288,22 @@ export const CONTENT_STATE_TOOLS: Readonly<Record<string, string>> = {
   Timeline: 'No activity yet',
   KanbanColumn: 'No cards in this column',
 }
+
+/*
+ * THE VOCABULARY. Every tool that has a tone, a fill, an emphasis or a field
+ * style takes its words from here, so learning them on one tool is learning
+ * them on all of them (selftest §118 holds every tool to it).
+ */
+
+/** Semantic colour. `inherit` (a control taking the page's accent) and `alternate` (an avatar stack cycling tones) are the only additions a tool may make. */
+export const TONES = ['neutral', 'accent', 'info', 'success', 'warning', 'danger'] as const
+/** How a chip, alert or message is painted: a wash, a fill, or a line. `plain` (no surface) where the component can stand bare. */
+export const FILLS = ['soft', 'solid', 'outline'] as const
+/** How loudly a pressable speaks. */
+export const EMPHASES = ['primary', 'secondary', 'outline', 'ghost', 'danger'] as const
+/** How a text field sits on the page. */
+export const FIELD_STYLES = ['filled', 'outline', 'soft', 'underline', 'ghost'] as const
+
+/** A `tone` property on the shared scale, with a tool's own default. */
+export const toneProp = (defaultTone: string, opts: { inherit?: boolean; group?: string } = {}): PropSpec =>
+  choice([...(opts.inherit ? ['inherit'] : []), ...TONES], defaultTone, opts.group ?? 'State')

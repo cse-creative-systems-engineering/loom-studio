@@ -24,6 +24,7 @@ import { partAttrs } from './parts'
 import { itemsOf } from '../model/lists'
 import { DataGridView } from './datagrid'
 import { contentStateBody } from './content-state'
+import { emphasisStyle, fieldSurface } from './vocab'
 import type { Document, InteractionState, Node, NodeId, PropValue } from '../model/types'
 
 export interface RenderCtx {
@@ -704,19 +705,12 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       // start unset: an unstyled button is still a well-proportioned one.
       const padY = num(p.paddingY, -1) >= 0 ? num(p.paddingY) : py
       const padX = num(p.paddingX, -1) >= 0 ? num(p.paddingX) : pxv
-      const variants: Record<string, React.CSSProperties> = {
-        primary: { background: t.accent, color: t.textOnAccent },
-        secondary: { background: t.surface, color: t.textPrimary },
-        ghost: { background: 'transparent', color: t.textSecondary },
-        danger: { background: t.danger, color: t.textOnAccent },
-      }
-      Object.assign(s, variants[str(p.variant)] ?? variants.primary)
+      Object.assign(s, emphasisStyle(t, str(p.variant) || 'primary'))
       s.padding = `${padY}px ${padX}px`
       // A button's label is one line: squeezed, "Sign In" broke into "Sign"
       // over "In" in an agent's export while the canvas drew it on one line.
       s.whiteSpace = 'nowrap'
       s.borderRadius = `${t.radiusMd}px`
-      s.border = `1px solid ${t.borderStrong}`
       s.fontSize = `${fs}px`
       s.fontWeight = t.weightSemibold
       s.lineHeight = 1.2
@@ -759,18 +753,10 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       const [py, pxv, fs] = sizes[str(p.size)] ?? sizes.md
       // The treatments a text field actually comes in. `default` is the
       // outlined surface the component has always drawn.
-      const variants: Record<string, React.CSSProperties> = {
-        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
-        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
-        primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
-        secondary: { background: t.bg, border: 'none' },
-        ghost: { background: 'transparent', border: `1px solid ${t.border}` },
-        danger: { background: `${t.danger}0f`, border: `1px solid ${t.danger}` },
-      }
-      Object.assign(s, variants[str(p.variant)] ?? variants.default)
       s.width = px(p.width, 200)
       s.padding = `${py}px ${pxv}px`
       s.borderRadius = `${t.radiusMd}px`
+      Object.assign(s, fieldSurface(t, str(p.variant)))
       s.color = t.textPrimary
       s.fontSize = `${fs}px`
       s.lineHeight = 1.3
@@ -1065,11 +1051,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       s.borderRadius = `${t.radiusMd}px`
       // The same four treatments a Button has, so the two never disagree:
       // `secondary` is the quiet surface, `ghost` has no fill at all.
-      const ibVariant = str(p.variant)
-      const ibDanger = ibVariant === 'danger'
-      s.background = ibVariant === 'primary' ? t.accent : ibDanger ? t.danger : ibVariant === 'ghost' ? 'transparent' : t.surface
-      s.color = ibVariant === 'primary' || ibDanger ? t.textOnAccent : t.textPrimary
-      s.border = `1px solid ${ibDanger ? t.danger : t.borderStrong}`
+      Object.assign(s, emphasisStyle(t, str(p.variant) || 'secondary'))
       s.cursor = p.disabled === true ? 'not-allowed' : 'pointer'
       s.opacity = p.disabled === true ? 0.5 : 1
       break
@@ -1108,17 +1090,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       }
       const [ipy, ipx, ifs] = iSizes[str(p.size)] ?? iSizes.md
       s.padding = `${ipy}px ${ipx}px`; s.borderRadius = `${t.radiusMd}px`
-      // The treatments a field actually comes in, named as they are elsewhere.
-      const iVariants: Record<string, React.CSSProperties> = {
-        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
-        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
-        primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
-        secondary: { background: t.bg, border: `1px solid ${t.border}` },
-        ghost: { background: 'transparent', border: `1px solid ${t.border}` },
-        danger: { background: `${t.danger}0f`, border: `1px solid ${t.danger}` },
-      }
-      const iv = iVariants[str(p.variant)] ?? iVariants.default
-      s.border = iv.border; s.background = iv.background
+      Object.assign(s, fieldSurface(t, str(p.variant)))
       s.color = t.textPrimary; s.fontSize = `${ifs}px`; s.gap = `${t.space2}px`
       break
     }
@@ -1131,16 +1103,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       const [apy, apx, afs] = aSizes[str(p.size)] ?? aSizes.md
       s.width = px(p.width, 280); s.padding = `${apy}px ${apx}px`
       s.borderRadius = `${t.radiusMd}px`
-      const aVariants: Record<string, React.CSSProperties> = {
-        // A well pressed into the surface: soft inner shadow, faint lit lower edge.
-        default: { background: t.wellFill, border: `1px solid ${t.wellEdge}`, boxShadow: t.wellShadow },
-        primary: { background: `${t.accent}0f`, border: `1px solid ${t.accent}` },
-        secondary: { background: t.bg, border: `1px solid ${t.border}` },
-        ghost: { background: 'transparent', border: `1px solid ${t.border}` },
-        danger: { background: `${t.danger}0f`, border: `1px solid ${t.danger}` },
-      }
-      const av = aVariants[str(p.variant)] ?? aVariants.default
-      s.border = av.border; s.background = av.background
+      Object.assign(s, fieldSurface(t, str(p.variant)))
       s.color = t.textPrimary; s.fontSize = `${afs}px`
       break
     }
@@ -1150,8 +1113,10 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       s.borderRadius = `${t.radiusLg}px`
       // A dashed edge says "drop here"; a solid one is an ordinary button that
       // happens to open a picker. Both are legitimate, so both are offered.
-      s.border = str(p.variant) === 'solid' ? `1px solid ${t.borderStrong}` : `1px dashed ${t.borderStrong}`
-      s.background = t.bg; s.color = t.textSecondary
+      // ...and `soft` is a tinted well with no edge at all, for a quiet form.
+      const fv = str(p.variant)
+      s.border = fv === 'solid' ? `1px solid ${t.borderStrong}` : fv === 'soft' ? '1px solid transparent' : `1px dashed ${t.borderStrong}`
+      s.background = fv === 'soft' ? `color-mix(in srgb, ${t.accent} 7%, ${t.bg})` : t.bg; s.color = t.textSecondary
       s.fontSize = str(p.size) === 'sm' ? `${t.textXs}px` : str(p.size) === 'lg' ? `${t.textMd}px` : `${t.textSm}px`
       break
     }
@@ -1164,11 +1129,8 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       }
       const [dpy, dpx, dfs] = dSizes[str(p.size)] ?? dSizes.md
       s.padding = `${dpy}px ${dpx}px`; s.borderRadius = `${t.radiusMd}px`
-      const dbVariant = str(p.variant)
-      const dbDanger = dbVariant === 'danger'
-      s.background = dbVariant === 'primary' ? t.accent : dbDanger ? t.danger : dbVariant === 'ghost' ? 'transparent' : t.surface
-      s.color = dbVariant === 'primary' || dbDanger ? t.textOnAccent : t.textPrimary
-      s.border = `1px solid ${dbDanger ? t.danger : t.borderStrong}`; s.fontSize = `${dfs}px`
+      Object.assign(s, emphasisStyle(t, str(p.variant) || 'secondary'))
+      s.fontSize = `${dfs}px`
       s.fontWeight = t.weightSemibold
       s.cursor = p.disabled === true ? 'not-allowed' : 'pointer'
       break
@@ -1196,7 +1158,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       const hot = variant === 'danger' ? t.danger : t.accent
       s.background = p.pressed === true
         ? variant === 'ghost' ? t.bg : hot
-        : variant === 'ghost' ? 'transparent' : t.surface
+        : variant === 'ghost' || variant === 'outline' ? 'transparent' : t.surface
       s.color = p.pressed === true ? t.textOnAccent : variant === 'danger' || variant === 'primary' ? hot : t.textSecondary
       s.border = `1px solid ${variant === 'danger' || variant === 'primary' ? hot : t.borderStrong}`
       s.cursor = p.disabled === true ? 'not-allowed' : 'pointer'
@@ -1402,7 +1364,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       s.borderRadius = `${t.radiusFull}px`; s.display = 'inline-flex'
       s.alignItems = 'center'; s.justifyContent = 'center'
       s.fontWeight = t.weightBold; s.color = t.textOnAccent
-      s.background = str(p.tone) === 'neutral' ? t.textMuted : str(p.tone) === 'success' ? t.success : str(p.tone) === 'warning' ? t.warning : t.accent
+      s.background = toneColor(t, str(p.tone) || 'accent')
       break
     }
     case 'AvatarGroup': {
@@ -1594,7 +1556,7 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       // A back control has to survive on a photo as often as it sits in a
       // header, so the surface and the border are options rather than a given.
       const variant = str(p.variant) || 'ghost'
-      if (variant === 'surface') {
+      if (variant === 'secondary' || variant === 'surface') {
         s.background = t.surface
         s.border = `1px solid ${t.border}`
         s.borderRadius = `${t.radiusMd}px`
@@ -4190,7 +4152,7 @@ function renderPreviewBody(
       const chip = (i: number) =>
         tone === 'alternate'
           ? i % 2 === 0 ? t.accent : t.textMuted
-          : tone === 'neutral' ? t.textMuted : tone === 'success' ? t.success : tone === 'warning' ? t.warning : t.accent
+          : toneColor(t, tone)
       return (
         <div
           key={key}
@@ -5570,8 +5532,11 @@ function iconTone(tone: PropValue | undefined, t: Theme): string | undefined {
   switch (str(tone)) {
     case 'accent':
       return t.accent
+    case 'neutral':
     case 'muted':
       return t.textMuted
+    case 'info':
+      return t.accent
     case 'success':
       return t.success
     case 'warning':

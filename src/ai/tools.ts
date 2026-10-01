@@ -14,6 +14,7 @@
  * the same definitions are what the MCP bridge lists.
  */
 
+import { renamedValue } from '../model/migrate'
 import { LIST_SHORTHAND, takeShorthand } from '../model/grid'
 import type { EditorStore } from '../state/store'
 import type { Node, NodeId, Op, PropValue } from '../model/types'
@@ -302,7 +303,8 @@ function validProps(type: string, raw: unknown): { ok: Record<string, PropValue>
       rejected.push(`${k}: not a property of ${type}`)
       continue
     }
-    const value = coerce(ps, v)
+    // A word from before the vocabulary was unified still means what it meant.
+    const value = coerce(ps, renamedValue(type, k, v))
     if (!valueMatches(ps, value)) {
       rejected.push(`${k}: expected ${describeType(ps)}, got ${JSON.stringify(v)}`)
       continue

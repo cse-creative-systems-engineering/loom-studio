@@ -160,7 +160,7 @@ defineComponent({
     // The accessible name for a button whose label is an icon, or whose visible
     // text is abbreviated ("…"). Emitted as `aria-label` on the real element.
     ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
-    ...pressProps(['primary', 'secondary', 'ghost', 'danger'], 'primary'),
+    ...pressProps(['primary', 'secondary', 'outline', 'ghost', 'danger'], 'primary'),
     // Busy: the button stops accepting presses and says so to assistive tech
     // (`aria-busy`) instead of silently doing nothing. The dimmed label is the
     // visible half; the state is the real half.

@@ -14,7 +14,7 @@ import { universalStyleProps } from '../src/model/prop-vocab'
 import { isSafeColor, stateCss, STATE_PRESETS } from '../src/render/states'
 import { documentCss } from '../src/render/document-css'
 import { fieldsFor } from '../src/render/parts'
-import type { Document, Node as LoomNode } from '../src/model/types'
+import type { Document, Node as LoomNode, PropValue } from '../src/model/types'
 import { ancestry, descendants, parentOf } from '../src/model/ops'
 import { defineComponent, allComponents, DELIMITERS, delimiterChar, delimiterLabel, DESKTOP_CAPABILITIES, getComponent, instantiate } from '../src/model/registry'
 import { emitHtml, exportFilenameFor } from '../src/export/html'
@@ -42,7 +42,7 @@ import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
 import { joinList, joinTable, parsePastedTable, splitList, splitTable } from '../src/model/data-tables'
 import { DataPanel, dataEditorKeys, isListKey } from '../src/data-editors'
-import { CONTENT_STATE_TOOLS } from '../src/model/prop-vocab'
+import { CONTENT_STATE_TOOLS, EMPHASES, FIELD_STYLES, FILLS, TONES } from '../src/model/prop-vocab'
 import { unsupportedProps } from '../src/model/registry'
 import { THEME_NAMES } from '../src/render/theme'
 import { OUTPUT_FAMILY, fontFaceCss } from '../src/render/fonts'
@@ -4549,6 +4549,47 @@ export async function runSelfTest(): Promise<string> {
     check('a grid\'s rows are a table of cells under its column titles', gridPanel.includes('aria-label="Customer, row 1"') && gridPanel.includes('value="Ada Lovelace"'))
     check('a chart\'s labels and values are one table, kept in step', barPanel.includes('aria-label="Label, row 1"') && barPanel.includes('aria-label="Value, row 1"'))
     check('a list property is edited as rows; its separator is not shown', isListKey(st.doc.nodes[menu]!, 'trail') && dataEditorKeys(st.doc.nodes[menu]!).has('trailSep') && dataEditorKeys(st.doc.nodes[g]!).has('rows'))
+  }
+
+  // --- 118. One vocabulary: tone, fill, emphasis and field style mean the
+  // same words on every tool (model/prop-vocab.ts, render/vocab.ts).
+  {
+    const NARROW = new Set(['ErrorSummary', 'SuccessCheck', 'ConfirmDialog'])
+    const offTone: string[] = []
+    const offVariant: string[] = []
+    for (const c of allComponents()) {
+      const tone = c.props.tone
+      if (tone?.type === 'enum') {
+        const core = (tone.options ?? []).filter((o) => o !== 'inherit' && o !== 'alternate')
+        const ok = NARROW.has(c.name) ? core.every((o) => (TONES as readonly string[]).includes(o)) : JSON.stringify(core) === JSON.stringify(TONES)
+        if (!ok) offTone.push(`${c.name}: ${core.join('|')}`)
+      }
+      const v = c.props.variant
+      if (v?.type !== 'enum') continue
+      const opts = v.options ?? []
+      const family = opts.some((o) => (FIELD_STYLES as readonly string[]).includes(o) && o === 'filled') ? FIELD_STYLES
+        : opts.includes('primary') ? EMPHASES
+        : opts.every((o) => o === 'plain' || (FILLS as readonly string[]).includes(o)) ? FILLS : null
+      if (!family) continue
+      const core = opts.filter((o) => o !== 'plain')
+      const inOrder = core.every((o, i) => (family as readonly string[]).indexOf(o) > (family as readonly string[]).indexOf(core[i - 1] ?? '') || i === 0)
+      if (!core.every((o) => (family as readonly string[]).includes(o)) || !inOrder || (family !== FILLS && core.length !== family.length)) offVariant.push(`${c.name}: ${opts.join('|')}`)
+    }
+    check('every tone list is the shared scale (or a named, narrower subset)', offTone.length === 0, offTone.join(' · '))
+    check('every variant list is one family, complete and in its order', offVariant.length === 0, offVariant.join(' · '))
+    const st = new EditorStore()
+    st.addComponent('Panel', null, 0, 0)
+    const draw = (type: string, props: Record<string, PropValue>) => {
+      const id = st.addComponent(type, st.doc.root as string, 0, 0, props) as string
+      return renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, id)).replace(/data-loom[^ >]*/g, '')
+    }
+    check('outline is its own emphasis on Button, IconButton and DropdownButton', ['Button', 'IconButton', 'DropdownButton'].every((t) => draw(t, { variant: 'outline' }) !== draw(t, { variant: 'secondary' })))
+    check('underline is its own field style on Input, Select and TextArea', ['Input', 'Select', 'TextArea'].every((t) => draw(t, { variant: 'underline' }) !== draw(t, { variant: 'filled' })))
+    const old = JSON.parse(serialize(st.doc)) as { nodes: Record<string, { type: string; props: Record<string, unknown> }> }
+    const inp = Object.keys(old.nodes).find((k) => old.nodes[k]!.type === 'Input')!
+    old.nodes[inp]!.props.variant = 'danger'
+    const back = validate(JSON.stringify(old))
+    check('an old field variant migrates to the new words, reported', back.doc?.nodes[inp]?.props.variant === 'filled' && back.issues.some((i) => i.message.includes('"danger" is now "filled"')), back.issues.map((i) => i.message).join(' | '))
   }
 
   // --- 112. Phase 1: overlays, the page under an export, tones ---------------
