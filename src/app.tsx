@@ -665,6 +665,49 @@ function Toast({ s }: { s: EditorStore }) {
  * switch sits in the middle because it is the question the bar answers:
  * are you designing, or looking at what you built?
  */
+interface WindowApi {
+  platform: string
+  minimize: () => Promise<boolean>
+  toggleMaximize: () => Promise<boolean>
+  close: () => Promise<boolean>
+  state: () => Promise<{ maximized: boolean; fullScreen: boolean } | null>
+  onState: (cb: (s: { maximized: boolean; fullScreen: boolean }) => void) => () => void
+}
+const windowApi = (): WindowApi | undefined => (window as unknown as { loomWindow?: WindowApi }).loomWindow
+
+/**
+ * The window's own minimise, maximise/restore and close: the editor has no OS
+ * frame, so the Studio draws them, in its own style, at the end of its bar.
+ * Absent when there is no host (the browser dev server).
+ */
+function WindowControls() {
+  const api = windowApi()
+  const [st, setSt] = React.useState({ maximized: false, fullScreen: false })
+  React.useEffect(() => {
+    if (!api) return
+    void api.state().then((x) => x && setSt(x))
+    return api.onState(setSt)
+  }, [api])
+  if (!api) return null
+  return (
+    <div className="win-controls" role="group" aria-label="Window">
+      <button type="button" className="win-btn" onClick={() => void api.minimize()} title="Minimise" aria-label="Minimise">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5.5h8" stroke="currentColor" strokeWidth="1.2" /></svg>
+      </button>
+      <button type="button" className="win-btn" onClick={() => void api.toggleMaximize()} title={st.maximized || st.fullScreen ? 'Restore' : 'Maximise'} aria-label={st.maximized || st.fullScreen ? 'Restore' : 'Maximise'}>
+        {st.maximized || st.fullScreen ? (
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 3.5h4v4h-4z M3.5 3.5V2.5h4v4h-1" fill="none" stroke="currentColor" strokeWidth="1.1" /></svg>
+        ) : (
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" strokeWidth="1.1" /></svg>
+        )}
+      </button>
+      <button type="button" className="win-btn close" onClick={() => void api.close()} title="Close" aria-label="Close">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.2" /></svg>
+      </button>
+    </div>
+  )
+}
+
 function TitleBar({
   s,
   mode,
@@ -727,7 +770,14 @@ function TitleBar({
     setExportOpen(false)
   }
   return (
-    <header className="titlebar">
+    <header
+      className="titlebar"
+      onDoubleClick={(e) => {
+        // Double-click on the bar itself (not a control) maximises or restores.
+        if ((e.target as HTMLElement).closest('button, input, [role=menu], .mode-switch')) return
+        void windowApi()?.toggleMaximize()
+      }}
+    >
       <div className="tb-left">
         <span className="mark" aria-hidden="true" />
         <div className="doc-name" title={s.dirty ? 'Unsaved changes' : 'Saved'}>
@@ -862,6 +912,7 @@ function TitleBar({
             </div>
           )}
         </div>
+        <WindowControls />
       </div>
     </header>
   )

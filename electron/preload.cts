@@ -39,6 +39,24 @@ contextBridge.exposeInMainWorld('loomHost', {
   latestAutosave: () => ipcRenderer.invoke('doc:latest-recent'),
 })
 
+/**
+ * The editor window's own controls: it has no OS frame, so minimise,
+ * maximise/restore and close are the Studio's buttons. Honoured only for the
+ * editor window (checked in main).
+ */
+contextBridge.exposeInMainWorld('loomWindow', {
+  platform: process.platform,
+  minimize: () => ipcRenderer.invoke('win:control', 'minimize'),
+  toggleMaximize: () => ipcRenderer.invoke('win:control', 'toggle-maximize'),
+  close: () => ipcRenderer.invoke('win:control', 'close'),
+  state: () => ipcRenderer.invoke('win:state'),
+  onState: (cb: (s: { maximized: boolean; fullScreen: boolean }) => void) => {
+    const fn = (_e: unknown, st: { maximized: boolean; fullScreen: boolean }) => cb(st)
+    ipcRenderer.on('win:state', fn)
+    return () => ipcRenderer.removeListener('win:state', fn)
+  },
+})
+
 const isPreviewWindow = process.argv.some((a) => a.includes('preview.html'))
 
 contextBridge.exposeInMainWorld('loomPreview', {
