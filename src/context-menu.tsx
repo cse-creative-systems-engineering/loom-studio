@@ -126,6 +126,15 @@ export function ContextMenu({ s, state, onClose }: Props) {
         <span className="ctx-note">Ctrl+V</span>
       </button>
 
+      <button className="ctx-item" role="menuitem" onClick={run(() => s.copyLook(id))} disabled={!node.looks?.['']}>
+        <span className="ctx-k"><Ico name="sun" size={13} /></span> Copy look
+        <span className="ctx-note">Ctrl+Alt+C</span>
+      </button>
+      <button className="ctx-item" role="menuitem" onClick={run(() => s.pasteLook(s.selection.includes(id) ? s.selection : [id]))} disabled={!s.lookClipboard}>
+        <span className="ctx-k"><Ico name="sun" size={13} /></span> Paste look
+        <span className="ctx-note">Ctrl+Alt+V</span>
+      </button>
+
       {!isRoot && (
         <>
           <button className="ctx-item" role="menuitem" onClick={run(() => s.duplicateAll([id]))} disabled={node.locked === true}>

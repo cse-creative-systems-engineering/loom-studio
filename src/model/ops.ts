@@ -7,7 +7,7 @@
  * operation set be driven by a human drag or by an AI assistant.
  */
 
-import { cleanLight, cleanLookSet, cloneLookSet } from './look'
+import { cleanLight, cleanLookSet, cleanStyles, cloneLookSet } from './look'
 import { cleanActions } from './actions'
 import type { Document, Node, NodeId, Op, PropValue } from './types'
 import { cleanPage } from './page'
@@ -239,6 +239,14 @@ export function apply(doc: Document, op: Op): Document {
       if (Object.keys(looks).length) node.looks = looks
       else delete node.looks
       return next
+    }
+
+    case 'setStyles': {
+      const meta = { ...next.meta }
+      const styles = op.styles === null ? [] : cleanStyles(op.styles).styles
+      if (styles.length) meta.styles = styles
+      else delete meta.styles
+      return { ...next, meta }
     }
 
     case 'setLight': {
@@ -498,6 +506,10 @@ export function invert(doc: Document, op: Op): Op | undefined {
 
     case 'setLight': {
       return { op: 'setLight', light: doc.meta.light ? { ...doc.meta.light } : null }
+    }
+
+    case 'setStyles': {
+      return { op: 'setStyles', styles: doc.meta.styles ? (JSON.parse(JSON.stringify(doc.meta.styles)) as typeof doc.meta.styles) : null }
     }
 
     case 'setPartStyle': {

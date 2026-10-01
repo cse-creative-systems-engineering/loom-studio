@@ -40,7 +40,7 @@ import { desktopBounds } from '../src/model/desktop-run'
 import { AiTurn, runTool, TOOLS } from '../src/ai/tools'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
-import { BUILTIN_STYLES, DEFAULT_LIGHT, cleanLookSet } from '../src/model/look'
+import { BUILTIN_STYLES, DEFAULT_LIGHT, cleanLookSet, lookStatesFromClassic } from '../src/model/look'
 import { compileLook, easingCss, lookCss, lookRootSelector } from '../src/render/look'
 import { elevationShadows, liftTint, shadeFor } from '../src/render/light'
 import { playClickEffect } from '../src/render/click-fx'
@@ -4676,6 +4676,45 @@ export async function runSelfTest(): Promise<string> {
     const lsRoot = ls.addStarter('light-study', null, 0, 0) as string
     const looked = Object.values(ls.doc.nodes).filter((n) => n.looks?.[''])
     check('the Light study starter arrives with its materials', !!lsRoot && looked.length >= 9 && looked.some((n) => n.looks![''].base.translucency) && looked.some((n) => n.looks![''].click?.length), String(looked.length))
+  }
+
+  // --- 120. Looks in use: the assistant's tools, copy and paste, saved
+  // styles, and the classic interaction styles moving into Appearance.
+  {
+    const st = new EditorStore()
+    const turn = new AiTurn(st)
+    const run = (name: string, args: Record<string, unknown> = {}) => runTool(st, turn, name, args)
+    const b = run('build', { parent_id: null, tree: { type: 'Panel', flow: true, children: [{ type: 'Button', ref: 'btn' }, { type: 'Button', ref: 'two' }, { type: 'DataGrid', ref: 'grid' }] } })
+    const R = (b.ok ? (b.result as { refs: Record<string, string> }).refs : {}) as Record<string, string>
+    const g = run('set_look', { id: R.btn, style: 'gloss', look: { base: { z: 9 } } })
+    check('the assistant gives a component a style, merged with its own changes', g.ok && st.doc.nodes[R.btn!]?.looks?.['']?.base.z === 9 && st.doc.nodes[R.btn!]?.looks?.['']?.base.sheen === 0.7, JSON.stringify(g))
+    check('the assistant styles a part, and an unknown part is refused', run('set_look', { id: R.grid, target: 'header', look: { base: { z: 2 } } }).ok && !run('set_look', { id: R.grid, target: 'nope', style: 'raised' }).ok)
+    check('an unknown style is refused, naming the styles', !run('set_look', { id: R.btn, style: 'shiny' }).ok)
+    run('set_light', { angle: 120, height: 20 })
+    check('the assistant moves the scene light', st.doc.meta.light?.angle === 120 && st.doc.meta.light?.height === 20)
+    const docOut = run('get_document')
+    check('get_document reports looks and the light', JSON.stringify(docOut).includes('"sheen":0.7') && JSON.stringify(docOut).includes('"angle":120'))
+
+    // Copy look / paste look: one undo step for any number of targets.
+    check('copy look takes a component\'s look', st.copyLook(R.btn) && st.lookClipboard?.base.z === 9)
+    const h = st.history.length
+    st.pasteLook([R.two!])
+    check('paste look puts it on another, as one undo step', st.doc.nodes[R.two!]?.looks?.['']?.base.sheen === 0.7 && st.history.length === h + 1)
+    st.undo()
+    check('undo takes the pasted look off again', st.doc.nodes[R.two!]?.looks === undefined)
+
+    // Saved styles.
+    const mine = { id: 'brand-chip', label: 'Brand chip', hint: 'x', set: { base: { z: 3, radius: 999 } } }
+    st.commit({ op: 'setStyles', styles: [mine, { id: 'bad id!', label: '', hint: '', set: { base: {} } } as never] }, 'save')
+    check('a document keeps its own styles (bad ones refused)', st.doc.meta.styles?.length === 1 && st.doc.meta.styles[0]!.id === 'brand-chip')
+    const back = validate(serialize(st.doc))
+    check('saved styles survive save and load', back.doc?.meta.styles?.[0]?.label === 'Brand chip' && back.doc?.meta.styles?.[0]?.set.base.radius === 999)
+    st.undo()
+    check('saving a style is undoable', st.doc.meta.styles === undefined)
+
+    // Classic interaction styles move into Appearance unchanged in meaning.
+    const moved = lookStatesFromClassic({ hover: { background: '#112233', shadow: 'md', lift: 2 }, pressed: { scale: 0.97, shadow: 'glow' } })
+    check('classic hover and pressed become look states', moved.hover?.fills?.[0]?.colors[0] === '#112233' && moved.hover?.z === 10 && moved.hover?.lift === 2 && moved.pressed?.scale === 0.97 && !!moved.pressed?.glows?.length, JSON.stringify(moved))
   }
 
   // --- 112. Phase 1: overlays, the page under an export, tones ---------------

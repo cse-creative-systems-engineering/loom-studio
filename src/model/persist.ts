@@ -13,7 +13,7 @@
 
 import { BREAKPOINTS, INTERACTION_STATES, type Breakpoint, type DocMeta, type Document, type InteractionState, type InteractionStyles, type Node, type NodeId } from './types'
 import { cleanPage } from './page'
-import { cleanLight, cleanLookSet } from './look'
+import { cleanLight, cleanLookSet, cleanStyles } from './look'
 import { getComponent, validateProps } from './registry'
 import { clampZ } from './ops'
 import { normalizeEffects } from '../render/effects'
@@ -537,6 +537,11 @@ function validateMeta(input: unknown, issues: ValidationIssue[]): DocMeta {
       typeof a.h === 'number' && Number.isFinite(a.h) && a.h > 0
     if (ok) meta.artboard = { w: Math.round(a.w as number), h: Math.round(a.h as number) }
     else issues.push({ path: '$.meta.artboard', message: 'expected { w, h } positive finite numbers (dropped)' })
+  }
+  if (m.styles !== undefined) {
+    const { styles, dropped } = cleanStyles(m.styles)
+    for (const d of dropped) issues.push({ path: '$.meta.styles', message: `${d} (dropped)` })
+    if (styles.length) meta.styles = styles
   }
   if (m.light !== undefined) {
     const light = cleanLight(m.light)

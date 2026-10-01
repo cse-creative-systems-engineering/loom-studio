@@ -35,6 +35,7 @@ import {
   STROKE_POSITIONS,
   STROKE_STYLES,
   mergeLook,
+  lookStatesFromClassic,
   type Look,
   type LookFill,
   type LookGlow,
@@ -242,6 +243,51 @@ export function LightDial({ s }: { s: EditorStore }) {
   )
 }
 
+/** Outline one part (or the whole component) on the canvas while its chip is pointed at. */
+function markPart(id: string, part: string, on: boolean): void {
+  const sel = part ? `.surface [data-loom-part~="${CSS.escape(`${id}/${part}`)}"]` : `.surface [data-loom-id="${CSS.escape(id)}"]`
+  document.querySelectorAll('.surface [data-loom-point]').forEach((el) => el.removeAttribute('data-loom-point'))
+  if (on) document.querySelectorAll(sel).forEach((el) => el.setAttribute('data-loom-point', ''))
+}
+
+/** "Save as style": name the current look and keep it in this document. */
+function SaveStyle({ s, set }: { s: EditorStore; set: LookSet }) {
+  const [name, setName] = React.useState<string | null>(null)
+  if (name === null)
+    return (
+      <button type="button" className="mini ap-save" onClick={() => setName('')}>
+        Save as style
+      </button>
+    )
+  const save = () => {
+    const label = name.trim()
+    if (!label) return setName(null)
+    const id = `${label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'style'}-${Math.random().toString(36).slice(2, 6)}`
+    s.commit({ op: 'setStyles', styles: [...(s.doc.meta.styles ?? []), { id, label, hint: 'Saved in this document', set: JSON.parse(JSON.stringify(set)) as LookSet }] }, `Save style ${label}`)
+    setName(null)
+  }
+  return (
+    <span className="ap-save-row">
+      <input
+        autoFocus
+        className="ap-hex"
+        aria-label="Style name"
+        placeholder="Name this style"
+        value={name}
+        maxLength={40}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') save()
+          if (e.key === 'Escape') setName(null)
+        }}
+      />
+      <button type="button" className="mini" onClick={save}>
+        Save
+      </button>
+    </span>
+  )
+}
+
 /* ----------------------------------------------------------------- panel -- */
 
 export function AppearancePanel({ s, node, editing, onEditing }: { s: EditorStore; node: Node; editing: string | null; onEditing: (state: LookState | null) => void }) {
@@ -302,6 +348,26 @@ export function AppearancePanel({ s, node, editing, onEditing }: { s: EditorStor
         )}
       </div>
 
+      {target === '' && node.states && Object.keys(node.states).length > 0 && (
+        <div className="ap-classic">
+          <span>This component uses the classic Interaction styles (below).</span>
+          <button
+            type="button"
+            className="mini"
+            onClick={() => {
+              const moved = lookStatesFromClassic(node.states as never)
+              const merged: LookSet = { ...set, states: { ...(set.states ?? {}), ...moved }, motion: set.motion ?? { duration: 160, easing: 'smooth' } }
+              const clear = (['hover', 'focus', 'pressed'] as const)
+                .filter((st) => node.states?.[st])
+                .map((st) => ({ op: 'setStateStyle' as const, id: node.id, state: st, patch: Object.fromEntries(Object.keys(node.states![st]!).map((k) => [k, null])) }))
+              s.commitAll([{ op: 'setLook', id: node.id, target: '', set: merged }, ...clear], 'Move into Appearance')
+            }}
+          >
+            Move into Appearance
+          </button>
+        </div>
+      )}
+
       {Object.keys(parts).length > 0 && (
         <div className="ap-targets" role="tablist" aria-label="What to style">
           {['', ...Object.keys(parts)].map((p) => (
@@ -313,6 +379,11 @@ export function AppearancePanel({ s, node, editing, onEditing }: { s: EditorStor
               className={`ap-target ${target === p ? 'on' : ''} ${styled.includes(p) ? 'styled' : ''}`}
               title={p ? parts[p]?.hint : 'The whole component'}
               onClick={() => setTarget(p)}
+              // Point at it on the canvas, so "Header" is never a guess.
+              onPointerEnter={() => markPart(node.id, p, true)}
+              onPointerLeave={() => markPart(node.id, p, false)}
+              onFocus={() => markPart(node.id, p, true)}
+              onBlur={() => markPart(node.id, p, false)}
             >
               {p ? parts[p]?.label ?? p : 'Whole'}
             </button>
@@ -322,14 +393,31 @@ export function AppearancePanel({ s, node, editing, onEditing }: { s: EditorStor
 
       {tab === 'normal' && (
         <div className="ap-styles" role="group" aria-label="Styles">
-          {BUILTIN_STYLES.map((st) => (
-            <button key={st.id} type="button" className="ap-style" title={st.hint} onClick={() => commitSet(JSON.parse(JSON.stringify(st.set)) as LookSet, `Style: ${st.label}`)}>
-              <span className="ap-style-chip" style={{ ...previewStyle(st.set.base, light, dark), ...(st.id === 'traced' ? { boxShadow: 'inset 0 0 0 1.5px var(--accent)' } : {}) }} aria-hidden="true" />
-              <span className="ap-style-name">{st.label}</span>
-            </button>
-          ))}
+          {[...BUILTIN_STYLES, ...(s.doc.meta.styles ?? [])].map((st) => {
+            const own = !BUILTIN_STYLES.includes(st)
+            return (
+              <span key={st.id} className={`ap-style-wrap ${own ? 'own' : ''}`}>
+                <button type="button" className="ap-style" title={st.hint} onClick={() => commitSet(JSON.parse(JSON.stringify(st.set)) as LookSet, `Style: ${st.label}`)}>
+                  <span className="ap-style-chip" style={{ ...previewStyle(st.set.base, light, dark), ...(st.id === 'traced' ? { boxShadow: 'inset 0 0 0 1.5px var(--accent)' } : {}) }} aria-hidden="true" />
+                  <span className="ap-style-name">{st.label}</span>
+                </button>
+                {own && (
+                  <button
+                    type="button"
+                    className="ap-style-x"
+                    aria-label={`Delete the style ${st.label}`}
+                    title="Delete this saved style"
+                    onClick={() => s.commit({ op: 'setStyles', styles: (s.doc.meta.styles ?? []).filter((x) => x.id !== st.id) }, `Delete style ${st.label}`)}
+                  >
+                    ✕
+                  </button>
+                )}
+              </span>
+            )
+          })}
         </div>
       )}
+      {tab === 'normal' && node.looks?.[target] && <SaveStyle s={s} set={set} />}
 
       <div className="ap-states" role="tablist" aria-label="State">
         {(['normal', ...LOOK_STATES] as Tab[]).map((t) => (

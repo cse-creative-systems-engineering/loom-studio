@@ -11,6 +11,7 @@
  */
 
 import { takeShorthand } from '../model/grid'
+import { cloneLookSet, type LookSet } from '../model/look'
 import { buildStarter, getStarter } from '../model/starters'
 import { dropSize } from '../model/drop-size'
 import { apply, captureSubtree, duplicateSubtree, parentOf, reidentify } from '../model/ops'
@@ -413,6 +414,25 @@ export class EditorStore {
    * this window.
    */
   clipboard: Array<{ id: NodeId; tree: Record<NodeId, Node> }> = []
+
+  /** A copied LOOK (Copy look / Paste look): one component's look, to put on others. */
+  lookClipboard: LookSet | null = null
+
+  /** Copy a node's own look. False when it has none. */
+  copyLook(id: NodeId | undefined = this.selection[0]): boolean {
+    const set = id ? this.doc.nodes[id]?.looks?.[''] : undefined
+    if (!set) return false
+    this.lookClipboard = cloneLookSet(set)
+    this.emit()
+    return true
+  }
+
+  /** Put the copied look on every given node, as ONE undo step. */
+  pasteLook(ids: NodeId[] = this.selection): boolean {
+    if (!this.lookClipboard || ids.length === 0) return false
+    const set = this.lookClipboard
+    return this.commitAll(ids.filter((i) => this.doc.nodes[i]).map((i) => ({ op: 'setLook' as const, id: i, target: '', set: cloneLookSet(set) })), ids.length > 1 ? `Paste look on ${ids.length}` : 'Paste look')
+  }
   private pastes = 0
 
   /** The selection without the nodes already inside another selected node. */
