@@ -33,6 +33,8 @@ export interface RunRequest {
   mcpConfigPath: string
   /** Extra environment: an API key when that is how it signs in. */
   env: Record<string, string>
+  /** Variables removed from the inherited environment (an API key, when the turn runs on a subscription). */
+  stripEnv?: string[]
 }
 
 /** What every turn is told about building in Loom. */
@@ -171,7 +173,9 @@ export function runAgent(r: RunRequest, onEvent: (e: AgentEvent) => void, prefix
   }
   let child: ChildProcess
   try {
-    child = spawn(r.command, [...prefixArgs, ...agentArgs(r, cwd)], { cwd, env: { ...process.env, ...r.env }, stdio: ['ignore', 'pipe', 'pipe'] })
+    const env: NodeJS.ProcessEnv = { ...process.env, ...r.env }
+    for (const k of r.stripEnv ?? []) delete env[k]
+    child = spawn(r.command, [...prefixArgs, ...agentArgs(r, cwd)], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
   } catch (e) {
     finish({ kind: 'done', text: '', sessionId: null, error: `could not start ${r.provider}: ${e instanceof Error ? e.message : String(e)}` })
     return { cancel: () => undefined }

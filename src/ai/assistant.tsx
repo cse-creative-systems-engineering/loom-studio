@@ -18,6 +18,7 @@ interface Provider {
   label: string
   found: string | null
   signedIn: boolean
+  subscription?: boolean
   apiKey: 'env' | 'saved' | null
   models: Array<{ id: string; label: string }>
   ready: boolean
@@ -322,7 +323,7 @@ export function Assistant({ s }: { s: EditorStore }) {
                 <div key={p.id} className="as-menu-group">
                   <div className="as-menu-head">
                     {p.label}
-                    <span className="dim">{p.ready ? (p.signedIn ? 'signed in' : p.apiKey === 'env' ? 'API key (env)' : 'API key') : 'not ready'}</span>
+                    <span className="dim">{p.ready ? (p.subscription ? 'your subscription' : p.signedIn ? 'signed in' : p.apiKey === 'env' ? 'API key (env)' : 'API key') : 'not ready'}</span>
                   </div>
                   {p.models.map((m) => (
                     <button
