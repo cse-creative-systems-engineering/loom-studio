@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and show-and-tell
+    url: https://github.com/cse-creative-systems-engineering/loom-studio/discussions
+    about: Ask, share what you built, or float an idea before it is an issue.

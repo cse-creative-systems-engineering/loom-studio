@@ -1,0 +1,34 @@
+name: This tool falls short
+description: A tool looks generic, lacks a capability real equivalents have, or cannot be styled the way you want.
+labels: [component-depth]
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: Tool
+      placeholder: e.g. DataGrid, Button, Tabs
+    validations:
+      required: true
+  - type: textarea
+    id: gap
+    attributes:
+      label: What falls short
+      description: Compare it with the best real version you know (a product, a design system). What does that one do that this one does not?
+    validations:
+      required: true
+  - type: checkboxes
+    id: bar
+    attributes:
+      label: Which part of the bar (docs/component-depth.md)
+      options:
+        - label: First impression when dropped
+        - label: Visible and findable on the canvas
+        - label: Hierarchy (its parts read as different things)
+        - label: Missing capability
+        - label: Behaviour or keyboard
+        - label: States (hover, focus, loading, empty, error...)
+        - label: Cannot be styled the way I want
+  - type: textarea
+    id: shot
+    attributes:
+      label: Screenshot or reference
