@@ -246,3 +246,45 @@ export function universalStyleProps(rendersText: boolean): Props {
 export const STYLING_KEYS: ReadonlySet<string> = new Set(
   Object.keys({ ...spaceProps(), ...boxProps(), ...textProps(), ...positionProps() }).filter((k) => k !== 'align'),
 )
+
+/**
+ * The content states every data-bearing tool is designed for: a chart, a
+ * metric or a list is also a screen while it loads, when there is nothing to
+ * show, and when loading failed. One vocabulary on every tool (the same three
+ * properties, the same parts, the same look; see `render/content-state.tsx`),
+ * so learning it on one tool is learning it on all of them.
+ */
+export function contentStateProps(emptyMessage = 'Nothing to show yet'): Props {
+  return {
+    loadState: choice(['ready', 'loading', 'empty', 'error'], 'ready', 'State'),
+    emptyMessage: str(emptyMessage, 'Content'),
+    errorMessage: str('Could not load this data', 'Content'),
+  }
+}
+
+/** The parts those states draw, declared once for every tool that has them. */
+export function contentStateParts(): Record<string, { label: string; hint: string; fields: Array<'text' | 'box' | 'surface' | 'layout'> }> {
+  return {
+    message: { label: 'Message', hint: 'The empty, no-match and failed message', fields: ['text', 'layout'] },
+    messageIcon: { label: 'Message icon', hint: 'The circle behind the message\'s icon', fields: ['text', 'box'] },
+    skeleton: { label: 'Loading bars', hint: 'The placeholder shapes while loading (a line placeholder takes the text colour)', fields: ['text', 'box'] },
+    placeholder: { label: 'Loading layout', hint: 'How the placeholder shapes are spaced and framed', fields: ['box', 'layout'] },
+    action: { label: 'Retry button', hint: 'The "Try again" button of a failed load', fields: ['text', 'box', 'layout'] },
+  }
+}
+
+/** The tools that carry the content states, with what each says when empty. */
+export const CONTENT_STATE_TOOLS: Readonly<Record<string, string>> = {
+  BarChart: 'No data yet',
+  LineChart: 'No data yet',
+  Sparkline: 'No data yet',
+  PieChart: 'No data yet',
+  Gauge: 'No reading yet',
+  KpiCard: 'No data yet',
+  Stat: 'No data yet',
+  DataCard: 'Nothing to show yet',
+  DataList: 'Nothing here yet',
+  TreeList: 'This folder is empty',
+  Timeline: 'No activity yet',
+  KanbanColumn: 'No cards in this column',
+}

@@ -33,8 +33,9 @@
  * splits is the document's decision rather than a convention in the renderer.
  */
 
-import { defineComponent, type PropSpec } from '../model/registry'
-import { boxProps, controlProps, flowProps, listProps, scrollProps, spaceProps, textProps } from './prop-vocab'
+import { defineComponent, getComponent, type PropSpec } from '../model/registry'
+import { boxProps, contentStateParts, contentStateProps, CONTENT_STATE_TOOLS, controlProps, flowProps, listProps, scrollProps, spaceProps, textProps } from './prop-vocab'
+import { GROUP_ORDER } from './prop-groups'
 import './catalog1'
 import './catalog2'
 import './conversation'
@@ -395,3 +396,22 @@ defineComponent({
      */
   },
 })
+
+// Content states (loading, empty, failed) on every data-bearing tool: the
+// same three properties and the same parts everywhere, added in one place so
+// no tool can drift from the vocabulary (see render/content-state.tsx).
+for (const [name, empty] of Object.entries(CONTENT_STATE_TOOLS)) {
+  const spec = getComponent(name)
+  if (!spec) throw new Error(`content states: no tool "${name}"`)
+  // Filed into the panel's group order (State before Style...), never
+  // tacked on after the last group.
+  const merged = Object.entries({ ...spec.props, ...contentStateProps(empty) })
+  const rank = (g: string | undefined) => {
+    const i = (GROUP_ORDER as readonly string[]).indexOf(g ?? '')
+    return i < 0 ? GROUP_ORDER.length : i
+  }
+  merged.sort((a, b) => rank(a[1].group) - rank(b[1].group))
+  for (const k of Object.keys(spec.props)) delete spec.props[k]
+  Object.assign(spec.props, Object.fromEntries(merged))
+  spec.parts = { ...(spec.parts ?? {}), ...contentStateParts() }
+}
