@@ -13,6 +13,7 @@
  * its OWN list, never to the list from an earlier drop.
  */
 
+import { takeShorthand } from './grid'
 import type { Node, NodeId, PropValue } from './types'
 import { getComponent, instantiate } from './registry'
 
@@ -115,7 +116,7 @@ export const STARTERS: Starter[] = [
           props: { title: 'Weekly traffic', padding: 18, gap: 10 },
           children: [{ type: 'LineChart', props: { width: 948, height: 180, points: '420,510,480,620,590,710,760', showArea: true, curve: 'smooth', ariaLabel: 'Weekly traffic' } }],
         },
-        { type: 'DataGrid', props: { columns: 'Customer,Plan,Seats,Status', rows: 'Northwind|Team|24|Active;Globex|Enterprise|310|Active;Initech|Starter|5|Trial;Umbrella|Team|48|Past due', ariaLabel: 'Customers' } },
+        { type: 'DataGrid', props: { title: 'Customers', columns: 'Customer,Plan,Seats,MRR,Status', rows: 'Northwind|Team|24|$1,150|Active;Globex|Enterprise|310|$12,400|Active;Initech|Starter|5|$90|Trial;Umbrella|Team|48|$2,300|Past due', ariaLabel: 'Customers' } },
       ],
     },
   },
@@ -228,10 +229,13 @@ export function buildStarter(starter: Starter, newId: () => NodeId): { root: Nod
     const built = instantiate(src.type)
     const id = newId()
     if (src.ref) refs.set(src.ref, id)
+    const props: Record<string, PropValue> = { ...built.props, ...(src.props ?? {}), x: 0, y: 0 }
+    const lists = takeShorthand(src.type, props)
     const node: Node = {
       id,
       type: src.type,
-      props: { ...built.props, ...(src.props ?? {}), x: 0, y: 0 },
+      props,
+      ...(lists ? { lists } : {}),
       children: [],
       flow: src.flow ?? built.flow,
       visible: true,

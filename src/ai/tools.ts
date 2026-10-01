@@ -14,6 +14,7 @@
  * the same definitions are what the MCP bridge lists.
  */
 
+import { LIST_SHORTHAND, takeShorthand } from '../model/grid'
 import type { EditorStore } from '../state/store'
 import type { Node, NodeId, Op, PropValue } from '../model/types'
 import { allComponents, addedTypes, acceptsChild, getComponent, instantiate, valueMatches, type PropSpec } from '../model/registry'
@@ -291,6 +292,12 @@ function validProps(type: string, raw: unknown): { ok: Record<string, PropValue>
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('"props" must be an object')
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     const ps = spec.props[k]
+    // Shorthand for a list ("columns": "Name,Role,Amount"), turned into the
+    // list when the node is made.
+    if (!ps && LIST_SHORTHAND[type]?.includes(k) && typeof v === 'string') {
+      ok[k] = v
+      continue
+    }
     if (!ps) {
       rejected.push(`${k}: not a property of ${type}`)
       continue
@@ -855,10 +862,13 @@ function copySubtree(doc: EditorStore['doc'], id: NodeId): { root: Node; tree: R
 /** A node as a toolbox drop makes it (defaults, drop size), with these props. */
 function instantiateFor(type: string, props: Record<string, PropValue>, x: number, y: number, id: string, intoFlow: boolean): Node {
   const made = instantiate(type)
+  const all: Record<string, PropValue> = { ...made.props, ...dropSize(type, intoFlow), ...props, x, y }
+  const lists = takeShorthand(type, all)
   return {
     id,
     type,
-    props: { ...made.props, ...dropSize(type, intoFlow), ...props, x, y },
+    props: all,
+    ...(lists ? { lists } : {}),
     children: [],
     flow: made.flow,
     visible: true,

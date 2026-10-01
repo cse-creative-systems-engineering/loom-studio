@@ -40,7 +40,7 @@ const ROOT_PHRASE: Record<string, string> = {
 const ITEM_PHRASE: Record<string, string> = {
   Tabs: 'Tabs switch on click and reveal their panels.',
   TabBar: 'Tabs switch on click.',
-  DataGrid: 'Columns sort on click, rows filter as you type, and ticked rows reveal the bulk bar.',
+  DataGrid: 'Columns sort on click, search filters as you type, ticked rows swap the toolbar for bulk actions, and Export downloads a CSV.',
   Pagination: 'Page numbers change on click.',
   ProgressDots: 'Dots jump to that step on click.',
   Stepper: 'Advances on click.',
@@ -62,8 +62,8 @@ const CAVEATS: Record<string, string[]> = {
     'HeaderBar and SidebarPanel still work alone — the shell just composes them.',
   ],
   DataGrid: [
-    'columns and rows are lists: set columnsSep, rowSep and cellSep.',
-    'A cell cannot contain the row separator — the row split happens first.',
+    'Each column is a definition in the panel: its type (money, status, person, progress, date...) decides how it is drawn, sorted and totalled.',
+    'Rows are a delimited table: paste from a spreadsheet, or set rowSep and cellSep.',
   ],
   Field: [
     'Any control drops inside and picks up the field’s validation state.',

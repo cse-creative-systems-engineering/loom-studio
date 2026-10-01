@@ -286,51 +286,119 @@ defineComponent({ name: 'Kbd', category: 'Text', icon: '⌨', description: "The 
 // tools doing one job is exactly the toolbox bloat we do not ship. (The old
 // Table was also subtly broken — its default rows were comma-separated while
 // its renderer split on `|`, so it rendered one column per row.)
-defineComponent({ name: 'DataGrid', category: 'Data', icon: '▦', description: 'Sortable, filterable data grid with selection and bulk actions.', props: {
-  // The headers split on the SAME separator as the row data, and the default
-  // data now matches its own default separator: the old default was
-  // pipe-separated while the separator defaulted to a comma, so a dropped grid
-  // rendered ONE column called "Name|Role|Amount|Status".
-  columns: { type: 'string', default: 'Name,Role,Amount,Status', group: 'Content', bindable: true },
-  rows: { type: 'string', default: 'Ada|Engineer|128,400|Active;Grace|Designer|96,100|Active;Alan|PM|74,900|Away;Edsger|Engineer|151,300|Active', group: 'Content', bindable: true },
-  columnsSep: { type: 'delimiter', default: 'comma', group: 'Content' },
+defineComponent({ name: 'DataGrid', category: 'Data', icon: '▦', description: 'A real data grid: typed columns, sorting, filtering, selection, totals, paging and CSV export.', props: {
+  // The grid's own heading, and the live row count beside it. A grid without
+  // a title is a table someone has to explain.
+  title: { type: 'string', default: 'Customers', group: 'Content' },
+  showCount: { type: 'boolean', default: true, group: 'Data' },
+  // The DATA. Columns are rows of the grid's panel (see `lists.columns`):
+  // what each one holds, how it is drawn, how wide, pinned, totalled. The
+  // cells stay a delimited table so a paste from a spreadsheet is the data.
+  rows: { type: 'string', default: 'Ada Lovelace|Enterprise|310|12400|82|Active|2026-11-04;Grace Hopper|Team|24|1150|64|Active|2026-10-18;Alan Turing|Starter|5|90|23|Trial|2026-10-02;Edsger Dijkstra|Team|48|2300|91|Past due|2026-09-29;Barbara Liskov|Enterprise|120|5800|47|Active|2027-01-12', group: 'Content', bindable: true },
+  rowSep: { type: 'delimiter', default: 'semicolon', group: 'Content' },
+  cellSep: { type: 'delimiter', default: 'pipe', group: 'Content' },
+  // Money is money in ONE currency per grid; a column says it is money, the
+  // grid says which.
+  currency: { type: 'enum', options: ['USD', 'EUR', 'GBP', 'JPY', 'INR', 'CAD', 'AUD'], default: 'USD', group: 'Content' },
+  searchPlaceholder: { type: 'string', default: 'Search', group: 'Content' },
+  emptyMessage: { type: 'string', default: 'Nothing to show yet', group: 'Content' },
+  errorMessage: { type: 'string', default: 'Could not load this data', group: 'Content' },
+  bulkActions: { type: 'string', default: 'Export,Archive,Delete', group: 'Content' },
+  bulkActionsSep: { type: 'delimiter', default: 'comma', group: 'Content' },
+  rowMenu: { type: 'string', default: 'Open,Duplicate,Delete', group: 'Content' },
+  rowMenuSep: { type: 'delimiter', default: 'comma', group: 'Content' },
+  // What it does. Every one of these WORKS in Preview and in the export.
   selectable: { type: 'boolean', default: true, group: 'Behaviour' },
   sortable: { type: 'boolean', default: true, group: 'Behaviour' },
   search: { type: 'boolean', default: true, group: 'Behaviour' },
+  columnPicker: { type: 'boolean', default: true, group: 'Behaviour' },
+  exportCsv: { type: 'boolean', default: true, group: 'Behaviour' },
+  resizable: { type: 'boolean', default: true, group: 'Behaviour' },
   rowActions: { type: 'boolean', default: true, group: 'Behaviour' },
-  // Row hover, and the rules that go with a table: which header row exists,
-  // and whether the frame is drawn at all.
   hoverable: { type: 'boolean', default: true, group: 'Behaviour' },
-  showHeader: { type: 'boolean', default: true, group: 'Content' },
-  borderless: { type: 'boolean', default: false, group: 'Style' },
-  // The state a grid OPENS in. Sorting is re-done by the behaviour runtime on
-  // click, so this is the authored initial order, not a second mechanism.
+  // Rows per page; 0 shows every row.
+  pageSize: { type: 'number', default: 0, min: 0, max: 500, group: 'Behaviour' },
+  // The state a grid OPENS in, and the states a designer has to design for:
+  // loading, empty and failed are screens too.
   sortColumn: { type: 'number', default: -1, min: -1, max: 64, group: 'State' },
   sortDirection: { type: 'enum', options: ['none', 'asc', 'desc'], default: 'none', group: 'State' },
-  // What the filter field says, and what an empty result says. Both are copy,
-  // and both are the ones a designer is asked to change first.
-  searchPlaceholder: { type: 'string', default: 'Filter rows', group: 'Content' },
-  emptyMessage: { type: 'string', default: 'No rows match this filter', group: 'Content' },
-  striped: { type: 'boolean', default: true, group: 'Style' },
-  freezeFirst: { type: 'boolean', default: false, group: 'Layout' },
+  loadState: { type: 'enum', options: ['ready', 'loading', 'empty', 'error'], default: 'ready', group: 'State' },
+  // The look. The header is its own band, never a row like the data.
+  showHeader: { type: 'boolean', default: true, group: 'Content' },
+  headerStyle: { type: 'enum', options: ['band', 'plain', 'bold'], default: 'band', group: 'Style' },
+  headerCase: { type: 'enum', options: ['normal', 'uppercase'], default: 'normal', group: 'Style' },
+  gridLines: { type: 'enum', options: ['rows', 'all', 'none'], default: 'rows', group: 'Style' },
+  striped: { type: 'boolean', default: false, group: 'Style' },
+  borderless: { type: 'boolean', default: false, group: 'Style' },
   density: { type: 'enum', options: ['compact', 'normal', 'roomy'], default: 'normal', group: 'Layout' },
   height: { type: 'number', default: 0, group: 'Layout' },
-  // A grid that scrolls keeps its header on screen. Off by default would be a
-  // lie in the other direction, so it matches what the renderer draws.
   stickyHeader: { type: 'boolean', default: true, group: 'Layout' },
-  bulkActions: { type: 'string', default: 'Archive,Export,Delete', group: 'Content' },
-  bulkActionsSep: { type: 'delimiter', default: 'comma', group: 'Content' },
-  rowSep: { type: 'delimiter', default: 'semicolon', group: 'Content' },
-  cellSep: { type: 'delimiter', default: 'pipe', group: 'Content' },
   // The frame. NOT `...textProps()`: every cell sets its own size and colour,
   // so a `fontSize` here would be inherited and then overridden — a control
   // that appears to work and does not.
   ...boxProps(),
   ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
+}, lists: {
+  // A column is a definition, as in every real grid: what it holds decides how
+  // it is drawn, aligned, sorted and totalled. The Nth column reads the Nth
+  // cell of each row.
+  columns: {
+    label: 'Columns',
+    itemLabel: 'Column',
+    titleField: 'label',
+    max: 64,
+    fields: {
+      label: { type: 'string', default: 'Column', group: 'Content' },
+      type: { type: 'enum', options: ['text', 'number', 'currency', 'percent', 'change', 'date', 'status', 'person', 'progress', 'check', 'link', 'tags'], default: 'text', group: 'Content' },
+      // 0 sizes to its content.
+      width: { type: 'number', default: 0, min: 0, max: 800, group: 'Layout' },
+      align: { type: 'enum', options: ['auto', 'left', 'center', 'right'], default: 'auto', group: 'Layout' },
+      pinned: { type: 'boolean', default: false, group: 'Layout' },
+      wrap: { type: 'boolean', default: false, group: 'Layout' },
+      sortable: { type: 'boolean', default: true, group: 'Behaviour' },
+      hidden: { type: 'boolean', default: false, group: 'Behaviour' },
+      // Digits after the point for number, money and percent; -1 keeps the data's.
+      decimals: { type: 'number', default: -1, min: -1, max: 6, group: 'Content' },
+      total: { type: 'enum', options: ['none', 'sum', 'average', 'min', 'max', 'count'], default: 'none', group: 'Content' },
+      // Status colours: "Active=success, Past due=danger". Empty reads the
+      // usual words (active, paid, failed, pending...).
+      tones: { type: 'string', default: '', group: 'Style' },
+      help: { type: 'string', default: '', group: 'Content' },
+    },
+    default: [
+      { label: 'Customer', type: 'person', width: 0, align: 'auto', pinned: true, wrap: false, sortable: true, hidden: false, decimals: -1, total: 'count', tones: '', help: '' },
+      { label: 'Plan', type: 'tags', width: 0, align: 'auto', pinned: false, wrap: false, sortable: true, hidden: false, decimals: -1, total: 'none', tones: '', help: '' },
+      { label: 'Seats', type: 'number', width: 0, align: 'auto', pinned: false, wrap: false, sortable: true, hidden: false, decimals: -1, total: 'sum', tones: '', help: '' },
+      { label: 'MRR', type: 'currency', width: 0, align: 'auto', pinned: false, wrap: false, sortable: true, hidden: false, decimals: 0, total: 'sum', tones: '', help: 'Monthly recurring revenue' },
+      { label: 'Usage', type: 'progress', width: 140, align: 'auto', pinned: false, wrap: false, sortable: true, hidden: false, decimals: -1, total: 'average', tones: '', help: '' },
+      { label: 'Status', type: 'status', width: 0, align: 'auto', pinned: false, wrap: false, sortable: true, hidden: false, decimals: -1, total: 'none', tones: '', help: '' },
+      { label: 'Renewal', type: 'date', width: 0, align: 'auto', pinned: false, wrap: false, sortable: true, hidden: false, decimals: -1, total: 'none', tones: '', help: '' },
+    ],
+  },
 }, parts: {
-  header: { label: 'Header', hint: 'The column titles', fields: ['text', 'box'], lines: true },
+  toolbar: { label: 'Toolbar', hint: 'The band above the grid that holds the title, search and tools', fields: ['box', 'layout'] },
+  title: { label: 'Title', hint: 'The grid\'s heading and its row count', fields: ['text', 'layout'] },
+  count: { label: 'Count', hint: 'The live row count beside the title', fields: ['text', 'box'] },
+  search: { label: 'Search', hint: 'The search field', fields: ['text', 'box', 'layout'] },
+  tool: { label: 'Tool buttons', hint: 'Columns, Export, the bulk actions and the pager', fields: ['text', 'box', 'layout'] },
+  bulk: { label: 'Bulk bar', hint: 'The bar a selection shows, and its count', fields: ['text', 'box', 'layout'] },
+  menu: { label: 'Menus', hint: 'The row-actions and column-picker menus', fields: ['text', 'box'] },
+  menuItem: { label: 'Menu items', hint: 'Each command or column in a menu', fields: ['text', 'box', 'layout'] },
+  header: { label: 'Header', hint: 'The column titles band', fields: ['text', 'box', 'surface'], lines: true },
+  columnTitle: { label: 'Column titles', hint: 'A title with its help and sort marks', fields: ['layout'] },
+  marks: { label: 'Sort & help marks', hint: 'The sort carets and the help mark in a header', fields: ['text', 'layout'] },
   row: { label: 'Rows', hint: 'Each data row, behind its cells', fields: ['surface'] },
   cell: { label: 'Cells', hint: 'Every data cell', fields: ['text', 'box'], lines: true },
+  content: { label: 'Rich content', hint: 'Inside a rich cell: a name beside its avatar, a bar beside its number, a row of tags', fields: ['text', 'layout'] },
+  avatar: { label: 'Avatars', hint: 'The initials circle of a person column', fields: ['text', 'box'] },
+  pill: { label: 'Pills', hint: 'Status pills and tags', fields: ['text', 'box', 'layout'] },
+  dot: { label: 'Status dots', hint: 'The dot inside a status pill; its background overrides the tone', fields: ['box'] },
+  bar: { label: 'Usage bars', hint: 'The track of a progress column', fields: ['box'] },
+  barFill: { label: 'Usage fill', hint: 'The filled part of a progress bar', fields: ['box'] },
+  footer: { label: 'Footer', hint: 'Totals and paging', fields: ['text', 'box', 'surface'] },
+  message: { label: 'Message', hint: 'The empty, no-match and failed message', fields: ['text', 'layout'] },
+  messageIcon: { label: 'Message icon', hint: 'The circle behind the message\'s icon', fields: ['text', 'box'] },
+  skeleton: { label: 'Loading bars', hint: 'The placeholder bars while loading', fields: ['box'] },
 }})
 defineComponent({ name: 'Stat', category: 'Data', icon: '📊', description: 'KPI stat with delta.', props: {
   label: { type: 'string', default: 'Revenue', group: 'Content' },

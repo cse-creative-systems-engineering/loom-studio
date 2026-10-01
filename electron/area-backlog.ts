@@ -82,18 +82,6 @@ export const KNOWN_UNREACHABLE: Record<string, string[]> = {
   // DataCard
   "DataCard|span": ["color", "fontSize", "fontWeight", "letterSpacing", "textTransform"],
   "DataCard|span>span": ["color", "fontSize", "fontWeight"],
-  // DataGrid
-  "DataGrid|div": ["border", "borderWidth", "gap", "paddingX", "paddingY"],
-  "DataGrid|div data-loom-bulk": ["background", "border", "borderWidth", "gap", "paddingX", "paddingY"],
-  "DataGrid|div>button data-loom-b": ["background", "border", "borderWidth", "color", "fontSize", "paddingX", "paddingY", "radius"],
-  "DataGrid|div>input data-loom-filter": ["color", "fontSize"],
-  "DataGrid|div>span": ["color"],
-  "DataGrid|div>span data-loom-bulk-count": ["color", "fontSize", "fontWeight"],
-  "DataGrid|table": ["fontSize"],
-  "DataGrid|table>tbody>tr>td": ["align", "color", "fontSize", "paddingX", "paddingY"],
-  "DataGrid|table>tbody>tr>td>div>button data-loom-menu-trigger": ["color", "paddingX", "paddingY"],
-  "DataGrid|table>tbody>tr>td>div>div data-loom-menu-panel": ["background", "border", "borderWidth", "paddingX", "paddingY", "radius", "shadow"],
-  "DataGrid|table>tbody>tr>td>div>div>div data-loom-b": ["color", "fontSize", "paddingX", "paddingY", "radius"],
   // DataList
   "DataList|div": ["border", "borderWidth", "fontSize", "gap"],
   "DataList|div>span": ["color", "fontWeight"],

@@ -22,6 +22,7 @@ import { hiddenAtStart, targetsOf } from '../model/actions'
 import { FORCE_ATTR, hasStates } from './states'
 import { partAttrs } from './parts'
 import { itemsOf } from '../model/lists'
+import { DataGridView } from './datagrid'
 import type { Document, InteractionState, Node, NodeId, PropValue } from '../model/types'
 
 export interface RenderCtx {
@@ -1358,26 +1359,9 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
     }
     /* ---- catalog2 data ---- */
     case 'DataGrid': {
-      // A grid is a box that scrolls; a fixed height is what turns it from a
-      // table into a grid, because the header has to stay put.
-      const h = num(p.height, 0)
+      // The frame's look (corners, rule, fill, scroll) is the grid module's;
+      // here it only fills its slot, and a designer's own box props win.
       s.width = '100%'
-      if (h > 0) {
-        s.height = px(p.height, 320)
-        s.overflow = 'auto'
-      }
-      s.borderRadius = `${t.radiusLg}px`
-      s.border = p.borderless === true ? 'none' : `1px solid ${t.border}`
-      s.background = t.surface
-      // A bordered grid clips to its own corners; a borderless one only scrolls
-      // when it was given a height to scroll in.
-      s.overflow = p.borderless === true ? (h > 0 ? 'auto' : 'visible') : 'hidden'
-      // Row hover is a stylesheet rule, so switching it OFF has to be said in
-      // the document's own terms: an explicit transparent hover colour. A
-      // boolean that can only ever be "on" would not be a control.
-      if (p.hoverable === false) {
-        (s as React.CSSProperties & Record<string, string>)['--loom-row-hover'] = 'transparent'
-      }
       break
     }
     case 'Stat': {
@@ -4002,227 +3986,9 @@ function renderPreviewBody(
       )
     }
     /* ---- catalog2 data ---- */
-    case 'DataGrid': {
-      // Headers split on the SAME delimiter as the row data (`|`). The old
-      // Table split headers on commas and cells on pipes, so its own default
-      // data rendered as a single column. One convention, or none.
-      const cols = list(p.columns, p.columnsSep)
-      // Rows and cells split on their OWN declared separators, so a value that
-      // contains a comma or a pipe is data, not a delimiter.
-      const rows = str(p.rows)
-        .split(delimiterChar(p.rowSep))
-        .map((r) => r.split(delimiterChar(p.cellSep)).map((c) => c.trim()))
-        .filter((r) => r.some((c) => c !== ''))
-      const density = str(p.density) || 'normal'
-      const rowPad = density === 'compact' ? `${t.space1 + 1}px ${t.space3}px` : density === 'roomy' ? `${t.space3 + 2}px ${t.space3}px` : `${t.space2}px ${t.space3}px`
-      const selectable = p.selectable === true
-      const sortable = p.sortable !== false
-      const searching = p.search === true
-      const rowActions = p.rowActions === true
-      const showHeader = p.showHeader !== false
-      const borderless = p.borderless === true
-      const sticky = p.stickyHeader !== false
-      const bulk = list(p.bulkActions, p.bulkActionsSep)
-      // A column whose every value parses as a number is a number column, and
-      // number columns are right-aligned with tabular figures. This is the
-      // rule that makes a dense table scannable instead of decorative, and
-      // inferring it beats making the designer declare it 12 times.
-      const numericCols = cols.map((_, ci) => {
-        const vals = rows.map((r) => r[ci] ?? '').filter((v) => v !== '')
-        return vals.length > 0 && vals.every((v) => Number.isFinite(Number(v.replace(/[$,%\s]/g, ''))))
-      })
-      // The state the grid OPENS in. The behaviour runtime re-sorts on click, so
-      // this is the authored initial order and nothing more.
-      const sortCol = num(p.sortColumn, -1)
-      const sortDir = str(p.sortDirection) || 'none'
-      const sorted =
-        sortCol >= 0 && sortDir !== 'none' && cols[sortCol]
-          ? [...rows].sort((a, b) => {
-            const av = str(a[sortCol])
-            const bv = str(b[sortCol])
-            const an = Number(av.replace(/[$,%\s]/g, ''))
-            const bn = Number(bv.replace(/[$,%\s]/g, ''))
-            const cmp = Number.isFinite(an) && Number.isFinite(bn) ? an - bn : av.localeCompare(bv)
-            return sortDir === 'desc' ? -cmp : cmp
-          })
-          : rows
-      const bulkId = groupId(node.id, 'bulk')
-      const rowMenu = (i: number) => groupId(node.id, 'row' + i)
-      // A borderless grid has no frame to clip its corners to, and no rules to
-      // break: the same decision, expressed once.
-      const line = borderless ? 'none' : `1px solid ${t.border}`
-
-      return (
-        <div
-          key={key}
-          style={style}
-          data-loom-grid={node.id}
-          data-loom-visible={String(Math.min(sorted.length, 1))}
-          data-loom-selected="0"
-        >
-          {searching && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: `${t.space2}px`, padding: `${t.space2}px ${t.space3}px`, borderBottom: line }}>
-              <span aria-hidden="true" style={{ color: t.textMuted, display: 'inline-flex' }}><IconGlyph value="search" size={14} /></span>
-              <input
-                type="search"
-                data-loom-filter={node.id}
-                placeholder={str(p.searchPlaceholder) || 'Filter rows'}
-                aria-label={str(p.searchPlaceholder) || 'Filter rows'}
-                style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: t.textPrimary, fontSize: `${t.textSm}px` }}
-              />
-            </div>
-          )}
-
-          {/* The bulk bar is CSS-driven: it appears because rows are selected,
-              not because a framework re-rendered. */}
-          {selectable && bulk.length > 0 && (
-            <div data-loom-bulk={bulkId} style={{ display: 'none', alignItems: 'center', gap: `${t.space2}px`, padding: `${t.space2}px ${t.space3}px`, borderBottom: line, background: `${t.accent}14` }}>
-              <span data-loom-bulk-count style={{ fontSize: `${t.textSm}px`, fontWeight: t.weightSemibold, color: t.accent }}>0 selected</span>
-              {bulk.map((b) => (
-                <button key={b} type="button" data-loom-b="press" style={{ background: t.surface, border: `1px solid ${t.borderStrong}`, borderRadius: `${t.radiusSm}px`, color: t.textPrimary, fontSize: `${t.textXs}px`, padding: '4px 10px', cursor: 'pointer' }}>
-                  {b}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: `${t.textSm}px` }} aria-label={str(p.ariaLabel) || undefined}>
-            {showHeader ? (
-              <thead>
-                <tr>
-                  {selectable && (
-                    <th scope="col" {...part('header')} style={{ width: '38px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, textAlign: 'left', padding: rowPad, borderBottom: line }}>
-                      <label style={{ display: 'inline-flex', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          data-loom-ctl=""
-                          data-loom-select-all={node.id}
-                          aria-label="Select all rows"
-                        />
-                        <ControlBox kind="check" />
-                      </label>
-                    </th>
-                  )}
-                  {cols.map((c, ci) => (
-                    <th
-                      key={c}
-                      scope="col"
-                      {...part('header')}
-                      aria-sort={sortCol === ci && sortDir !== 'none' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                      {...(sortable ? { ...behaviourAttrs({ role: 'sort', group: node.id, index: ci }), tabIndex: 0 } : {})}
-                      {...(sortCol === ci && sortDir !== 'none' ? { 'data-loom-sort': sortDir } : {})}
-                      style={{
-                        position: sticky ? 'sticky' : 'static',
-                        top: 0,
-                        background: t.bg,
-                        textAlign: numericCols[ci] ? 'right' : 'left',
-                        padding: rowPad,
-                        borderBottom: line,
-                        color: t.textMuted,
-                        fontSize: `${t.textXs}px`,
-                        fontWeight: t.weightSemibold,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                        whiteSpace: 'nowrap',
-                        cursor: sortable ? 'pointer' : 'default',
-                        ...(p.freezeFirst === true && ci === 0 ? { position: 'sticky', left: 0, zIndex: 2 } : {}),
-                      }}
-                    >
-                      {c}
-                    </th>
-                  ))}
-                  {rowActions && <th scope="col" {...part('header')} style={{ width: '44px', position: sticky ? 'sticky' : 'static', top: 0, background: t.bg, borderBottom: line }} />}
-                </tr>
-              </thead>
-            ) : null}
-            <tbody data-loom-rows>
-              {sorted.map((r, i) => (
-                <tr
-                  key={i}
-                  data-loom-row
-                  {...part('row')}
-                  style={{
-                    background: p.striped === true && i % 2 === 1 ? t.bg : 'transparent',
-                    // Numeric cells get tabular figures so digits line up down
-                    // the column; without this a dense table looks amateur.
-                    fontVariantNumeric: numericCols.some(Boolean) ? 'var(--loom-numeric)' : 'normal',
-                  }}
-                >
-                  {selectable && (
-                    <td {...part('cell')} style={{ padding: rowPad, borderBottom: line, width: '38px' }}>
-                      <label style={{ display: 'inline-flex', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          data-loom-ctl=""
-                          data-loom-select={node.id}
-                          aria-label={`Select row ${i + 1}`}
-                        />
-                        <ControlBox kind="check" />
-                      </label>
-                    </td>
-                  )}
-                  {cols.map((c, ci) => (
-                    <td
-                      key={c + ci}
-                      // Addressed BY COLUMN, not by position: a selectable grid
-                      // puts a checkbox cell and an actions cell in the row, so
-                      // "the third child" is not "the third column" — and
-                      // sorting by position silently sorted the checkbox.
-                      data-loom-cell={ci}
-                      {...part('cell')}
-                      style={{
-                        padding: rowPad,
-                        borderBottom: line,
-                        textAlign: numericCols[ci] ? 'right' : 'left',
-                        color: t.textPrimary,
-                        whiteSpace: 'nowrap',
-                        ...(p.freezeFirst === true && ci === 0
-                          ? { position: 'sticky', left: 0, background: p.striped === true && i % 2 === 1 ? t.bg : t.surface, fontWeight: t.weightMedium }
-                          : {}),
-                      }}
-                    >
-                      {r[ci] ?? ''}
-                    </td>
-                  ))}
-                  {rowActions && (
-                    <td {...part('cell')} style={{ padding: rowPad, borderBottom: line, textAlign: 'right' }}>
-                      <div data-loom-menu={rowMenu(i)} style={{ display: 'inline-block' }}>
-                        <button
-                          type="button"
-                          aria-label={`Row actions for row ${i + 1}`}
-                          data-loom-menu-trigger={rowMenu(i)}
-                          style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', padding: '2px 6px', display: 'inline-flex' }}
-                        >
-                          <IconGlyph value="more" size={16} />
-                        </button>
-                        <div
-                          role="menu"
-                          data-loom-menu-panel={rowMenu(i)}
-                          data-loom-open="0"
-                          style={{ position: 'absolute', zIndex: 30, minWidth: '140px', display: 'none', flexDirection: 'column', padding: '4px', borderRadius: `${t.radiusMd}px`, background: t.surface, border: `1px solid ${t.border}`, boxShadow: t.shadowMd }}
-                        >
-                          {['Open', 'Duplicate', 'Delete'].map((item) => (
-                            <div key={item} role="menuitem" tabIndex={0} data-loom-b="press" style={{ padding: '6px 10px', borderRadius: `${t.radiusSm}px`, fontSize: `${t.textSm}px`, color: t.textPrimary, cursor: 'pointer' }}>
-                              {item}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-              {/* Shown only when a filter matches nothing. */}
-              <tr data-loom-nomatch style={{ display: 'none' }}>
-                <td colSpan={cols.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0)} style={{ padding: `${t.space5}px ${t.space3}px`, textAlign: 'center', color: t.textMuted, fontSize: `${t.textSm}px` }}>
-                  {str(p.emptyMessage) || 'No rows match this filter'}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      )
-    }
+    case 'DataGrid':
+      // Called, not mounted: the canvas draws a body that IS an element.
+      return DataGridView({ node, t, style, reactKey: key, part, inert: ctx.mode !== 'preview', ControlBox, IconGlyph })
     case 'Stat': {
       const size = str(p.size) || 'md'
       const valueSize = size === 'sm' ? t.textLg : size === 'lg' ? t.textXxl : t.textXl
