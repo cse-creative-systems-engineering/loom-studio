@@ -40,6 +40,8 @@ import { desktopBounds } from '../src/model/desktop-run'
 import { AiTurn, runTool, TOOLS } from '../src/ai/tools'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
+import { joinList, joinTable, parsePastedTable, splitList, splitTable } from '../src/model/data-tables'
+import { DataPanel, dataEditorKeys, isListKey } from '../src/data-editors'
 import { CONTENT_STATE_TOOLS } from '../src/model/prop-vocab'
 import { unsupportedProps } from '../src/model/registry'
 import { THEME_NAMES } from '../src/render/theme'
@@ -4525,6 +4527,28 @@ export async function runSelfTest(): Promise<string> {
     }
     check('every data-bearing tool carries the content states, one vocabulary', missing.length === 0, missing.join(', '))
     check('each state is drawn: a skeleton, a message, a retry', blank.length === 0, blank.join(', '))
+  }
+
+  // --- 117. Data, edited as data: lists as rows, tables as cells, and the
+  // separator never the designer's problem (model/data-tables.ts).
+  {
+    check('a list keeps its separator while no item contains it', JSON.stringify(joinList(['Home', 'Docs'], 'comma')) === JSON.stringify({ value: 'Home,Docs', sep: 'comma' }))
+    const tricky = joinList(['Ada, Countess of Lovelace', 'Grace'], 'comma')
+    check('an item containing the separator switches to one it does not contain', tricky.sep === 'pipe' && splitList(tricky.value, tricky.sep).join('/') === 'Ada, Countess of Lovelace/Grace', JSON.stringify(tricky))
+    const t = joinTable([['a|b', 'c;d'], ['e', 'f']], 'semicolon', 'pipe')
+    check('a table picks row and cell separators its cells do not contain, and they differ', t.cellSep !== t.rowSep && JSON.stringify(splitTable(t.value, t.rowSep, t.cellSep)) === JSON.stringify([['a|b', 'c;d'], ['e', 'f']]), JSON.stringify(t))
+    check('a paste from a spreadsheet (tabs) reads as rows and cells', JSON.stringify(parsePastedTable('a\tb\nc\td\n')) === JSON.stringify([['a', 'b'], ['c', 'd']]))
+    check('a CSV paste keeps quoted commas', JSON.stringify(parsePastedTable('name,amount\n"Smith, J","1,200"')) === JSON.stringify([['name', 'amount'], ['Smith, J', '1,200']]))
+    const st = new EditorStore()
+    st.addComponent('Panel', null, 0, 0)
+    const g = st.addComponent('DataGrid', st.doc.root as string, 0, 0) as string
+    const bar = st.addComponent('BarChart', st.doc.root as string, 0, 0) as string
+    const menu = st.addComponent('Breadcrumbs', st.doc.root as string, 0, 0) as string
+    const gridPanel = renderToStaticMarkup(React.createElement(DataPanel, { s: st, node: st.doc.nodes[g]! }))
+    const barPanel = renderToStaticMarkup(React.createElement(DataPanel, { s: st, node: st.doc.nodes[bar]! }))
+    check('a grid\'s rows are a table of cells under its column titles', gridPanel.includes('aria-label="Customer, row 1"') && gridPanel.includes('value="Ada Lovelace"'))
+    check('a chart\'s labels and values are one table, kept in step', barPanel.includes('aria-label="Label, row 1"') && barPanel.includes('aria-label="Value, row 1"'))
+    check('a list property is edited as rows; its separator is not shown', isListKey(st.doc.nodes[menu]!, 'trail') && dataEditorKeys(st.doc.nodes[menu]!).has('trailSep') && dataEditorKeys(st.doc.nodes[g]!).has('rows'))
   }
 
   // --- 112. Phase 1: overlays, the page under an export, tones ---------------
