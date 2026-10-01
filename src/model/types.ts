@@ -13,6 +13,7 @@
 
 import type { EffectValues } from '../render/effects'
 import type { NodeActions } from './actions'
+import type { LookSet, SceneLight } from './look'
 
 export type NodeId = string
 
@@ -82,6 +83,13 @@ export interface Node {
    * state, carried only for the states a node actually styles.
    */
   states?: InteractionStyles
+  /**
+   * LOOKS: how the node (key '') and each of its named parts are made
+   * physical: fills, strokes, glows, height above the page, bevel, sheen,
+   * texture, per-state patches, motion and click effects, all lit by the
+   * document's scene light (see model/look.ts). Only targets with a look.
+   */
+  looks?: Record<string, LookSet>
   /**
    * Styling for the named inner parts of a composite (a grid's header, a KPI's
    * value). Universal props style a component's ROOT, and inner parts style
@@ -236,6 +244,8 @@ export interface DocMeta {
    * page where the platform can (a window's native material).
    */
   page?: PageBackground
+  /** The scene light every look is shaded by; absent means the default sun. */
+  light?: SceneLight
   created: number
 }
 
@@ -351,6 +361,10 @@ export type Op =
    */
   | { op: 'setTheme'; theme: string | null }
   | { op: 'setPage'; page: PageBackground | null }
+  /** Replace one target's look whole ('' = the node itself, else a part). null removes it. */
+  | { op: 'setLook'; id: NodeId; target: string; set: LookSet | null }
+  /** Set the scene light; null returns to the default sun. */
+  | { op: 'setLight'; light: SceneLight | null }
 
 /** An op plus enough context to describe it in the undo history. */
 export interface OpFrame {

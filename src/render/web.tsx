@@ -25,6 +25,7 @@ import { itemsOf } from '../model/lists'
 import { DataGridView } from './datagrid'
 import { contentStateBody } from './content-state'
 import { emphasisStyle, fieldSurface } from './vocab'
+import { CHILDLESS_ATTR, hasLook } from './look'
 import type { Document, InteractionState, Node, NodeId, PropValue } from '../model/types'
 
 export interface RenderCtx {
@@ -45,7 +46,7 @@ export interface RenderCtx {
    * Authoring only: show this node in an interaction state without the
    * pointer, so the state being edited is the state on screen.
    */
-  forceState?: { id: NodeId; state: InteractionState }
+  forceState?: { id: NodeId; state: InteractionState | 'selected' | 'disabled' }
   /**
    * Tooling only (the customization audit): in preview output, EVERY node and
    * every declared part carries its hook, so each element can be attributed
@@ -1827,7 +1828,7 @@ function renderPreviewNode(
   // Where a control sits among its siblings is what makes a group work: the
   // Nth TabPanel belongs to the Nth tab.
   const parentId = parentOf(ctx.doc, node.id)
-  const style = styleFor(node, flowChild, t, onGlass(ctx.doc, node.id))
+  const style = translucent(node, styleFor(node, flowChild, t, onGlass(ctx.doc, node.id)))
   // Theme colours reach the behaviour stylesheet as custom properties, so the
   // rules that draw a pressed/toggled/active state can reference them without
   // the renderer hard-coding a second copy of the theme. Inherited, so one
@@ -1917,13 +1918,37 @@ function withActions(node: Node, el: React.ReactElement, ctx: RenderCtx): React.
  * Only nodes that NEED it carry it, so a plain export stays free of hooks.
  */
 function withOutputHook(node: Node, el: React.ReactElement, always = false): React.ReactElement {
-  if (!always && !isResponsive(node) && !hasStates(node)) return el
+  if (!always && !isResponsive(node) && !hasStates(node) && !hasLook(node)) return el
   if (el.type === React.Fragment) {
     if (always) return el
     // Fail loudly: an override that cannot attach would silently not apply.
     throw new Error(`${node.type} has no root element, so its overrides and states cannot apply`)
   }
-  return React.cloneElement(el, { [OUTPUT_HOOK]: node.id } as Record<string, unknown>)
+  return React.cloneElement(el, { [OUTPUT_HOOK]: node.id, ...clickAttrs(node) } as Record<string, unknown>)
+}
+
+/**
+ * A look's translucency: the component's OWN surface made see-through, so
+ * glass keeps its colour (a primary button stays blue, just frosted) instead
+ * of being painted over with white. Done here, where the surface colour is
+ * known; a gradient or image surface is left as it is.
+ */
+function translucent(node: Node, style: React.CSSProperties): React.CSSProperties {
+  const tr = node.looks?.['']?.base.translucency
+  if (!(typeof tr === 'number' && tr > 0)) return style
+  const keep = `${Math.round((1 - Math.min(0.95, tr)) * 100)}%`
+  const mix = (v: unknown) => (typeof v === 'string' && v !== '' && v !== 'transparent' && !/gradient|url\(/.test(v) ? `color-mix(in srgb, ${v} ${keep}, transparent)` : v)
+  const out = { ...style }
+  if (out.background !== undefined) out.background = mix(out.background) as string
+  if (out.backgroundColor !== undefined) out.backgroundColor = mix(out.backgroundColor) as string
+  return out
+}
+
+/** What a click plays (looks): read by the behaviour runtime, on the canvas too. */
+function clickAttrs(node: Node): Record<string, string> {
+  const set = node.looks?.['']
+  if (!set?.click?.length) return {}
+  return { 'data-loom-click': set.click.join(' '), ...(set.clickColor ? { 'data-loom-click-color': set.clickColor } : {}) }
 }
 
 /** The node's own element, with no effect decoration. */
@@ -5316,7 +5341,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     return renderPreviewNode(node, flowChild, children, key, t, ctx)
   }
 
-  const authored = styleFor(node, flowChild, t, onGlass(ctx.doc, id))
+  const authored = translucent(node, styleFor(node, flowChild, t, onGlass(ctx.doc, id)))
 
   // The atmosphere layer: grain / glass / aurora / spotlight / shimmer / glow
   // / tilt / chromatic, declared in render/effects.tsx and gated by target
@@ -5350,6 +5375,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
       ? { 'data-loom-hint': `${node.name || (typeof node.props.title === 'string' && node.props.title.trim()) || node.type.replace(/([a-z])([A-Z])/g, '$1 $2')} · drop components here` }
       : {}),
     'data-loom-hidden': node.visible === false ? 'true' : 'false',
+    ...clickAttrs(node),
     'data-loom-locked': node.locked === true ? 'true' : 'false',
     // On the canvas the design is edited, not used: its own buttons and links
     // are not tab stops (Tab walked into the design's Apply and Reset before
@@ -5408,7 +5434,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
       return (
         <div key={key} {...common} style={outer}>
           {eff.layers}
-          {React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { style: fill, inert: true, tabIndex: -1 })}
+          {React.cloneElement(body as React.ReactElement<Record<string, unknown>>, { style: fill, inert: true, tabIndex: -1, [CHILDLESS_ATTR]: '' })}
         </div>
       )
     }

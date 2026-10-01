@@ -7,6 +7,7 @@
  * operation set be driven by a human drag or by an AI assistant.
  */
 
+import { cleanLight, cleanLookSet, cloneLookSet } from './look'
 import { cleanActions } from './actions'
 import type { Document, Node, NodeId, Op, PropValue } from './types'
 import { cleanPage } from './page'
@@ -17,7 +18,7 @@ import { acceptsChild, getComponent, normalizeProps } from './registry'
 // nominal purity of not importing it.
 import { normalizeEffects } from '../render/effects'
 import { cleanStateStyle } from '../render/states'
-import { cleanPartStyle } from '../render/parts'
+import { cleanPartStyle, partsOf } from '../render/parts'
 import { cleanList, itemsOf, normalizeLists } from './lists'
 
 let counter = 0
@@ -225,6 +226,29 @@ export function apply(doc: Document, op: Op): Document {
       return next
     }
 
+    case 'setLook': {
+      const node = next.nodes[op.id]
+      if (!node) return doc
+      // Only a part the component declares (or the node itself) takes a look,
+      // and only what survives the sanitiser lands, whoever sent the op.
+      if (op.target !== '' && !partsOf(node.type)?.[op.target]) return doc
+      const clean = op.set === null ? null : cleanLookSet(op.set).set
+      const looks = { ...(node.looks ?? {}) }
+      if (clean === null) delete looks[op.target]
+      else looks[op.target] = clean
+      if (Object.keys(looks).length) node.looks = looks
+      else delete node.looks
+      return next
+    }
+
+    case 'setLight': {
+      const meta = { ...next.meta }
+      const light = op.light === null ? null : cleanLight(op.light)
+      if (light === null) delete meta.light
+      else meta.light = light
+      return { ...next, meta }
+    }
+
     case 'setPartStyle': {
       const node = next.nodes[op.id]
       if (!node) return doc
@@ -360,6 +384,7 @@ function cloneNode(node: Node): Node {
     ...(getComponent(node.type)?.lists ? { lists: normalizeLists(node) } : {}),
     // Its own copy: a duplicate's wiring is remapped in place (remapRefs).
     ...(node.actions ? { actions: JSON.parse(JSON.stringify(node.actions)) } : {}),
+    ...(node.looks ? { looks: JSON.parse(JSON.stringify(node.looks)) } : {}),
     z: clampZ(node.z ?? 0),
   }
 }
@@ -462,6 +487,17 @@ export function invert(doc: Document, op: Op): Op | undefined {
       const node = doc.nodes[op.id]
       if (!node) return undefined
       return { op: 'setStartsHidden', id: op.id, on: node.startsHidden === true }
+    }
+
+    case 'setLook': {
+      const node = doc.nodes[op.id]
+      if (!node) return undefined
+      const before = node.looks?.[op.target]
+      return { op: 'setLook', id: op.id, target: op.target, set: before ? cloneLookSet(before) : null }
+    }
+
+    case 'setLight': {
+      return { op: 'setLight', light: doc.meta.light ? { ...doc.meta.light } : null }
     }
 
     case 'setPartStyle': {

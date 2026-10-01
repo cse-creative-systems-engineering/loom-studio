@@ -40,6 +40,10 @@ import { desktopBounds } from '../src/model/desktop-run'
 import { AiTurn, runTool, TOOLS } from '../src/ai/tools'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
+import { BUILTIN_STYLES, DEFAULT_LIGHT, cleanLookSet } from '../src/model/look'
+import { compileLook, easingCss, lookCss, lookRootSelector } from '../src/render/look'
+import { elevationShadows, liftTint, shadeFor } from '../src/render/light'
+import { playClickEffect } from '../src/render/click-fx'
 import { joinList, joinTable, parsePastedTable, splitList, splitTable } from '../src/model/data-tables'
 import { DataPanel, dataEditorKeys, isListKey } from '../src/data-editors'
 import { CONTENT_STATE_TOOLS, EMPHASES, FIELD_STYLES, FILLS, TONES } from '../src/model/prop-vocab'
@@ -4590,6 +4594,82 @@ export async function runSelfTest(): Promise<string> {
     old.nodes[inp]!.props.variant = 'danger'
     const back = validate(JSON.stringify(old))
     check('an old field variant migrates to the new words, reported', back.doc?.nodes[inp]?.props.variant === 'filled' && back.issues.some((i) => i.message.includes('"danger" is now "filled"')), back.issues.map((i) => i.message).join(' | '))
+  }
+
+  // --- 119. Looks: any component, or any part, made physical and lit by one
+  // scene light (model/look.ts, render/light.ts, render/look.ts).
+  {
+    // The trust boundary: a look becomes stylesheet text.
+    const hostile = cleanLookSet({ base: { z: 999, ink: 'red;}body{display:none', fills: [{ kind: 'solid', colors: ['url(x)'] }], wat: 1 }, states: { nope: {} } })
+    check('a look is sanitised: numbers clamped, unsafe colours and unknown keys dropped and reported',
+      hostile.set?.base.z === 64 && hostile.set?.base.ink === undefined && !hostile.set?.base.fills?.length && hostile.dropped.some((d) => d.includes('ink')) && hostile.dropped.some((d) => d.includes('wat')) && hostile.dropped.some((d) => d.includes('nope')), hostile.dropped.join(' | '))
+
+    const st = new EditorStore()
+    st.addComponent('Panel', null, 0, 0)
+    const btn = st.addComponent('Button', st.doc.root as string, 0, 0) as string
+    const grid = st.addComponent('DataGrid', st.doc.root as string, 0, 0) as string
+    const raised = BUILTIN_STYLES.find((x) => x.id === 'raised')!.set
+    const h0 = st.history.length
+    st.commit({ op: 'setLook', id: btn, target: '', set: raised }, 'look')
+    check('a look is one op, one undo step', st.history.length === h0 + 1 && st.doc.nodes[btn]!.looks?.['']?.base.z === 4)
+    st.undo()
+    check('undo removes it exactly', st.doc.nodes[btn]!.looks === undefined)
+    st.redo()
+    st.commit({ op: 'setLook', id: btn, target: 'nonsense', set: raised }, 'bad')
+    check('a part the component does not declare takes no look', st.doc.nodes[btn]!.looks?.nonsense === undefined)
+    st.commit({ op: 'setLook', id: grid, target: 'header', set: { base: { fills: [{ kind: 'linear', colors: ['#112233', '#445566'], angle: 90, opacity: 1, blend: 'normal' }] }, states: { hover: { glows: [{ color: '#ff0000', size: 10, strength: 1, inner: false }] } } } }, 'part')
+
+    // Shadows come from the light.
+    const shade = shadeFor('light')
+    const left = elevationShadows(10, { angle: 270, height: 45, softness: 0.5, strength: 0.6 }, shade)
+    const right = elevationShadows(10, { angle: 90, height: 45, softness: 0.5, strength: 0.6 }, shade)
+    const overhead = elevationShadows(10, { angle: 90, height: 90, softness: 0.5, strength: 0.6 }, shade)
+    const dx = (sh: string) => Number(/^(-?[\d.]+)px/.exec(sh)?.[1] ?? NaN)
+    check('a shadow falls away from the light', dx(left[2]!) > 0 && dx(right[2]!) < 0, `${left[2]} / ${right[2]}`)
+    check('a light overhead throws no offset', Math.abs(dx(overhead[2]!)) < 0.01, overhead[2])
+    check('every height has the same shadow layers, so a change of state animates', elevationShadows(2, DEFAULT_LIGHT, shade).length === elevationShadows(40, DEFAULT_LIGHT, shade).length)
+    check('a dark theme lifts a raised surface toward the light', liftTint(12, shadeFor('dark')) > 0 && liftTint(12, shade) === 0)
+    check('springs are real curves', /^linear\(0,.*,1\)$/.test(easingCss('spring')) && easingCss('bouncy').split(',').some((v) => Number(v) > 1))
+
+    const css = lookCss(st.doc, resolveTheme(st.doc.meta.theme))
+    check('the look stylesheet carries the base, the states and the motion', css.includes('box-shadow:') && /:hover\{[^}]*box-shadow/.test(css) && /:active/.test(css) && css.includes('transition:'))
+    check('a part\'s state follows its component', css.includes(`${lookRootSelector(grid)}:hover [data-loom-part~=`))
+    check('the editor can force any state, selected and disabled included', css.includes('[data-loom-force="pressed"]') && lookCss({ ...st.doc, nodes: { ...st.doc.nodes, [btn]: { ...st.doc.nodes[btn]!, looks: { '': { base: {}, states: { selected: { z: 2 }, disabled: { opacity: 0.5 } } } } } } }).includes('[data-loom-force="disabled"]'))
+    st.commit({ op: 'setLight', light: { angle: 90, height: 30, softness: 0.2, strength: 1 } }, 'light')
+    check('moving the light changes every shadow', lookCss(st.doc) !== css)
+    check('the light is undoable', (st.undo(), st.doc.meta.light === undefined))
+    st.redo()
+
+    // The output carries what the look needs.
+    st.commit({ op: 'setLook', id: btn, target: '', set: { ...raised, base: { ...raised.base, translucency: 0.5 }, click: ['ripple'], clickColor: '#ff00aa' } }, 'click')
+    const out = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, st.doc.root as string))
+    check('a looked node carries its hook and its click effect in the output', out.includes(`data-loom-node="${btn}"`) && out.includes('data-loom-click="ripple"') && out.includes('data-loom-click-color="#ff00aa"'))
+    check('a looked part carries its hook in the output', out.includes(`data-loom-part="${grid}/header"`))
+    check('see-through keeps the component\'s own colour, made translucent', /data-loom-node="[^"]*"[^>]*style="[^"]*background:color-mix\(in srgb, [^ ]+ 50%, transparent\)/.test(out) || /style="[^"]*background:color-mix\(in srgb, [^ ]+ 50%, transparent\)[^"]*"[^>]*data-loom-node/.test(out))
+    check('the export ships the look stylesheet', emitHtml(st.doc).includes('looks, lit by the scene light'))
+
+    // Files.
+    const back = validate(serialize(st.doc))
+    check('looks and the light survive save and load', JSON.stringify(back.doc?.nodes[btn]?.looks) === JSON.stringify(st.doc.nodes[btn]!.looks) && back.doc?.meta.light?.angle === 90)
+    const bad = JSON.parse(serialize(st.doc)) as { nodes: Record<string, { looks?: unknown }> }
+    bad.nodes[btn]!.looks = { '': { base: { ink: 'expression(alert(1))' } }, bogus: { base: { z: 2 } } }
+    const loaded = validate(JSON.stringify(bad))
+    check('a hostile look in a file is repaired and reported', loaded.doc?.nodes[btn]?.looks === undefined && loaded.issues.some((i) => i.message.includes('ink')) && loaded.issues.some((i) => i.message.includes('no part "bogus"')), loaded.issues.map((i) => i.message).join(' | '))
+
+    // Every built-in style compiles to something real.
+    check('every built-in style compiles and survives the sanitiser', BUILTIN_STYLES.every((x) => cleanLookSet(x.set).set !== null && compileLook(x.set.base, DEFAULT_LIGHT, shade).decls.length > 0))
+
+    // The editor's Play and the runtime draw the same layers.
+    const host = document.createElement('div')
+    host.style.cssText = 'position:absolute;left:-10000px;top:0'
+    host.innerHTML = '<button data-loom-click="ripple sweep pulse" style="width:120px;height:40px">A</button><button data-loom-click="ripple sweep pulse" style="width:120px;height:40px">B</button>'
+    document.body.appendChild(host)
+    const [a, b2] = [...host.querySelectorAll('button')] as HTMLElement[]
+    a!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 0, clientY: 0 }))
+    playClickEffect(b2!)
+    const kinds = (el: HTMLElement) => [...el.querySelectorAll('[data-loom-fxwrap] > span')].map((x) => [...x.attributes].map((at) => at.name).filter((n) => n.startsWith('data-loom')).join()).sort().join('|')
+    check('the editor\'s Play draws exactly what the runtime draws on a click', kinds(a!) !== '' && kinds(a!) === kinds(b2!), `${kinds(a!)} / ${kinds(b2!)}`)
+    host.remove()
   }
 
   // --- 112. Phase 1: overlays, the page under an export, tones ---------------

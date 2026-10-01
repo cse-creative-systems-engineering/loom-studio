@@ -13,6 +13,7 @@
 
 import { BREAKPOINTS, INTERACTION_STATES, type Breakpoint, type DocMeta, type Document, type InteractionState, type InteractionStyles, type Node, type NodeId } from './types'
 import { cleanPage } from './page'
+import { cleanLight, cleanLookSet } from './look'
 import { getComponent, validateProps } from './registry'
 import { clampZ } from './ops'
 import { normalizeEffects } from '../render/effects'
@@ -291,6 +292,28 @@ export function validate(input: unknown): Validated {
       issues.push({ path: `$.nodes.${id}.parts`, message: 'not an object (dropped)' })
       parts = undefined
     }
+    // Looks are stylesheet text as well: each target must be the node itself
+    // ('') or a part the component declares, and every value passes the
+    // same sanitiser the op uses.
+    let looks: Node['looks']
+    if (node.looks !== undefined) {
+      if (!node.looks || typeof node.looks !== 'object' || Array.isArray(node.looks)) {
+        issues.push({ path: `$.nodes.${id}.looks`, message: 'not an object (dropped)' })
+      } else {
+        const declared = partsOf(node.type) ?? {}
+        const bag: NonNullable<Node['looks']> = {}
+        for (const [target, raw] of Object.entries(node.looks as Record<string, unknown>)) {
+          if (target !== '' && !Object.prototype.hasOwnProperty.call(declared, target)) {
+            issues.push({ path: `$.nodes.${id}.looks.${target}`, message: `${node.type} has no part "${target}" (dropped)` })
+            continue
+          }
+          const { set, dropped } = cleanLookSet(raw, target || 'look')
+          for (const d of dropped) issues.push({ path: `$.nodes.${id}.looks`, message: `${d} (dropped)` })
+          if (set) bag[target] = set
+        }
+        if (Object.keys(bag).length) looks = bag
+      }
+    }
     // Item lists: each row checked field by field, like props. A list the
     // component does not declare is dropped; a missing list takes its default.
     let lists: Node['lists']
@@ -344,6 +367,7 @@ export function validate(input: unknown): Validated {
       responsive,
       states,
       parts,
+      ...(looks ? { looks } : {}),
       lists,
       ...(acted.actions ? { actions: acted.actions } : {}),
       ...(node.startsHidden === true ? { startsHidden: true } : {}),
@@ -513,6 +537,11 @@ function validateMeta(input: unknown, issues: ValidationIssue[]): DocMeta {
       typeof a.h === 'number' && Number.isFinite(a.h) && a.h > 0
     if (ok) meta.artboard = { w: Math.round(a.w as number), h: Math.round(a.h as number) }
     else issues.push({ path: '$.meta.artboard', message: 'expected { w, h } positive finite numbers (dropped)' })
+  }
+  if (m.light !== undefined) {
+    const light = cleanLight(m.light)
+    if (light) meta.light = light
+    else issues.push({ path: '$.meta.light', message: 'expected { angle, height, softness, strength } (dropped)' })
   }
   if (m.page !== undefined) {
     const page = cleanPage(m.page)
