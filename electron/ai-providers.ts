@@ -30,6 +30,13 @@ export interface ProviderInfo {
   found: string | null
   /** Signed in with the CLI's own login. */
   signedIn: boolean
+  /**
+   * That login is the person's own SUBSCRIPTION (Claude Pro/Max via
+   * claude.ai, ChatGPT via Codex): the agent then always runs on it, and an
+   * API key in the environment or saved in Loom is NOT passed, so a turn is
+   * never silently billed to an API account instead.
+   */
+  subscription: boolean
   /** An API key is available (environment or saved in Loom). */
   apiKey: 'env' | 'saved' | null
   /** Models offered in the picker; the first is the default. */
@@ -92,10 +99,18 @@ function bundledCodex(): string | null {
   return fs.existsSync(p) ? p : null
 }
 
-function run(cmd: string, args: string[]): Promise<string> {
+function run(cmd: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<string> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 15000, env: process.env }, (_err, stdout, stderr) => resolve(`${stdout}\n${stderr}`))
+    execFile(cmd, args, { timeout: 15000, env }, (_err, stdout, stderr) => resolve(`${stdout}\n${stderr}`))
   })
+}
+
+/** The environment without an API key, so a status check reports the LOGIN, not the key. */
+function withoutKey(id: ProviderId): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  delete env[KEY_ENV[id]]
+  if (id === 'claude') delete env.ANTHROPIC_AUTH_TOKEN
+  return env
 }
 
 /* ---------- saved keys (encrypted by the OS keychain) ---------- */
@@ -143,6 +158,15 @@ export function providerKeyEnv(id: ProviderId): Record<string, string> {
   return k ? { [KEY_ENV[id]]: k } : {}
 }
 
+/**
+ * How a turn signs in: on the person's subscription when they are logged in
+ * with one (any API key is withheld and stripped), otherwise with the key.
+ */
+export function providerAuth(info: Pick<ProviderInfo, 'id' | 'subscription'>): { env: Record<string, string>; strip: string[] } {
+  if (info.subscription) return { env: {}, strip: info.id === 'claude' ? [KEY_ENV.claude, 'ANTHROPIC_AUTH_TOKEN'] : [KEY_ENV.codex] }
+  return { env: providerKeyEnv(info.id), strip: [] }
+}
+
 /* ---------- detection ---------- */
 
 export async function detectProviders(): Promise<ProviderInfo[]> {
@@ -154,13 +178,16 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
     const found = fromPath ? 'path' : bundled ? (id === 'claude' ? 'Claude app' : 'ChatGPT app') : null
     const apiKey = process.env[KEY_ENV[id]] ? 'env' : readSaved()[id] ? 'saved' : null
     let signedIn = false
+    let subscription = false
     if (command) {
       if (id === 'claude') {
-        const s = await run(command, ['auth', 'status'])
+        const s = await run(command, ['auth', 'status'], withoutKey(id))
         signedIn = /"loggedIn"\s*:\s*true/.test(s)
+        subscription = signedIn && /"authMethod"\s*:\s*"claude\.ai"/.test(s)
       } else {
-        const s = await run(command, ['login', 'status'])
+        const s = await run(command, ['login', 'status'], withoutKey(id))
         signedIn = /Logged in/i.test(s)
+        subscription = signedIn && /ChatGPT/i.test(s)
       }
     }
     const label = id === 'claude' ? 'Claude' : 'OpenAI (Codex)'
@@ -171,6 +198,7 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
       command,
       found,
       signedIn,
+      subscription,
       apiKey,
       models: MODELS[id],
       ready,

@@ -9,7 +9,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { desktopBounds, type RunTarget } from '../src/model/desktop-run'
 import { startAiSocket, type AiSocket } from './ai-socket'
-import { detectProviders, providerKeyEnv, saveKey, type ProviderInfo } from './ai-providers'
+import { detectProviders, providerAuth, saveKey, type ProviderInfo } from './ai-providers'
 import { runAgent, type AgentEvent } from './ai-runner'
 import crypto from 'node:crypto'
 import path from 'node:path'
@@ -494,7 +494,7 @@ app.whenReady().then(() => {
     if (!info?.command || !info.ready) return { error: info?.hint ?? 'That assistant is not available.' }
     const model = typeof req.model === 'string' && /^[A-Za-z0-9._:-]{0,80}$/.test(req.model) ? req.model : ''
     const handle = runAgent(
-      { provider: req.provider, command: info.command, model, prompt: req.prompt, sessionId: typeof req.sessionId === 'string' ? req.sessionId : null, mcp: cfg, mcpConfigPath: aiSocket.configPath, env: providerKeyEnv(req.provider) },
+      { provider: req.provider, command: info.command, model, prompt: req.prompt, sessionId: typeof req.sessionId === 'string' ? req.sessionId : null, mcp: cfg, mcpConfigPath: aiSocket.configPath, ...(() => { const auth = providerAuth(info); return { env: auth.env, stripEnv: auth.strip } })() },
       send,
     )
     current = { id: runId, cancel: handle.cancel }
