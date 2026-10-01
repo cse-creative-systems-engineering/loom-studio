@@ -96,7 +96,10 @@ function createWindow() {
     minHeight: 680,
     backgroundColor: '#0b0d13',
     show: false,
-    titleBarStyle: 'hiddenInset',
+    // No OS frame on any platform: the Studio's own title bar is the frame
+    // (drag, double-click to maximise, and its own minimise / maximise /
+    // close), so the window looks and behaves the same everywhere.
+    frame: false,
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),
       contextIsolation: true,
@@ -115,6 +118,11 @@ function createWindow() {
     if (editorWin === win) editorWin = null
   })
   win.once('ready-to-show', () => win.show())
+  // The title bar draws maximise or restore from the real state.
+  const sendState = () => {
+    if (!win.isDestroyed()) win.webContents.send('win:state', { maximized: win.isMaximized(), fullScreen: win.isFullScreen() })
+  }
+  for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen'] as const) win.on(ev as 'maximize', sendState)
 
   const devUrl = process.env.LOOM_DEV_URL
   if (devUrl) {
@@ -554,6 +562,22 @@ app.whenReady().then(() => {
    * contextIsolation, so it cannot reach the filesystem at all — the designed
    * document and the tool that edits it stay in separate trust domains.
    * ------------------------------------------------------------------ */
+
+  // The window's own controls (the editor has no OS frame). Only the editor
+  // may ask, and only about itself.
+  ipcMain.handle('win:control', (e, action: unknown) => {
+    if (!fromEditor(e) || !editorWin) return false
+    const w = editorWin
+    if (action === 'minimize') w.minimize()
+    else if (action === 'toggle-maximize') {
+      if (w.isFullScreen()) w.setFullScreen(false)
+      else if (w.isMaximized()) w.unmaximize()
+      else w.maximize()
+    } else if (action === 'close') w.close()
+    else return false
+    return true
+  })
+  ipcMain.handle('win:state', (e) => (fromEditor(e) && editorWin ? { maximized: editorWin.isMaximized(), fullScreen: editorWin.isFullScreen() } : null))
 
   ipcMain.handle('doc:save', async (e, suggestedName: string, contents: string) => {
     if (!fromEditor(e)) return FORBIDDEN
