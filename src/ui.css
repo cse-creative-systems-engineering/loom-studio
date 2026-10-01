@@ -1868,3 +1868,26 @@ button.layer-twist:hover { color: var(--ink); background: var(--panel-2); }
 .ap-light-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .ap-light-fields .ap-row { grid-template-columns: 56px minmax(0, 1fr) 0; }
 .ap-light-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 10.5px; }
+
+/* The sun on the canvas (SunOverlay): the scene light as something you grab. */
+.sun-overlay { position: absolute; inset: 0; z-index: 40; pointer-events: none; }
+.sun-ring { position: absolute; inset: 0; overflow: visible; }
+.sun-ring circle { fill: none; stroke: rgba(245, 180, 83, 0.45); stroke-width: 1.5; stroke-dasharray: 3 6; }
+.sun-ring circle.inner { stroke: rgba(245, 180, 83, 0.2); }
+.sun-ring circle.centre { fill: rgba(245, 180, 83, 0.6); stroke: none; }
+.sun-ring line { stroke: rgba(245, 180, 83, 0.55); stroke-width: 1.5; }
+.sun-handle {
+  position: absolute; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; border: 0; padding: 0;
+  pointer-events: auto; cursor: grab; touch-action: none;
+  background: radial-gradient(circle at 40% 38%, #fff7d6 0 18%, #ffd36b 40%, #f5a623 70%);
+  box-shadow: 0 0 0 6px rgba(245, 180, 83, 0.18), 0 0 28px 8px rgba(255, 196, 80, 0.55);
+}
+.sun-handle:active { cursor: grabbing; }
+.sun-handle:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
+.sun-caption {
+  position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); pointer-events: auto;
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); font-size: 12px; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: no-preference) { .sun-handle { transition: box-shadow 160ms ease; } .sun-handle:hover { box-shadow: 0 0 0 8px rgba(245, 180, 83, 0.22), 0 0 36px 12px rgba(255, 196, 80, 0.6); } }

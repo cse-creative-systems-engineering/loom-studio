@@ -58,7 +58,7 @@ export function elevationShadows(z: number, light: SceneLight, shade: Shade): st
   const d = shadowDir(light)
   // How far a shadow falls for each px of height: none from overhead, long
   // from a low light. Capped so a low sun cannot throw a shadow off the page.
-  const reach = Math.min(1.6, 1 / Math.tan(rad(Math.max(5, light.height)))) * 0.6
+  const reach = Math.min(2.6, 1 / Math.tan(rad(Math.max(5, light.height)))) * 0.85
   const soft = light.softness
   // Darker in dark themes, where a shadow has less to darken.
   const k = light.strength * (shade.dark ? 2.2 : 1)

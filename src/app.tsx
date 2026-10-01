@@ -33,7 +33,7 @@ import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
 import { ActionLinks, ActionsPanel } from './actions-inspector'
 import type { LookState } from './model/look'
-import { AppearancePanel } from './appearance-inspector'
+import { AppearancePanel, SunOverlay } from './appearance-inspector'
 import { DataPanel, ListField, dataEditorKeys, isListKey } from './data-editors'
 import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
@@ -1822,6 +1822,7 @@ function Canvas({
   }, [s, empty])
   const dragRef = React.useRef<DragState | null>(null)
   const [rulers, setRulers] = React.useState(false)
+  const [sunOn, setSunOn] = React.useState(false)
   // Authoring happens at Desktop by default (the canvas you can see is the
   // widest case) and narrows on demand, which is the only honest direction for
   // a tool whose base layout IS the desktop layout.
@@ -2162,6 +2163,7 @@ function Canvas({
   return (
     <main className={`canvas-wrap ${s.picking ? 'picking' : ''}`} ref={wrapRef}>
       {mode !== 'preview' && <ActionLinks s={s} host={wrapRef} scroller={canvasRef} />}
+      {mode === 'design' && sunOn && <SunOverlay s={s} onClose={() => setSunOn(false)} />}
       {mode === 'preview' && (
         <div className="canvas previewing">
           {/* The artifact, running: same viewport, same zoom, real behaviour. */}
@@ -2357,6 +2359,9 @@ function Canvas({
             <span className="dock-rule" />
             <button className={rulers ? 'on' : ''} onClick={() => setRulers((r) => !r)} title="Rulers and grid" aria-label="Rulers" aria-pressed={rulers}>
               <Ico name="ruler" />
+            </button>
+            <button className={sunOn ? 'on' : ''} onClick={() => setSunOn((v) => !v)} title="Scene light: drag the sun and every shadow follows" aria-label="Scene light" aria-pressed={sunOn}>
+              <Ico name="sun" />
             </button>
           </>
         ) : (

@@ -603,3 +603,86 @@ export function AppearancePanel({ s, node, editing, onEditing }: { s: EditorStor
 }
 
 export { DEFAULT_LIGHT }
+
+/**
+ * The sun, on the canvas: the scene light as something you grab. A ring over
+ * the design; the sun sits on it at the light's direction, closer to the
+ * centre the higher it stands (the centre is straight overhead). Drag it and
+ * every shadow, bevel and sheen in the design follows, live. One undo step
+ * per drag. Arrow keys move it too.
+ */
+export function SunOverlay({ s, onClose }: { s: EditorStore; onClose: () => void }) {
+  const host = React.useRef<HTMLDivElement>(null)
+  const [box, setBox] = React.useState({ w: 0, h: 0 })
+  React.useLayoutEffect(() => {
+    const el = host.current
+    if (!el) return
+    const measure = () => setBox({ w: el.clientWidth, h: el.clientHeight })
+    measure()
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
+    ro?.observe(el)
+    return () => ro?.disconnect()
+  }, [])
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  const light = lightOf(s.doc.meta)
+  const cx = box.w / 2
+  const cy = box.h / 2
+  const R = Math.max(60, Math.min(box.w, box.h) * 0.38)
+  const r = ((90 - light.height) / 85) * R
+  const a = (light.angle * Math.PI) / 180
+  const sx = cx + Math.sin(a) * r
+  const sy = cy - Math.cos(a) * r
+  const move = (clientX: number, clientY: number) => {
+    const b = host.current!.getBoundingClientRect()
+    const dx = clientX - b.left - cx
+    const dy = clientY - b.top - cy
+    const dist = Math.min(R, Math.hypot(dx, dy))
+    const angle = Math.round(((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360)
+    const height = Math.round(Math.max(5, Math.min(90, 90 - (dist / R) * 85)))
+    s.commit({ op: 'setLight', light: { ...light, angle, height } }, 'Move the light', 'light:canvas-sun')
+  }
+  const nudge = (next: Partial<SceneLight>) => s.commit({ op: 'setLight', light: { ...light, ...next } }, 'Move the light', 'light:canvas-sun')
+  return (
+    <div className="sun-overlay" ref={host} aria-label="Scene light">
+      {box.w > 0 && (
+        <svg width={box.w} height={box.h} aria-hidden="true" className="sun-ring">
+          <circle cx={cx} cy={cy} r={R} />
+          <circle cx={cx} cy={cy} r={R / 2} className="inner" />
+          <line x1={cx} y1={cy} x2={sx} y2={sy} />
+          <circle cx={cx} cy={cy} r={3} className="centre" />
+        </svg>
+      )}
+      <button
+        type="button"
+        className="sun-handle"
+        style={{ left: sx, top: sy }}
+        aria-label={`Scene light: from ${light.angle} degrees, ${light.height} degrees high. Drag, or use the arrow keys.`}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId)
+          move(e.clientX, e.clientY)
+        }}
+        onPointerMove={(e) => e.buttons === 1 && move(e.clientX, e.clientY)}
+        onKeyDown={(e) => {
+          const step = e.shiftKey ? 15 : 5
+          if (e.key === 'ArrowLeft') nudge({ angle: (light.angle + 360 - step) % 360 })
+          else if (e.key === 'ArrowRight') nudge({ angle: (light.angle + step) % 360 })
+          else if (e.key === 'ArrowUp') nudge({ height: Math.min(90, light.height + step) })
+          else if (e.key === 'ArrowDown') nudge({ height: Math.max(5, light.height - step) })
+          else return
+          e.preventDefault()
+        }}
+      />
+      <div className="sun-caption">
+        <strong>Scene light</strong> from {light.angle}° · {light.height}° high
+        <span className="dim"> · drag the sun · Esc to close</span>
+        <button type="button" className="mini" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </div>
+  )
+}

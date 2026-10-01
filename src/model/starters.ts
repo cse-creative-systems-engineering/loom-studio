@@ -14,6 +14,7 @@
  */
 
 import { takeShorthand } from './grid'
+import { BUILTIN_STYLES, cloneLookSet, type LookSet } from './look'
 import type { Node, NodeId, PropValue } from './types'
 import { getComponent, instantiate } from './registry'
 
@@ -24,6 +25,8 @@ export interface StarterNode {
   flow?: boolean
   /** A name other nodes in the same starter can reference as `@name`. */
   ref?: string
+  /** Its look: a built-in style's id, or a whole look (model/look.ts). */
+  look?: string | LookSet
   children?: StarterNode[]
 }
 
@@ -189,6 +192,52 @@ export const STARTERS: Starter[] = [
     },
   },
   {
+    id: 'light-study',
+    label: 'Light study',
+    icon: '☀',
+    description: 'Every material, lit by one sun: floating, clay, glass, gloss, neon, pressed in. Open the scene light (☀ in the dock) and drag the sun.',
+    tree: {
+      type: 'Panel',
+      flow: true,
+      props: { w: 960, padding: 56, gap: 32, align: 'stretch' },
+      children: [
+        {
+          type: 'Stack',
+          flow: true,
+          props: { gap: 6 },
+          children: [
+            { type: 'Heading', props: { text: 'Light study', level: 1 } },
+            { type: 'Paragraph', props: { text: 'One sun lights everything here. Open the scene light (☀ in the dock below the canvas) and drag it: every shadow, bevel and sheen follows.' } },
+          ],
+        },
+        {
+          type: 'Stack',
+          flow: true,
+          props: { direction: 'row', gap: 24, align: 'stretch' },
+          children: [
+            { type: 'Card', flow: true, look: 'floating', props: { title: 'Floating', w: 268, h: null as unknown as number, gap: 6 }, children: [{ type: 'Paragraph', props: { text: 'High above the page. Its shadow falls far from the light, long and soft.' } }] },
+            { type: 'Card', flow: true, look: 'clay', props: { title: 'Clay', w: 268, h: null as unknown as number, gap: 6 }, children: [{ type: 'Paragraph', props: { text: 'Pillowy relief: the edge toward the light is lit, the far edge shaded.' } }] },
+            { type: 'Card', flow: true, look: 'glass', props: { title: 'Glass', w: 268, h: null as unknown as number, gap: 6 }, children: [{ type: 'Paragraph', props: { text: 'Its own colour, frosted. A lit edge, and whatever is behind it blurred.' } }] },
+          ],
+        },
+        {
+          type: 'Stack',
+          flow: true,
+          look: 'pressed-in',
+          props: { direction: 'row', gap: 16, align: 'center', padding: 24 },
+          children: [
+            { type: 'Button', look: 'raised', props: { label: 'Raised' } },
+            { type: 'Button', look: 'gloss', props: { label: 'Gloss', variant: 'secondary' } },
+            { type: 'Button', look: 'ripple', props: { label: 'Ripple' } },
+            { type: 'Button', look: 'neon', props: { label: 'Neon edge', variant: 'ghost' } },
+            { type: 'Button', look: 'traced', props: { label: 'Traced', variant: 'secondary' } },
+          ],
+        },
+        { type: 'Input', look: 'pressed-in', props: { placeholder: 'A field pressed into the surface', width: 420 } },
+      ],
+    },
+  },
+  {
     id: 'landing-hero',
     label: 'Landing hero',
     icon: '★',
@@ -231,10 +280,13 @@ export function buildStarter(starter: Starter, newId: () => NodeId): { root: Nod
     if (src.ref) refs.set(src.ref, id)
     const props: Record<string, PropValue> = { ...built.props, ...(src.props ?? {}), x: 0, y: 0 }
     const lists = takeShorthand(src.type, props)
+    const look = typeof src.look === 'string' ? BUILTIN_STYLES.find((x) => x.id === src.look)?.set : src.look
+    if (src.look !== undefined && !look) throw new Error(`starter: unknown style ${String(src.look)}`)
     const node: Node = {
       id,
       type: src.type,
       props,
+      ...(look ? { looks: { '': cloneLookSet(look) } } : {}),
       ...(lists ? { lists } : {}),
       children: [],
       flow: src.flow ?? built.flow,
