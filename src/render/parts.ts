@@ -101,7 +101,7 @@ export function cleanPartStyle(type: string, part: string, raw: Record<string, u
 
 /** True when this node styles the named part. */
 export function partStyled(node: Node, part: string): boolean {
-  return Object.keys(node.parts?.[part] ?? {}).length > 0
+  return Object.keys(node.parts?.[part] ?? {}).length > 0 || !!node.looks?.[part]
 }
 
 export const PART_ATTR = 'data-loom-part'

@@ -32,6 +32,8 @@ import { StatesPanel, ColorInput } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
 import { ActionLinks, ActionsPanel } from './actions-inspector'
+import type { LookState } from './model/look'
+import { AppearancePanel } from './appearance-inspector'
 import { DataPanel, ListField, dataEditorKeys, isListKey } from './data-editors'
 import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
@@ -154,7 +156,7 @@ export function App() {
   const [viewport, setViewport] = React.useState<Breakpoint>('lg')
   // The interaction state being edited. Lifted for the same reason as the
   // viewport: editing a hover and SEEING the hover on the canvas are one action.
-  const [editState, setEditState] = React.useState<InteractionState | null>(null)
+  const [editState, setEditState] = React.useState<InteractionState | LookState | null>(null)
   const [menu, setMenu] = React.useState<MenuState | null>(null)
   // Canvas zoom is view state, not document state: it never touches the
   // doc, the history, or the output. 1 = 100%.
@@ -1675,7 +1677,7 @@ function Canvas({
   onMode,
 }: {
   s: EditorStore
-  editState: InteractionState | null
+  editState: InteractionState | LookState | null
   dragging: string | null
   onMenu: (m: MenuState | null) => void
   zoom: number
@@ -2393,8 +2395,8 @@ function Inspector({
 }: {
   s: EditorStore
   viewport: Breakpoint
-  editState: InteractionState | null
-  onEditState: (state: InteractionState | null) => void
+  editState: InteractionState | LookState | null
+  onEditState: (state: InteractionState | LookState | null) => void
 }) {
   // Hooks sit above the early returns: the panel keeps its search and toggle
   // across selections, which is what a person scanning several nodes wants.
@@ -2633,7 +2635,10 @@ function Inspector({
         {/* What it does to OTHER components (and what shows it). */}
         <ActionsPanel s={s} node={node} />
 
-        <StatesPanel s={s} node={node} editing={editState} onEditing={onEditState} />
+        {/* How it is made physical: layers, depth, states, motion, light. */}
+        <AppearancePanel s={s} node={node} editing={editState} onEditing={onEditState} />
+
+        <StatesPanel s={s} node={node} editing={editState === 'selected' || editState === 'disabled' ? null : editState} onEditing={onEditState} />
 
         {/* Inner parts are styling, so they sit behind "more properties" with
             the rest of it; a styled part is never hidden. */}

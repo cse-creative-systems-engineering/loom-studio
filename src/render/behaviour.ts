@@ -313,6 +313,14 @@ export function behaviourCss(): string {
     '[data-loom-col-resize]::after{content:"";position:absolute;left:3px;top:22%;bottom:22%;width:2px;border-radius:1px;background:var(--loom-accent,#5b8cff);opacity:0;transition:opacity 90ms ease}',
     '[data-loom-col-resize]:hover::after,[data-loom-col-resize][data-loom-on="1"]::after{opacity:1}',
     '@keyframes loom-shimmer{0%,100%{opacity:.5}50%{opacity:1}}',
+    // --- click effects (looks): a clipped layer over the element, never its own overflow ---
+    '[data-loom-fxwrap]{position:absolute;inset:0;border-radius:inherit;overflow:hidden;pointer-events:none;z-index:1}',
+    '[data-loom-ripple]{position:absolute;border-radius:50%;pointer-events:none;transform:scale(0);opacity:.32;animation:loom-ripple 620ms cubic-bezier(.2,.8,.3,1) forwards}',
+    '@keyframes loom-ripple{to{transform:scale(1);opacity:0}}',
+    '[data-loom-sweep]{position:absolute;top:-20%;bottom:-20%;width:45%;left:0;pointer-events:none;transform:translateX(-120%) skewX(-18deg);animation:loom-sweep 640ms cubic-bezier(.4,0,.2,1) forwards}',
+    '@keyframes loom-sweep{to{transform:translateX(320%) skewX(-18deg)}}',
+    '[data-loom-pulse]{position:absolute;inset:0;border-radius:inherit;pointer-events:none;animation:loom-pulse 640ms ease-out forwards}',
+    '@keyframes loom-pulse{from{box-shadow:0 0 0 0 var(--loom-pulse,#5b8cff)}to{box-shadow:0 0 0 16px transparent}}',
     '[data-loom-shimmer]{animation:loom-shimmer 1.4s ease-in-out infinite}',
     '@media (prefers-reduced-motion:reduce){[data-loom-shimmer]{animation:none}}',
 
@@ -823,6 +831,93 @@ export function installBehaviour(): void {
     },
     true,
   )
+
+  // --- click effects (looks) ---------------------------------------------
+  // What a look says a click plays: a ripple from the point of contact, a
+  // light sweeping across, a pulse ring, a momentary sink. Drawn in a layer
+  // clipped to the element's corners (never by changing its own overflow,
+  // which would clip an outside stroke or glow). Played on the design's own
+  // clicks in Preview and the export; on the canvas only when asked
+  // ('loom:play'), since a canvas click selects.
+  const playClick = (el: HTMLElement, x: number | null, y: number | null): void => {
+    try {
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    } catch {
+      // No media queries: play.
+    }
+    const kinds = (el.getAttribute('data-loom-click') ?? '').split(/\s+/).filter(Boolean)
+    if (!kinds.length) return
+    const tint = el.getAttribute('data-loom-click-color')
+    const r = el.getBoundingClientRect()
+    const scaleX = r.width / (el.offsetWidth || r.width || 1)
+    const px = x === null ? el.offsetWidth / 2 : (x - r.left) / scaleX
+    const py = y === null ? el.offsetHeight / 2 : (y - r.top) / scaleX
+    const layer = (): HTMLElement => {
+      const w = document.createElement('span')
+      w.setAttribute('data-loom-fxwrap', '')
+      w.setAttribute('aria-hidden', 'true')
+      if (getComputedStyle(el).position === 'static') el.style.position = 'relative'
+      el.appendChild(w)
+      return w
+    }
+    for (const kind of kinds) {
+      if (kind === 'sink') {
+        try {
+          el.animate([{ scale: '1' }, { scale: '0.95' }, { scale: '1' }], { duration: 280, easing: 'cubic-bezier(.3,0,.1,1)' })
+        } catch {
+          // No Web Animations: the other effects still play.
+        }
+        continue
+      }
+      const w = layer()
+      const fx = document.createElement('span')
+      if (kind === 'ripple') {
+        const size = Math.hypot(Math.max(px, el.offsetWidth - px), Math.max(py, el.offsetHeight - py)) * 2
+        fx.setAttribute('data-loom-ripple', '')
+        fx.style.cssText = `width:${size}px;height:${size}px;left:${px - size / 2}px;top:${py - size / 2}px;background:${tint || 'currentColor'}`
+      } else if (kind === 'sweep') {
+        fx.setAttribute('data-loom-sweep', '')
+        fx.style.background = `linear-gradient(90deg,transparent,${tint || 'rgba(255,255,255,0.55)'},transparent)`
+      } else if (kind === 'pulse') {
+        fx.setAttribute('data-loom-pulse', '')
+        if (tint) fx.style.setProperty('--loom-pulse', tint)
+        w.style.overflow = 'visible'
+      } else {
+        w.remove()
+        continue
+      }
+      w.appendChild(fx)
+      const done = (): void => w.remove()
+      fx.addEventListener('animationend', done, { once: true })
+      setTimeout(done, 1200)
+    }
+    fire(el, 'click.effect')
+  }
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      const el = closest(e, '[data-loom-click]')
+      if (!(el instanceof HTMLElement) || el.closest('[inert]') || el.closest('.surface')) return
+      if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') return
+      const pe = e as PointerEvent
+      playClick(el, pe.clientX, pe.clientY)
+    },
+    true,
+  )
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      const k = (e as KeyboardEvent).key
+      if (k !== 'Enter' && k !== ' ') return
+      const el = closest(e, '[data-loom-click]')
+      if (el instanceof HTMLElement && !el.closest('[inert]') && !el.closest('.surface')) playClick(el, null, null)
+    },
+    true,
+  )
+  document.addEventListener('loom:play', (e) => {
+    const el = e.target
+    if (el instanceof HTMLElement && el.hasAttribute('data-loom-click')) playClick(el, null, null)
+  })
 
   // --- toast auto-dismiss ------------------------------------------------
   // The renderer's whole contribution to `duration` is the number of seconds,

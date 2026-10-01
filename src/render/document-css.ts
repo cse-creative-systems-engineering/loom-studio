@@ -13,7 +13,9 @@ import type { Theme } from './theme'
 import { responsiveCss } from './responsive'
 import { stateCss } from './states'
 import { partCss } from './parts'
+import { lookCss } from './look'
 
 export function documentCss(doc: Document, theme?: Theme): string {
-  return [responsiveCss(doc), partCss(doc, theme), stateCss(doc, theme)].filter(Boolean).join('\n')
+  // Looks come last: they are the most specific intent, and win ties.
+  return [responsiveCss(doc), partCss(doc, theme), stateCss(doc, theme), lookCss(doc, theme)].filter(Boolean).join('\n')
 }
