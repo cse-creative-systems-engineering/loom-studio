@@ -473,7 +473,7 @@ defineComponent({
     // A named colour beats a tone here: an icon is a drawing, not a label, and
     // designers reach for exact values far more often than for signal words.
     color: { type: 'color', default: '', group: 'Style' },
-    tone: en(['inherit', 'accent', 'muted', 'success', 'warning', 'danger'], 'inherit'),
+    tone: en(['inherit', 'neutral', 'accent', 'info', 'success', 'warning', 'danger'], 'inherit'),
   },
 })
 
@@ -644,7 +644,7 @@ defineComponent({
     align: en(['stretch', 'start', 'center', 'end', 'baseline'], 'center', 'Layout'),
     ...surfaceProps(),
     ...typeProps(),
-    tone: en(['info', 'success', 'warning', 'danger'], 'info', 'State'),
+    tone: en(['neutral', 'accent', 'info', 'success', 'warning', 'danger'], 'info', 'State'),
     // A banner that appears unasked is a live region; without it a
     // screen-reader user is told nothing has happened at all.
     live: bool(false, 'Accessibility'),
@@ -659,7 +659,7 @@ defineComponent({
   description: 'Icon-only button.',
   props: {
     icon: str('star'),
-    ...pressProps(['primary', 'secondary', 'ghost', 'danger'], 'secondary'),
+    ...pressProps(['primary', 'secondary', 'outline', 'ghost', 'danger'], 'secondary'),
     ...boxProps(),
     // The derived name ("trash") is right most of the time and wrong the rest;
     // an icon with no name at all is the case worth being able to fix by hand.
@@ -677,7 +677,7 @@ defineComponent({
     ...fieldProps(),
     // The accent the tick is drawn in. The native control themes its own
     // check mark, so this is a real colour control.
-    tone: en(['inherit', 'accent', 'neutral', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
+    tone: en(['inherit', 'neutral', 'accent', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
     checked: bool(false, 'State', { bindable: true }),
     ...named(),
   },
@@ -703,7 +703,7 @@ defineComponent({
     required: bool(false, 'State'),
     // Tints every option's control; `accent-color` inherits, so one value on
     // the group reaches each radio.
-    tone: en(['inherit', 'accent', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
+    tone: en(['inherit', 'neutral', 'accent', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
     ...named(),
   },
   // Options are rows in the group's panel, not Radio tools dropped in: a
@@ -758,7 +758,7 @@ defineComponent({
     max: num(100, 'Data', -1e9, 1e9),
     step: num(1, 'Data', 0.1, 10),
     size: en(['sm', 'md', 'lg'], 'md', 'Size'),
-    tone: en(['inherit', 'accent', 'neutral', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
+    tone: en(['inherit', 'neutral', 'accent', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
     // The live number beside the thumb. Off for a slider that sits inside a
     // panel which already prints the value.
     showValue: bool(true, 'Content'),
@@ -937,7 +937,7 @@ defineComponent({
     ...insetProps(),
     // A dashed edge says "drop here"; a solid one is a button that opens a
     // picker. Both are legitimate, so both are offered.
-    variant: en(['outline', 'solid'], 'outline'),
+    variant: en(['soft', 'solid', 'outline'], 'outline'),
     size: en(['sm', 'md', 'lg'], 'md', 'Size'),
     ...surfaceProps(),
     multiple: bool(false),
@@ -978,7 +978,7 @@ defineComponent({
   props: {
     ...listProps('items', 'Edit,Duplicate,Delete'),
     label: str('Actions'),
-    ...pressProps(['primary', 'secondary', 'ghost', 'danger'], 'secondary'),
+    ...pressProps(['primary', 'secondary', 'outline', 'ghost', 'danger'], 'secondary'),
     ...boxProps(),
     // Which side the panel opens toward: a menu wider than its trigger has to
     // be told, or it hangs off the edge of the viewport.
@@ -998,7 +998,7 @@ defineComponent({
     // The star scale. `tone` recolours the filled stars; `inherit` is the
     // warning gold they have always been.
     size: en(['sm', 'md', 'lg'], 'md', 'Size'),
-    tone: en(['inherit', 'accent', 'neutral', 'success', 'warning', 'danger'], 'inherit', 'State'),
+    tone: en(['inherit', 'neutral', 'accent', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
     showValue: bool(true, 'Content'),
     // A rating you can only READ is a different component: no pointer, no
     // stars that look pressable and then do nothing.
@@ -1018,7 +1018,7 @@ defineComponent({
     // `background` and `border` are deliberately NOT offered: they would
     // quietly win over the pressed state, which is the whole point of a
     // toggle. The ON state IS the variant.
-    ...pressProps(['primary', 'secondary', 'ghost', 'danger'], 'secondary'),
+    ...pressProps(['primary', 'secondary', 'outline', 'ghost', 'danger'], 'secondary'),
     ...omit(boxProps(), 'background', 'border', 'borderWidth'),
     pressed: bool(false, 'State', { bindable: true }),
     ...named(),
@@ -1038,7 +1038,7 @@ defineComponent({
     fullWidth: bool(false, 'Layout'),
     size: en(['sm', 'md', 'lg'], 'md', 'Size'),
     // Tints the SELECTED option; `inherit` leaves it the neutral surface.
-    tone: en(['inherit', 'accent', 'neutral', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
+    tone: en(['inherit', 'neutral', 'accent', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
     value: str('Week', 'State', { bindable: true }),
     ...named(),
   },
@@ -1101,7 +1101,7 @@ defineComponent({
     // round-trips in the document.
     maxTags: num(-1, 'Content', -1, 100),
     size: en(['sm', 'md', 'lg'], 'md', 'Size'),
-    tone: en(['inherit', 'accent', 'neutral', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
+    tone: en(['inherit', 'neutral', 'accent', 'info', 'success', 'warning', 'danger'], 'inherit', 'State'),
     disabled: bool(false),
     readOnly: bool(false),
     ...named(),

@@ -122,12 +122,46 @@ const LISTED_FROM_CHILDREN: Record<string, string> = {
 const FORMER_CONTAINERS = new Set(['Timeline', 'RadioGroup'])
 
 /**
+ * Values RENAMED when the vocabulary was unified (one set of words for tone,
+ * fill, emphasis and field style on every tool). An old file keeps its look
+ * as closely as the new words allow, and each rename is reported.
+ */
+const FIELD_TOOLS = ['Input', 'Select', 'ComboBox', 'TextArea', 'SearchBox', 'NumberInput', 'PasswordInput', 'DatePicker', 'TimePicker', 'ColorInput', 'SpinBox']
+export const VALUE_RENAMES: Readonly<Record<string, Record<string, Record<string, string>>>> = {
+  // Text fields borrowed a button's words; "danger" was a validation state.
+  ...Object.fromEntries(FIELD_TOOLS.map((t) => [t, { variant: { default: 'filled', primary: 'outline', secondary: 'soft', ghost: 'outline', danger: 'filled' } }])),
+  BackButton: { variant: { surface: 'secondary' } },
+  Icon: { tone: { muted: 'neutral' } },
+}
+
+/** The current word for a renamed value, or the value unchanged. */
+export function renamedValue(type: string, key: string, value: unknown): unknown {
+  return typeof value === 'string' ? (VALUE_RENAMES[type]?.[key]?.[value] ?? value) : value
+}
+
+/**
  * Apply every migration to `nodes` in place. Returns the issues to report.
  * `nodes` is the raw file's node table; the validator runs afterwards.
  */
 export function migrateNodes(nodes: Record<string, unknown>): MigrationIssue[] {
   const issues: MigrationIssue[] = []
   const raw = nodes as Record<string, RawNode>
+
+  // Renamed values (see VALUE_RENAMES).
+  for (const [id, node] of Object.entries(raw)) {
+    if (!node || typeof node !== 'object') continue
+    const renames = VALUE_RENAMES[text(node.type)]
+    if (!renames) continue
+    const props = obj(node.props)
+    for (const [key, map] of Object.entries(renames)) {
+      const v = props[key]
+      if (typeof v === 'string' && map[v] && map[v] !== v) {
+        issues.push({ path: `$.nodes.${id}.props.${key}`, message: `"${v}" is now "${map[v]}"${v === 'danger' && key === 'variant' ? ' (an error is the Field\'s state now)' : ''}` })
+        props[key] = map[v]
+      }
+    }
+    node.props = props
+  }
 
   // 0. RadioGroup kept its options as a delimited string; they become rows
   //    first, so radios folded in below come after them, in drawn order.

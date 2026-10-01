@@ -245,7 +245,7 @@ defineComponent({ name: 'Divider', category: 'Text', icon: '―', description: '
 }})
 defineComponent({ name: 'Badge', category: 'Text', icon: '⬣', description: "A small count or status marker. Keep it to a word or a number — a badge is not a label.", props: {
   text: { type: 'string', default: 'New', group: 'Content', bindable: true },
-  tone: { type: 'enum', options: ['neutral', 'info', 'success', 'warning', 'danger'], default: 'info', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'info', group: 'Style' },
   size: { type: 'enum', options: ['sm', 'md'], default: 'sm', group: 'Layout' },
   // The three treatments a chip is drawn in. `soft` is the tinted default;
   // `solid` is for a badge on a busy surface, `outline` for a quiet one.
@@ -261,7 +261,7 @@ defineComponent({ name: 'Badge', category: 'Text', icon: '⬣', description: "A 
 }})
 defineComponent({ name: 'Tag', category: 'Text', icon: '🏷', description: "A short chip for a category or a filter. Use Badge for counts, Tag for values.", props: {
   text: { type: 'string', default: 'beta', group: 'Content', bindable: true },
-  tone: { type: 'enum', options: ['neutral', 'info', 'success', 'warning', 'danger'], default: 'neutral', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'neutral', group: 'Style' },
   removable: { type: 'boolean', default: false, group: 'State' },
   size: { type: 'enum', options: ['sm', 'md'], default: 'sm', group: 'Size' },
   variant: { type: 'enum', options: ['soft', 'solid', 'outline'], default: 'soft', group: 'Style' },
@@ -462,7 +462,7 @@ defineComponent({ name: 'ProgressBar', category: 'Data', icon: '▰', descriptio
   // The floor of the scale, so "62 of 100" and "8 of 10" both read right.
   min: { type: 'number', default: 0, min: -1e9, max: 1e9, group: 'Data' },
   height: { type: 'number', default: 8, min: 2, max: 24, group: 'Layout' },
-  tone: { type: 'enum', options: ['accent', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
   showLabel: { type: 'boolean', default: true, group: 'Content' },
   unit: { type: 'string', default: '%', group: 'Content' },
   // A bar that goes amber as it approaches the limit and red when it is over.
@@ -478,7 +478,7 @@ defineComponent({ name: 'ProgressRing', category: 'Data', icon: '◍', descripti
   max: { type: 'number', default: 100, min: 1, max: 1000, group: 'Data' },
   min: { type: 'number', default: 0, min: -1e9, max: 1e9, group: 'Data' },
   size: { type: 'number', default: 72, min: 24, max: 240, group: 'Layout' },
-  tone: { type: 'enum', options: ['accent', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
   ...thresholdProps(),
   // The three things a ring is drawn from: how fat the arc is, whether the ends
   // are rounded, and whether the number is inside it at all.
@@ -494,7 +494,7 @@ defineComponent({ name: 'ProgressRing', category: 'Data', icon: '◍', descripti
 defineComponent({ name: 'Avatar', category: 'Data', icon: '👤', description: "A person, shown as an image or their initials.", props: {
   initials: { type: 'string', default: 'AK', group: 'Content' },
   size: { type: 'number', default: 40, min: 16, max: 160, group: 'Layout' },
-  tone: { type: 'enum', options: ['accent', 'neutral', 'success', 'warning'], default: 'accent', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
   image: { type: 'string', default: '', group: 'Content' },
   // How the picture fills the circle, and the crop it takes — a face photo and
   // a logo want different answers to both.
@@ -514,7 +514,7 @@ defineComponent({ name: 'AvatarGroup', category: 'Data', icon: '👥', descripti
   // What happens past `max`: fold the rest into a "+3" chip, or show them all.
   overflow: { type: 'boolean', default: true, group: 'Content' },
   // `alternate` is the two-colour stack these have always been drawn as.
-  tone: { type: 'enum', options: ['alternate', 'accent', 'neutral', 'success', 'warning'], default: 'alternate', group: 'Style' },
+  tone: { type: 'enum', options: ['alternate', 'neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'alternate', group: 'Style' },
   // The ring that separates two stacked circles, and the colour it takes.
   ring: { type: 'number', default: 2, min: 0, max: 8, group: 'Style' },
   ringColor: { type: 'color', default: '', group: 'Style' },
@@ -633,7 +633,7 @@ defineComponent({ name: 'Timeline', category: 'Data', icon: '🕒', description:
       title: { type: 'string', default: 'Deployed v2.4', group: 'Content', bindable: true },
       time: { type: 'string', default: '2h ago', group: 'Content' },
       description: { type: 'string', default: '', group: 'Content' },
-      tone: { type: 'enum', options: ['accent', 'success', 'warning', 'danger', 'neutral'], default: 'accent', group: 'Style' },
+      tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
       // A ring is the "this one is still running" mark; a dot alone cannot say that.
       markerStyle: { type: 'enum', options: ['dot', 'ring', 'square'], default: 'dot', group: 'Style' },
     },
@@ -724,7 +724,7 @@ defineComponent({ name: 'KanbanColumn', category: 'Data', container: true, icon:
   props: {
   title: { type: 'string', default: 'In progress', group: 'Content' },
   count: { type: 'number', default: 3, min: 0, max: 99, group: 'Content' },
-  tone: { type: 'enum', options: ['neutral', 'accent', 'success', 'warning'], default: 'accent', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
   showCount: { type: 'boolean', default: true, group: 'Content' },
   // A swimlane whose cards are its whole point needs its header; a collapsed
   // one is a drop target, and that is a different thing to want.
@@ -1020,7 +1020,7 @@ defineComponent({ name: 'BackButton', category: 'Navigation', icon: '←', descr
   size: { type: 'enum', options: ['sm', 'md', 'lg'], default: 'md', group: 'Size' },
   // Bare text (the default, and what a page header wants), a quiet surface, or
   // a border when the control has to survive on an image.
-  variant: { type: 'enum', options: ['ghost', 'surface', 'outline'], default: 'ghost', group: 'Style' },
+  variant: { type: 'enum', options: ['ghost', 'secondary', 'outline'], default: 'ghost', group: 'Style' },
   disabled: { type: 'boolean', default: false, group: 'State' },
   ariaLabel: { type: 'string', default: '', group: 'Accessibility' },
   ...textProps(),
@@ -1031,7 +1031,7 @@ defineComponent({ name: 'BackButton', category: 'Navigation', icon: '←', descr
 defineComponent({ name: 'Alert', category: 'Feedback', icon: '⚠', description: "A persistent, in-page message about the state of the thing above it. For something transient, use Toast.", props: {
   title: { type: 'string', default: 'Heads up', group: 'Content' },
   body: { type: 'string', default: 'Something needs your attention.', group: 'Content', bindable: true },
-  tone: { type: 'enum', options: ['info', 'success', 'warning', 'danger'], default: 'warning', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'warning', group: 'Style' },
   dismissible: { type: 'boolean', default: true, group: 'State' },
   // The three treatments: a tinted wash, a solid fill, or an outline. `soft` is
   // the default because an alert that shouts is an alert people stop reading.
@@ -1048,7 +1048,7 @@ defineComponent({ name: 'Alert', category: 'Feedback', icon: '⚠', description:
 }})
 defineComponent({ name: 'Toast', category: 'Feedback', icon: '💬', description: "A transient confirmation that disappears on its own. Never put required information in one.", props: {
   message: { type: 'string', default: 'Saved successfully', group: 'Content', bindable: true },
-  tone: { type: 'enum', options: ['info', 'success', 'warning', 'danger'], default: 'success', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'success', group: 'Style' },
   // HOW LONG IT STAYS, in seconds. HONEST LIMIT, same as Sparkline's
   // `animate`: the auto-dismiss needs a keyframes/animation rule in the
   // behaviour stylesheet, which is not this file's to change, so today this is
@@ -1085,7 +1085,7 @@ defineComponent({ name: 'Spinner', category: 'Feedback', icon: '◌', descriptio
 defineComponent({ name: 'LoadingBar', category: 'Feedback', icon: '▰', description: "Indeterminate progress. Use ProgressBar when you know the total.", props: {
   progress: { type: 'number', default: 40, min: 0, max: 100, group: 'Data' },
   indeterminate: { type: 'boolean', default: false, group: 'State' },
-  tone: { type: 'enum', options: ['accent', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
   height: { type: 'number', default: 6, min: 2, max: 24, group: 'Layout' },
   // The caption, and the shape of the bar. `radius` is the corner of the track
   // and the fill together, because a rounded fill in a square track reads as
@@ -1100,7 +1100,7 @@ defineComponent({ name: 'ProgressDots', category: 'Feedback', icon: '•••',
   steps: { type: 'number', default: 4, min: 2, max: 12, group: 'Layout' },
   current: { type: 'number', default: 1, min: 0, max: 12, group: 'State' },
   size: { type: 'enum', options: ['sm', 'md', 'lg'], default: 'md', group: 'Size' },
-  tone: { type: 'enum', options: ['accent', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'accent', group: 'Style' },
   // The built-in behaviour role again: off means the dots are a readout.
   interactive: { type: 'boolean', default: true, group: 'Behaviour' },
   ...stackAlign('center'),
@@ -1108,7 +1108,7 @@ defineComponent({ name: 'ProgressDots', category: 'Feedback', icon: '•••',
 }})
 defineComponent({ name: 'InlineMessage', category: 'Feedback', icon: 'ⓘ', description: "A one-line status note that sits inside the content it describes.", props: {
   text: { type: 'string', default: 'All systems operational', group: 'Content', bindable: true },
-  tone: { type: 'enum', options: ['info', 'success', 'warning', 'danger', 'neutral'], default: 'info', group: 'Style' },
+  tone: { type: 'enum', options: ['neutral', 'accent', 'info', 'success', 'warning', 'danger'], default: 'info', group: 'Style' },
   // A named icon from the house set, or any glyph. Empty draws no mark at all,
   // which is a real answer for a message that is only a colour.
   icon: { type: 'string', default: 'info', group: 'Content' },
@@ -1156,7 +1156,7 @@ defineComponent({ name: 'WarningCallout', category: 'Feedback', icon: '⚠', des
   // and a switch that could turn a warning into a tip is one click away from
   // doing exactly that. Use Alert when the tone has to be a property.
   accent: { type: 'color', default: '', group: 'Style' },
-  variant: { type: 'enum', options: ['outline', 'soft', 'solid'], default: 'outline', group: 'Style' },
+  variant: { type: 'enum', options: ['soft', 'solid', 'outline'], default: 'outline', group: 'Style' },
   icon: { type: 'string', default: '', group: 'Content' },
   showIcon: { type: 'boolean', default: true, group: 'Content' },
   // The one action a callout may carry ("Reduce usage"), and never a second.
@@ -1170,7 +1170,7 @@ defineComponent({ name: 'InfoCallout', category: 'Feedback', icon: 'ⓘ', descri
   title: { type: 'string', default: 'Tip', group: 'Content' },
   body: { type: 'string', default: 'You can theme the whole document at once.', group: 'Content', bindable: true },
   accent: { type: 'color', default: '', group: 'Style' },
-  variant: { type: 'enum', options: ['outline', 'soft', 'solid'], default: 'outline', group: 'Style' },
+  variant: { type: 'enum', options: ['soft', 'solid', 'outline'], default: 'outline', group: 'Style' },
   icon: { type: 'string', default: '', group: 'Content' },
   showIcon: { type: 'boolean', default: true, group: 'Content' },
   actionLabel: { type: 'string', default: '', group: 'Content' },
