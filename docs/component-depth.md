@@ -30,7 +30,9 @@ fixes what falls short. A pass is done when all of these hold:
    disabled, selected, loading, empty, error, and overflowing or long content.
 7. **Customization.** Every area is a styleable part (the area audit stays
    green with no new backlog), and every property and list field changes the
-   output.
+   output. Every part takes a look (height, bevel, fills, strokes, glows,
+   states, motion; see `model/look.ts`), and the tool looks right in every
+   built-in style (`docs/reviews/output-quality/materials.html`).
 8. **Easy and deep.** Setting it up is effortless for a beginner, with the
    advanced options there when wanted, and the agent can do the same through
    its tools.

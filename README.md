@@ -7,10 +7,25 @@ A desktop UI studio. You compose an interface from 117 components, and the
 things you build actually work — in the editor, in the live preview, and in
 what you export.
 
+**And everything is lit by one sun.**
+
+![One light, every material: drag the sun and every shadow, bevel and sheen in the design follows](docs/shots/appearance/light-study-daylight.gif)
+
+Give any component (or any part of one, like a grid's header or a card's
+title) **height**, and its shadow falls away from the scene light: long and
+soft from a low sun, tight from a high one. Bevels, wells and gloss are lit
+from the same light. Drag the sun on the canvas and the whole design
+re-lights, live. Then layer fills, strokes, glows, frosted glass, grain and a
+light that runs around the edge; give each state (hover, pressed, selected…)
+its own look, spring it into place, and decide what a click plays. It exports
+as plain HTML and CSS.
+
+Open the **Light study** starter and press ☀ in the dock to try it.
+
 ```bash
 npm install
 npm start          # build + launch the app
-npm run verify     # 602 checks
+npm run verify     # ~1,130 checks in a real renderer
 ```
 
 ## The idea
@@ -39,6 +54,16 @@ layout rules and the *same* state stylesheet. If the preview disagreed with the
 export, it would be worse than no preview at all.
 
 ## What is in the box
+
+- **Looks, lit by one scene light.** Any component, or any of its named parts,
+  takes a look: height (z), bevel, pressed-in wells, sheen, fills (solid and
+  gradients, with blend modes), strokes (inside / centre / outside, dashed,
+  gradient), glows, frosted backdrop, see-through surfaces, grain, per-corner
+  radius and a travelling edge light. Shadows are *derived* from the light,
+  never hand-drawn. Each state gets its own look, with real spring motion and
+  click effects (ripple, sweep, pulse, sink). Ten built-in styles, your own
+  saved styles, copy and paste a look, and the in-app assistant can do all of
+  it too. See [`docs/shots/appearance`](docs/shots/appearance).
 
 - **117 components** across containers, controls, data, text, navigation and
   feedback — with **3,017 properties**, every one of them verified to change the
