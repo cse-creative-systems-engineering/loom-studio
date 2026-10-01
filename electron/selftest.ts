@@ -4475,6 +4475,28 @@ export async function runSelfTest(): Promise<string> {
     }
   }
 
+  // --- 115. A dropped container is always SEEN (Shane: four tab sets dropped,
+  // nothing visible, 19 layers). Empty containers say what they are; a drop
+  // never lands exactly on a sibling; it fits the room it lands in.
+  {
+    const st = new EditorStore()
+    const root = st.dropComponent('Panel', null, 0, 0) as string
+    st.setProp(root, 'w', 1000)
+    st.setProp(root, 'h', 640)
+    const a = st.dropComponent('Tabs', root, 40, 40, { w: 1000, h: 640 }) as string
+    const b = st.dropComponent('Tabs', root, 40, 40, { w: 1000, h: 640 }) as string
+    const at = (id: string) => [st.doc.nodes[id]!.props.x, st.doc.nodes[id]!.props.y].join(',')
+    check('a second drop on the same spot steps off the first', at(a) === '40,40' && at(b) === '64,64', `${at(a)} / ${at(b)}`)
+    const panel = st.doc.nodes[a]!.children[0]!
+    const inner = st.dropComponent('Tabs', panel, 10, 10, { w: 300, h: 160 }) as string
+    check('a container fits the room it is dropped into', Number(st.doc.nodes[inner]!.props.w) <= 282 && Number(st.doc.nodes[inner]!.props.h) <= 142, `${st.doc.nodes[inner]!.props.w}x${st.doc.nodes[inner]!.props.h}`)
+    const canvas = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set() }, root))
+    const out = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, root))
+    check('an empty container says what it is on the canvas, never in the output', canvas.includes('data-loom-hint="Activity · drop components here"') && !out.includes('data-loom-hint'))
+    const pageTag = /<div[^>]*data-loom-type="TabPanel"[^>]*>/.exec(canvas)?.[0] ?? ''
+    check('a tab page fills its tab set', pageTag.includes('flex-grow:1'), pageTag.slice(0, 300))
+  }
+
   // --- 112. Phase 1: overlays, the page under an export, tones ---------------
   // Findings 1, 2, 3, 13 and 29 of the output audit.
   {
