@@ -13,7 +13,7 @@
 
 import type { EffectValues } from '../render/effects'
 import type { NodeActions } from './actions'
-import type { LookSet, SceneLight } from './look'
+import type { LookSet, LookStyle, SceneLight } from './look'
 
 export type NodeId = string
 
@@ -246,6 +246,8 @@ export interface DocMeta {
   page?: PageBackground
   /** The scene light every look is shaded by; absent means the default sun. */
   light?: SceneLight
+  /** The document's own saved looks ("Save as style"), shown beside the built-ins. */
+  styles?: LookStyle[]
   created: number
 }
 
@@ -365,6 +367,8 @@ export type Op =
   | { op: 'setLook'; id: NodeId; target: string; set: LookSet | null }
   /** Set the scene light; null returns to the default sun. */
   | { op: 'setLight'; light: SceneLight | null }
+  /** Replace the document's saved styles whole (null clears them). */
+  | { op: 'setStyles'; styles: LookStyle[] | null }
 
 /** An op plus enough context to describe it in the undo history. */
 export interface OpFrame {

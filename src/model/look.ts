@@ -312,6 +312,25 @@ export function cleanLight(raw: unknown): SceneLight | null {
   }
 }
 
+/** A document's saved styles, cleaned: named, unique ids, at most 48. */
+export function cleanStyles(raw: unknown): { styles: LookStyle[]; dropped: string[] } {
+  const dropped: string[] = []
+  if (!Array.isArray(raw)) return { styles: [], dropped: raw === undefined ? [] : ['styles (not a list)'] }
+  const styles: LookStyle[] = []
+  const seen = new Set<string>()
+  raw.slice(0, 48).forEach((r, i) => {
+    const o = obj(r)
+    const id = typeof o?.id === 'string' && /^[\w-]{1,40}$/.test(o.id) ? o.id : null
+    const label = typeof o?.label === 'string' ? o.label.trim().slice(0, 40) : ''
+    const set = cleanLookSet(o?.set, `styles[${i}]`)
+    dropped.push(...set.dropped)
+    if (!id || !label || !set.set || seen.has(id)) return void dropped.push(`styles[${i}] (needs an id, a name and a look)`)
+    seen.add(id)
+    styles.push({ id, label, hint: typeof o?.hint === 'string' ? o.hint.slice(0, 120) : 'Saved in this document', set: set.set })
+  })
+  return { styles, dropped }
+}
+
 export function isEmptySet(set: LookSet | null | undefined): boolean {
   return !set || (Object.keys(set.base).length === 0 && !set.states && !set.click?.length && !set.motion)
 }
@@ -405,3 +424,28 @@ export const BUILTIN_STYLES: readonly LookStyle[] = [
     set: { base: { z: 0, sheen: 0, inset: 0 } },
   },
 ]
+
+/**
+ * The classic interaction styles (node.states: hover / focus / pressed with
+ * background, color, border, shadow, opacity, scale, lift, brightness) as
+ * look states, so a component styled the old way moves into Appearance
+ * without changing how it behaves.
+ */
+export function lookStatesFromClassic(states: Partial<Record<'hover' | 'focus' | 'pressed', Record<string, unknown>>>): Partial<Record<LookState, Look>> {
+  const out: Partial<Record<LookState, Look>> = {}
+  const Z: Record<string, number> = { none: 0, sm: 4, md: 10, lg: 20 }
+  for (const [state, raw] of Object.entries(states)) {
+    if (!raw) continue
+    const l: Look = {}
+    if (isSafeColor(raw.background)) l.fills = [{ kind: 'solid', colors: [String(raw.background)], angle: 180, opacity: 1, blend: 'normal' }]
+    if (isSafeColor(raw.color)) l.ink = String(raw.color)
+    if (isSafeColor(raw.border)) l.edge = String(raw.border)
+    if (typeof raw.shadow === 'string') {
+      if (raw.shadow === 'glow') l.glows = [{ color: 'var(--loom-accent)', size: 18, strength: 0.6, inner: false }]
+      else if (raw.shadow in Z) l.z = Z[raw.shadow]
+    }
+    for (const k of ['opacity', 'scale', 'lift', 'brightness'] as const) if (typeof raw[k] === 'number') l[k] = raw[k] as number
+    if (Object.keys(l).length) out[state as LookState] = cleanLook(l).look
+  }
+  return out
+}

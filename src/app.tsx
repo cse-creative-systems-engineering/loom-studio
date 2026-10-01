@@ -370,6 +370,15 @@ export function App() {
           setZoomPref(1)
           return
         }
+        // Ctrl+Alt+C / Ctrl+Alt+V copy and paste a LOOK (as in other design tools).
+        if (e.altKey && e.code === 'KeyC') {
+          if (s.copyLook()) e.preventDefault()
+          return
+        }
+        if (e.altKey && e.code === 'KeyV') {
+          if (s.pasteLook()) e.preventDefault()
+          return
+        }
         if (e.key === 'c') {
           if (s.copy() > 0) e.preventDefault()
           return
@@ -2643,7 +2652,11 @@ function Inspector({
         {/* How it is made physical: layers, depth, states, motion, light. */}
         <AppearancePanel s={s} node={node} editing={editState} onEditing={onEditState} />
 
-        <StatesPanel s={s} node={node} editing={editState === 'selected' || editState === 'disabled' ? null : editState} onEditing={onEditState} />
+        {/* The classic interaction styles: only where a component still uses
+            them (Appearance's states replace them, and can take them over). */}
+        {node.states && Object.keys(node.states).length > 0 && (
+          <StatesPanel s={s} node={node} editing={editState === 'selected' || editState === 'disabled' ? null : editState} onEditing={onEditState} />
+        )}
 
         {/* Inner parts are styling, so they sit behind "more properties" with
             the rest of it; a styled part is never hidden. */}

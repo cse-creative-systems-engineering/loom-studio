@@ -15,6 +15,8 @@
  */
 
 import { renamedValue } from '../model/migrate'
+import { partsOf } from '../render/parts'
+import { BUILTIN_STYLES, DEFAULT_LIGHT, cleanLight, cleanLookSet, cloneLookSet } from '../model/look'
 import { LIST_SHORTHAND, takeShorthand } from '../model/grid'
 import type { EditorStore } from '../state/store'
 import type { Node, NodeId, Op, PropValue } from '../model/types'
@@ -155,6 +157,17 @@ export const TOOLS: ToolDef[] = [
     description:
       'How a node looks while hovered, focused or pressed (the same interaction states as the Properties panel). Fields: background, color, border (colours), shadow (none|sm|md|lg|glow), opacity 0-1, scale 0.5-1.5, lift -24..24 px, brightness 0.5-1.5. null clears a field.',
     inputSchema: obj({ id: str('Node id.'), state: { type: 'string', enum: ['hover', 'focus', 'pressed'] }, style: { type: 'object' } }, ['id', 'state', 'style']),
+  },
+  {
+    name: 'set_look',
+    description:
+      'Make a component, or one of its parts, PHYSICAL (the Appearance panel). Everything is lit by one scene light, so shadows, bevels and sheen are never drawn by hand: give it height and the light does the rest. Pass `style` (raised | floating | pressed-in | clay | gloss | glass | neon | traced | ripple | flat) for a complete tasteful look with its states and motion, and/or `look` to set layers yourself: {base, states?, motion?, click?, clickColor?}. A look: z 0-64 (height above the page), fills [{kind solid|linear|radial|conic, colors[1-4], angle, opacity, blend}], strokes [{color, color2?, width, position inside|center|outside, style solid|dashed|dotted, opacity}], glows [{color, size, strength, inner}], bevel {size, strength, style raised|sunken|pillow}, inset 0-24 (pressed into the surface), sheen 0-1, noise 0-1, blur, backdrop (frosted glass), translucency 0-1 (own colour made see-through), radius or corners [tl,tr,br,bl], trace {color, width, speed s/lap, arc 0-1} (a light running around the edge), opacity, scale, lift, brightness, ink (text colour), edge (border colour). states: {hover|focus|pressed|selected|disabled: a look patch}. motion: {duration ms, easing smooth|snappy|spring|bouncy|linear}. click: [ripple|sweep|pulse|sink]. Colours may be theme tokens: var(--loom-accent), var(--loom-success), var(--loom-danger), var(--loom-text), var(--loom-border-strong). `target` is "" for the whole component or a part name from describe_component. A style and a look together: the look is merged over the style. `look: null` removes it. Use with restraint: one or two materials per screen read as design; ten read as noise.',
+    inputSchema: obj({ id: str('Node id.'), target: str('"" (the whole component) or a part name.'), style: str('A built-in style id.'), look: { type: ['object', 'null'] } }, ['id']),
+  },
+  {
+    name: 'set_light',
+    description: 'The scene light every look is shaded by (one sun for the whole design): angle (degrees the light comes FROM, clockwise from the top; default 345), height (5-90 degrees above the page; low = long dramatic shadows, 90 = straight overhead), softness 0-1, strength 0-1. null resets to the default.',
+    inputSchema: obj({ angle: num('0-360'), height: num('5-90'), softness: num('0-1'), strength: num('0-1'), reset: { type: 'boolean' } }, []),
   },
   {
     name: 'set_responsive',
@@ -376,6 +389,7 @@ function tree(s: EditorStore, id: NodeId): unknown {
     ...(n.visible === false ? { visible: false } : {}),
     ...(n.actions ? { actions: n.actions } : {}),
     ...(n.startsHidden ? { startsHidden: true } : {}),
+    ...(n.looks ? { looks: n.looks } : {}),
     ...(n.children.length ? { children: n.children.map((c) => tree(s, c)) } : {}),
   }
 }
@@ -388,6 +402,7 @@ const HANDLERS: Record<string, Handler> = {
     name: s.doc.meta.name,
     theme: s.doc.meta.theme ?? 'midnight',
     page: s.doc.meta.page ?? { background: 'none' },
+    light: s.doc.meta.light ?? DEFAULT_LIGHT,
     target: s.target,
     root: s.doc.root ? tree(s, s.doc.root) : null,
     selection: s.selection,
@@ -672,6 +687,41 @@ const HANDLERS: Record<string, Handler> = {
     for (const k of clears) patch[k] = null
     if (Object.keys(patch).length) t.write({ op: 'setStateStyle', id, state, patch }, `${state} style`)
     return { state, style: s.doc.nodes[id]?.states?.[state] ?? {}, ...(dropped.length ? { rejected: dropped } : {}) }
+  },
+
+  set_look: (s, t, a) => {
+    const id = need(a, 'id')
+    const n = nodeOf(s, id)
+    const target = typeof a.target === 'string' ? a.target : ''
+    if (target !== '' && !partsOf(n.type)?.[target]) throw new Error(`${n.type} has no part "${target}" (describe_component -> parts)`)
+    if (a.look === null && a.style === undefined) {
+      t.write({ op: 'setLook', id, target, set: null }, 'Remove look')
+      return { removed: true }
+    }
+    const style = typeof a.style === 'string' ? BUILTIN_STYLES.find((x) => x.id === a.style) : undefined
+    if (a.style !== undefined && !style) throw new Error(`unknown style "${String(a.style)}" (one of ${BUILTIN_STYLES.map((x) => x.id).join(', ')})`)
+    const given = a.look && typeof a.look === 'object' && !Array.isArray(a.look) ? (a.look as Record<string, unknown>) : {}
+    const baseSet = style ? cloneLookSet(style.set) : (n.looks?.[target] ? cloneLookSet(n.looks[target]!) : { base: {} })
+    const merged = {
+      ...baseSet,
+      ...given,
+      base: { ...baseSet.base, ...((given.base as object | undefined) ?? {}) },
+      ...(given.states || baseSet.states ? { states: { ...(baseSet.states ?? {}), ...((given.states as object | undefined) ?? {}) } } : {}),
+    }
+    const { set, dropped } = cleanLookSet(merged)
+    t.write({ op: 'setLook', id, target, set }, style ? `Style: ${style.label}` : 'Set look')
+    return { look: s.doc.nodes[id]?.looks?.[target] ?? null, ...(dropped.length ? { rejected: dropped } : {}) }
+  },
+
+  set_light: (s, t, a) => {
+    if (a.reset === true) {
+      t.write({ op: 'setLight', light: null }, 'Reset the light')
+      return { light: DEFAULT_LIGHT }
+    }
+    const cur = s.doc.meta.light ?? DEFAULT_LIGHT
+    const light = cleanLight({ angle: finite(a.angle) ?? cur.angle, height: finite(a.height) ?? cur.height, softness: finite(a.softness) ?? cur.softness, strength: finite(a.strength) ?? cur.strength })
+    t.write({ op: 'setLight', light }, 'Move the light')
+    return { light: s.doc.meta.light }
   },
 
   set_responsive: (s, t, a) => {

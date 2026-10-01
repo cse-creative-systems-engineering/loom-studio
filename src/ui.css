@@ -1891,3 +1891,15 @@ button.layer-twist:hover { color: var(--ink); background: var(--panel-2); }
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); font-size: 12px; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 @media (prefers-reduced-motion: no-preference) { .sun-handle { transition: box-shadow 160ms ease; } .sun-handle:hover { box-shadow: 0 0 0 8px rgba(245, 180, 83, 0.22), 0 0 36px 12px rgba(255, 196, 80, 0.6); } }
+.ap-classic { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: 11px; color: var(--ink-2); }
+.ap-classic .mini { align-self: flex-start; }
+.ap-style-wrap { position: relative; display: flex; }
+.ap-style-wrap .ap-style { flex: 1; }
+.ap-style-wrap.own .ap-style { border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.ap-style-x { position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--ink-3); font-size: 10px; cursor: pointer; opacity: 0; }
+.ap-style-wrap:hover .ap-style-x, .ap-style-x:focus-visible { opacity: 1; }
+.ap-style-x:hover { color: var(--danger); background: var(--well-hover); }
+.ap-save { align-self: flex-start; }
+.ap-save-row { display: flex; gap: 4px; }
+/* A part pointed at from the Appearance panel. */
+.surface [data-loom-point] { outline: calc(2px / var(--loom-zoom, 1)) dashed var(--select) !important; outline-offset: calc(2px / var(--loom-zoom, 1)) !important; }
