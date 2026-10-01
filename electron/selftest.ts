@@ -4670,6 +4670,12 @@ export async function runSelfTest(): Promise<string> {
     const kinds = (el: HTMLElement) => [...el.querySelectorAll('[data-loom-fxwrap] > span')].map((x) => [...x.attributes].map((at) => at.name).filter((n) => n.startsWith('data-loom')).join()).sort().join('|')
     check('the editor\'s Play draws exactly what the runtime draws on a click', kinds(a!) !== '' && kinds(a!) === kinds(b2!), `${kinds(a!)} / ${kinds(b2!)}`)
     host.remove()
+
+    // The Light study starter arrives lit: every material, one sun.
+    const ls = new EditorStore()
+    const lsRoot = ls.addStarter('light-study', null, 0, 0) as string
+    const looked = Object.values(ls.doc.nodes).filter((n) => n.looks?.[''])
+    check('the Light study starter arrives with its materials', !!lsRoot && looked.length >= 9 && looked.some((n) => n.looks![''].base.translucency) && looked.some((n) => n.looks![''].click?.length), String(looked.length))
   }
 
   // --- 112. Phase 1: overlays, the page under an export, tones ---------------

@@ -361,6 +361,33 @@ async function run() {
     }
   }
 
+  // The sun on the canvas: open it from the dock, move it with the keyboard,
+  // close it with Escape. The light is the document's, so the move is real.
+  {
+    const r = await win.webContents.executeJavaScript(`(async () => {
+      const wait = (ms) => new Promise((x) => setTimeout(x, ms))
+      const btn = document.querySelector('.dock button[aria-label="Scene light"]')
+      if (!btn) return { error: 'no Scene light button in the dock' }
+      btn.click()
+      await wait(200)
+      const handle = document.querySelector('.sun-handle')
+      const open = !!document.querySelector('.sun-overlay')
+      const before = window.__loomStore.doc.meta.light?.angle ?? 345
+      handle?.focus()
+      handle?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+      await wait(100)
+      const after = window.__loomStore.doc.meta.light?.angle
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      await wait(150)
+      const closed = !document.querySelector('.sun-overlay')
+      window.__loomStore.commit({ op: 'setLight', light: null }, 'reset')
+      return { open, before, after, closed }
+    })()`, true)
+    step('the dock opens the sun over the canvas', r.open === true, JSON.stringify(r))
+    step('the sun moves the scene light (arrow key: 5 degrees)', r.after === (r.before + 5) % 360, JSON.stringify(r))
+    step('Escape puts the sun away', r.closed === true)
+  }
+
   // Closing with unsaved changes: Shane found the window simply would not
   // close (the page's beforeunload guard, with no question asked). Now the
   // question is asked, Cancel keeps the window, and closing always works.
