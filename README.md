@@ -20,7 +20,7 @@ light that runs around the edge; give each state (hover, pressed, selected…)
 its own look, spring it into place, and decide what a click plays. It exports
 as plain HTML and CSS.
 
-Open the **Light study** starter and press ☀ in the dock to try it.
+Open the **Light study** starter and press ☀ in the canvas toolbar to try it.
 
 ```bash
 npm install

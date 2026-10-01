@@ -53,6 +53,9 @@ import { playClickEffect } from './render/click-fx'
 
 type Tab = 'normal' | LookState
 
+/** What an unset field means: shown dimmed, so "not set" never reads as "set to the minimum". */
+const NEUTRAL: Partial<Record<keyof Look, number>> = { opacity: 1, scale: 1, lift: 0, brightness: 1, z: 0, inset: 0, sheen: 0, noise: 0, blur: 0, backdrop: 0, translucency: 0 }
+
 const STATE_LABEL: Record<Tab, string> = { normal: 'Normal', hover: 'Hover', focus: 'Focus', pressed: 'Pressed', selected: 'Selected', disabled: 'Disabled' }
 
 /** Theme colours offered as one-click swatches (any colour can still be typed). */
@@ -328,7 +331,7 @@ export function AppearancePanel({ s, node, editing, onEditing }: { s: EditorStor
 
   const num = (k: keyof Look, label: string, range: readonly [number, number], step = 1, unit?: string) => (
     <Row label={label} set={current[k] !== undefined} onClear={() => clear(k)}>
-      <Slider label={label} value={current[k] as number | undefined} inherited={effective[k] as number | undefined} range={range} step={step} unit={unit} onChange={(v) => setField(k, v as never, `Set ${label.toLowerCase()}`)} />
+      <Slider label={label} value={current[k] as number | undefined} inherited={(effective[k] as number | undefined) ?? NEUTRAL[k]} range={range} step={step} unit={unit} onChange={(v) => setField(k, v as never, `Set ${label.toLowerCase()}`)} />
     </Row>
   )
 

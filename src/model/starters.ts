@@ -195,7 +195,7 @@ export const STARTERS: Starter[] = [
     id: 'light-study',
     label: 'Light study',
     icon: '☀',
-    description: 'Every material, lit by one sun: floating, clay, glass, gloss, neon, pressed in. Open the scene light (☀ in the dock) and drag the sun.',
+    description: 'Every material, lit by one sun: floating, clay, glass, gloss, neon, pressed in. Press ☀ in the canvas toolbar and drag the sun.',
     tree: {
       type: 'Panel',
       flow: true,
@@ -207,7 +207,7 @@ export const STARTERS: Starter[] = [
           props: { gap: 6 },
           children: [
             { type: 'Heading', props: { text: 'Light study', level: 1 } },
-            { type: 'Paragraph', props: { text: 'One sun lights everything here. Open the scene light (☀ in the dock below the canvas) and drag it: every shadow, bevel and sheen follows.' } },
+            { type: 'Paragraph', props: { text: 'One sun lights everything here. Press ☀ in the canvas toolbar and drag the sun: every shadow, bevel and sheen follows.' } },
           ],
         },
         {

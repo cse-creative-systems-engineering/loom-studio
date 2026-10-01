@@ -1817,7 +1817,7 @@ button.layer-twist:hover { color: var(--ink); background: var(--panel-2); }
   border: 1px solid transparent; border-radius: 8px; background: var(--panel); cursor: pointer; color: var(--ink-2);
 }
 .ap-style:hover { border-color: var(--line); color: var(--ink); }
-.ap-style-chip { width: 36px; height: 22px; border-radius: 6px; background-color: var(--well); display: block; }
+.ap-style-chip { width: 36px; height: 22px; border-radius: 6px; background-color: color-mix(in srgb, var(--accent) 62%, var(--panel)); display: block; }
 .ap-style-name { font-size: 10.5px; white-space: nowrap; }
 .ap-section { border-top: 1px solid var(--line); padding-top: 6px; }
 .ap-section-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px; }
@@ -1834,7 +1834,7 @@ button.layer-twist:hover { color: var(--ink); background: var(--panel-2); }
 .ap-slider { display: flex; align-items: center; gap: 4px; width: 100%; min-width: 0; }
 .ap-slider input[type='range'] { flex: 1; min-width: 0; accent-color: var(--accent); height: 24px; }
 .ap-slider.inherited input[type='range'] { opacity: 0.45; }
-.ap-num { width: 44px; height: 24px; padding: 0 4px; font: inherit; font-size: 11px; text-align: right; color: var(--ink); background: var(--well); border: 1px solid transparent; border-radius: 5px; font-variant-numeric: tabular-nums; }
+.ap-num { width: 52px; height: 24px; padding: 0 4px; font: inherit; font-size: 11px; text-align: right; color: var(--ink); background: var(--well); border: 1px solid transparent; border-radius: 5px; font-variant-numeric: tabular-nums; }
 .ap-slider.inherited .ap-num { color: var(--ink-3); }
 .ap-unit { font-size: 10px; color: var(--ink-3); width: 14px; }
 .ap-select { flex: 1; min-width: 0; }

@@ -22,6 +22,9 @@ app.whenReady().then(async () => {
       // so the load is awaited loosely and the page given time to settle.
       win.loadURL(s.url).catch(() => undefined)
       await sleep(s.wait ?? 2500)
+      // Zoom is remembered per site by Chromium: set it every time.
+      win.webContents.setZoomFactor(s.zoom ?? 1)
+      await sleep(300)
       if (s.js) await within(win.webContents.executeJavaScript(s.js, true), 10000, 'setup')
       await sleep(700)
       if (s.full) {
