@@ -345,13 +345,20 @@ async function run() {
       for (let i = 0; i < 30 && win!.isMaximized() !== want; i++) await new Promise((r) => setTimeout(r, 100))
       await new Promise((r) => setTimeout(r, 200))
     }
-    await click(1)
-    await settle(true)
-    const maxLabel = await win.webContents.executeJavaScript(`document.querySelectorAll('.titlebar .win-btn')[1].getAttribute('aria-label')`, true)
-    step('Maximise maximises the real window and the button becomes Restore', win.isMaximized() && maxLabel === 'Restore', `maximized=${win.isMaximized()} label=${maxLabel}`)
-    await click(1)
-    await settle(false)
-    step('Restore restores it', !win.isMaximized())
+    // Maximising is the window manager's job: on a bare virtual display
+    // (xvfb-run, no WM) nothing can maximise, so the step says so instead of
+    // passing or failing on something it could not test.
+    if (process.env.LOOM_PROBE_NO_WM === '1') {
+      console.log('SKIP  Maximise / Restore — no window manager on this display (LOOM_PROBE_NO_WM=1)')
+    } else {
+      await click(1)
+      await settle(true)
+      const maxLabel = await win.webContents.executeJavaScript(`document.querySelectorAll('.titlebar .win-btn')[1].getAttribute('aria-label')`, true)
+      step('Maximise maximises the real window and the button becomes Restore', win.isMaximized() && maxLabel === 'Restore', `maximized=${win.isMaximized()} label=${maxLabel}`)
+      await click(1)
+      await settle(false)
+      step('Restore restores it', !win.isMaximized())
+    }
   }
 
   // Closing with unsaved changes: Shane found the window simply would not

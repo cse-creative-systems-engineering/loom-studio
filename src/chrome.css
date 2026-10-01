@@ -7,7 +7,10 @@
 
 .titlebar {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  /* The right side never squeezes its controls below a usable size (the
+     window buttons live there now): it takes what it needs, and the left
+     side gives way first. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(max-content, 1fr);
   align-items: center;
   gap: 12px;
   padding: 0 0 0 12px;
@@ -21,6 +24,7 @@
 
 .tb-left, .tb-right { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tb-right { justify-content: flex-end; }
+.tb-right > * { flex-shrink: 0; }
 
 .mark {
   width: 14px;
