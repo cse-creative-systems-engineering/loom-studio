@@ -830,6 +830,9 @@ function styleFor(node: Node, flowChild: boolean, t: Theme, raised = false): Rea
       // A page OF its tab set, not a surface of its own: the Tabs is the
       // frame (a black box inside the glass read as a hole in it).
       s.padding = px(p.padding, t.space3); s.borderRadius = `${t.radiusMd}px`
+      // The page fills its tab set: an empty one sat one line tall at the
+      // top of a 260px frame, and the rest of the frame was blank.
+      s.flexGrow = 1; s.minHeight = 0
       break
     }
     case 'Accordion': {
@@ -5375,6 +5378,11 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     // outlines it until something is inside, as a form designer does.
     // Authoring only: the output never carries this.
     'data-loom-vacant': isContainer && node.children.length === 0 ? 'true' : 'false',
+    // What an empty container says on the canvas: what it is, and that it
+    // takes components ("Overview · drop components here").
+    ...(isContainer && node.children.length === 0
+      ? { 'data-loom-hint': `${node.name || (typeof node.props.title === 'string' && node.props.title.trim()) || node.type.replace(/([a-z])([A-Z])/g, '$1 $2')} · drop components here` }
+      : {}),
     'data-loom-hidden': node.visible === false ? 'true' : 'false',
     'data-loom-locked': node.locked === true ? 'true' : 'false',
     // On the canvas the design is edited, not used: its own buttons and links

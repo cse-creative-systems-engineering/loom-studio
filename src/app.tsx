@@ -987,8 +987,19 @@ function Toolbox({
       // root, so it is free-positioned (a flow root would ignore x/y).
       const flowParent = hit.parent !== null && s.doc.nodes[hit.parent]?.flow === true
       const { x, y } = snapTo(hit.host, ev)
-      if (type.startsWith(STARTER_PREFIX)) s.addStarter(type.slice(STARTER_PREFIX.length), hit.parent, flowParent ? 0 : x, flowParent ? 0 : y)
-      else s.dropComponent(type, hit.parent, x, y)
+      const box = hit.host.getBoundingClientRect()
+      const room = { w: zoomed(box.width, zoom), h: zoomed(box.height, zoom) }
+      const made = type.startsWith(STARTER_PREFIX)
+        ? s.addStarter(type.slice(STARTER_PREFIX.length), hit.parent, flowParent ? 0 : x, flowParent ? 0 : y)
+        : s.dropComponent(type, hit.parent, x, y, hit.parent !== null ? room : undefined)
+      // It pulses once where it landed, so a drop is never a guess.
+      if (typeof made === 'string') {
+        requestAnimationFrame(() => {
+          const el = document.querySelector(`.surface [data-loom-id="${CSS.escape(made)}"]`)
+          el?.setAttribute('data-loom-arrived', 'true')
+          setTimeout(() => el?.removeAttribute('data-loom-arrived'), 800)
+        })
+      }
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)

@@ -355,17 +355,42 @@ export class EditorStore {
    * should arrive at (see `model/drop-size.ts`), so an empty container lands
    * as a frame, not a 35px square.
    */
-  dropComponent(name: string, parent: NodeId | null, x: number, y: number): NodeId | undefined {
+  dropComponent(name: string, parent: NodeId | null, x: number, y: number, room?: { w: number; h: number }): NodeId | undefined {
     const intoFlow = parent !== null && this.doc.nodes[parent]?.flow === true
     const seed = getComponent(name)?.seed
-    if (!seed || seed.length === 0) return this.addComponent(name, parent, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow))
+    const size = dropSize(name, intoFlow)
+    if (!intoFlow && parent !== null) {
+      // Never EXACTLY on top of a sibling: a second drop on the same spot
+      // landed under the first, pixel for pixel, and looked like nothing
+      // happened. It steps down and right until the spot is free.
+      const sibs = (this.doc.nodes[parent]?.children ?? []).map((c) => this.doc.nodes[c]).filter(Boolean)
+      for (let i = 0; i < 40 && sibs.some((n) => Math.abs(Number(n!.props.x ?? 0) - x) < 8 && Math.abs(Number(n!.props.y ?? 0) - y) < 8); i++) {
+        x += 24
+        y += 24
+      }
+      // And it fits the room it lands in: a 420px tab set dropped into a
+      // 300px panel spilled out over its parent's edge.
+      if (room) {
+        const fit = (key: 'w' | 'h', at: number, max: number) => {
+          const want = size[key]
+          if (typeof want !== 'number') return
+          const free = Math.floor(max - at - 8)
+          if (want > free) size[key] = Math.max(40, free)
+        }
+        if (x > room.w - 64) x = Math.max(0, Math.floor(room.w - 64))
+        if (y > room.h - 48) y = Math.max(0, Math.floor(room.h - 48))
+        fit('w', x, room.w)
+        fit('h', y, room.h)
+      }
+    }
+    if (!seed || seed.length === 0) return this.addComponent(name, parent, intoFlow ? 0 : x, intoFlow ? 0 : y, size)
     // A container that arrives with its first children (Tabs with its tabs):
     // one insert for it and one per child, as ONE undo step, built exactly
     // as its own "Add ..." button builds them.
     // It arrives ARRANGED: its parts flow (a row of buttons, a column of
     // cards). Free-positioned they all sat at 0,0 on top of each other. It
     // stays an ordinary container: the Layout toggle switches it to free.
-    const node = this.buildNode(name, intoFlow ? 0 : x, intoFlow ? 0 : y, dropSize(name, intoFlow), { flow: true })
+    const node = this.buildNode(name, intoFlow ? 0 : x, intoFlow ? 0 : y, size, { flow: true })
     // Depth first, parents before children, so every insert has its parent.
     // A seeded child that brings its own children arranges them too.
     const ops: Op[] = [{ op: 'insert', parent, node }]
