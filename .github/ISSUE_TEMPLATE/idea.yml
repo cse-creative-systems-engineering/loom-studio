@@ -1,0 +1,16 @@
+name: Idea
+description: A feature, a workflow, or a design direction for Loom.
+labels: [idea]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What should Loom let you do, and why would it matter to a designer?
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: An example
+      description: A sketch, a screenshot, a link to something that does it well.

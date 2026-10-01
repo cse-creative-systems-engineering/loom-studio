@@ -104,7 +104,23 @@ npm run probe:drag     # 8 real-input drag steps
 The property audit runs inside `verify`, so a newly inert property fails the
 build rather than shipping.
 
+## Join in
+
+Loom is built in the open. **Fork it, branch it, and tell us what you find.**
+Start a thread in [Discussions](https://github.com/cse-creative-systems-engineering/loom-studio/discussions),
+report a tool that falls short with the *This tool falls short* issue template,
+or open a pull request; [CONTRIBUTING.md](CONTRIBUTING.md) has the steps and
+the checks a change must pass.
+
 ## Licence
 
-MIT — see `LICENSE`. Includes an embedded `Atelier` component DSL, which is the
-author's earlier design-system work and ships as a fixture for the importer.
+**Source-available, noncommercial, while in development.** Loom Studio is
+licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE): use it,
+test it, study it, fork it and modify it for any noncommercial purpose.
+Commercial use is not permitted under this license.
+
+Versions published before 30 September 2026 were released under the MIT
+License, and copies obtained under those terms keep them.
+
+Includes an embedded `Atelier` component DSL, which is the author's earlier
+design-system work and ships as a fixture for the importer.
