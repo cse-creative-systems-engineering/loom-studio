@@ -32,6 +32,7 @@ import { StatesPanel, ColorInput } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
 import { AddsPanel, ListsPanel } from './list-inspector'
 import { ActionLinks, ActionsPanel } from './actions-inspector'
+import { DataPanel, ListField, dataEditorKeys, isListKey } from './data-editors'
 import { partStyled } from './render/parts'
 import { normalizeEffects } from './render/effects'
 import { Toggle, Glyph, Ico, Disclosure } from './ui-primitives'
@@ -2439,7 +2440,15 @@ function Inspector({
   if (!spec) return <aside className="inspector" />
 
   const view = inspectorView(spec, node.props, { query, showAdvanced })
-  const fieldFor = (row: (typeof view.groups)[number]['rows'][number]) => (
+  const owned = dataEditorKeys(node)
+  const fieldFor = (row: (typeof view.groups)[number]['rows'][number]) => isListKey(node, row.key) ? (
+    <div className="field field-list" key={row.key}>
+      <div className="field-head">
+        <label title={row.key}>{propLabel(row.key, row.spec)}</label>
+      </div>
+      <ListField s={s} node={node} name={row.key} label={propLabel(row.key, row.spec)} />
+    </div>
+  ) : (
     <Field
       key={row.key}
       name={row.key}
@@ -2464,8 +2473,11 @@ function Inspector({
   const positionGroup = view.groups.find((g) => g.name === 'Position')
   const positionRows = free && positionGroup ? positionGroup.rows.map(fieldFor) : null
   const hasLayout = view.groups.some((g) => g.name === 'Layout')
+  // Rows the data editors own (a table's cells, a list's separator) are not
+  // shown twice; a group left empty by that is not shown at all.
+  const groups = view.groups.map((g) => ({ ...g, rows: g.rows.filter((r) => !owned.has(r.key)) })).filter((g) => g.rows.length > 0 || g.name === 'Position')
   const shownGroups = [
-    ...view.groups.filter((g) => !(free && g.name === 'Position')),
+    ...groups.filter((g) => !(free && g.name === 'Position')),
     // A container always has its Flow switch, even when every other layout
     // property is behind "more properties" (and not while searching for
     // something else).
@@ -2543,6 +2555,7 @@ function Inspector({
           node={node}
           renderField={(key, ps, value, onChange) => <Field name={key} ps={ps} value={value} onChange={onChange} />}
         />
+        <DataPanel s={s} node={node} />
 
 
         {(() => {

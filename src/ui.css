@@ -1725,3 +1725,73 @@ button.layer-twist:hover { color: var(--ink); background: var(--panel-2); }
 .act-links-target { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: 0.8; }
 .act-links-dot { fill: var(--accent); }
 .act-links-label { fill: var(--accent); font: 600 10.5px var(--font); letter-spacing: 0.02em; paint-order: stroke; stroke: var(--bg, #111); stroke-width: 3px; }
+
+/* Data editors: a list as rows, a table as cells (data-editors.tsx). Cells
+   are wells like every other value; the numbers and handles stay quiet. */
+.field.field-list { display: block; }
+.field.field-list .field-head { margin-bottom: 4px; }
+.data-list { display: flex; flex-direction: column; gap: 3px; }
+.data-list-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 24px 24px; align-items: center; gap: 3px; }
+.data-list-n { font-size: 10px; color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; user-select: none; }
+.data-cell {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--well);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  box-shadow: var(--well-shadow);
+  outline: none;
+}
+.data-cell:hover:not(:focus) { background: var(--well-hover); }
+.data-cell:focus { border-color: rgba(91, 140, 255, 0.65); }
+.data-cell:focus-visible { box-shadow: var(--well-shadow), 0 0 0 2px rgba(91, 140, 255, 0.45); }
+.data-cell.data-num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-icon {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 11px;
+  cursor: pointer;
+}
+.data-icon:hover:not(:disabled) { background: var(--well-hover); color: var(--ink); }
+.data-icon.danger:hover:not(:disabled) { color: var(--danger); }
+.data-icon:disabled { opacity: 0.3; cursor: default; }
+.data-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.data-add { align-self: flex-start; margin: 3px 0 0 19px; }
+.data-panel { display: flex; flex-direction: column; gap: 6px; }
+.data-panel h3 { margin: 0; }
+.data-table-wrap { overflow-x: auto; margin: 0 -4px; padding: 0 4px 2px; }
+.data-table { border-collapse: separate; border-spacing: 3px; margin: -3px; min-width: 100%; }
+.data-table th { font-size: 10.5px; font-weight: 600; color: var(--ink-3); text-align: left; padding: 0 4px; white-space: nowrap; }
+.data-table th.data-num { text-align: right; }
+.data-table td { padding: 0; }
+.data-table td .data-cell { min-width: 72px; }
+.data-table td.color { position: relative; }
+.data-table td.color .data-cell { padding-left: 24px; }
+.data-swatch { position: absolute; left: 6px; top: 6px; width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); pointer-events: none; }
+.data-foot { gap: 8px; }
+.data-foot .small { font-size: 10.5px; }
+.data-wide-scrim { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 48px; background: rgba(5, 8, 14, 0.55); }
+.data-wide {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(1100px, 100%);
+  max-height: 100%;
+  padding: 16px;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.data-wide h3 { margin: 0; }
+.data-wide .data-table td .data-cell { min-width: 110px; }
