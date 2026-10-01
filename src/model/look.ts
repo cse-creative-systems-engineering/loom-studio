@@ -420,8 +420,8 @@ export const BUILTIN_STYLES: readonly LookStyle[] = [
   {
     id: 'flat',
     label: 'Flat',
-    hint: 'No depth at all: the light is ignored',
-    set: { base: { z: 0, sheen: 0, inset: 0 } },
+    hint: 'No look: the component as it comes, the light ignored',
+    set: { base: {} },
   },
 ]
 

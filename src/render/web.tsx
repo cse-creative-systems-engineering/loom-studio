@@ -1828,7 +1828,7 @@ function renderPreviewNode(
   // Where a control sits among its siblings is what makes a group work: the
   // Nth TabPanel belongs to the Nth tab.
   const parentId = parentOf(ctx.doc, node.id)
-  const style = translucent(node, styleFor(node, flowChild, t, onGlass(ctx.doc, node.id)))
+  const style = translucent(node, styleFor(node, flowChild, t, onGlass(ctx.doc, node.id)), t)
   // Theme colours reach the behaviour stylesheet as custom properties, so the
   // rules that draw a pressed/toggled/active state can reference them without
   // the renderer hard-coding a second copy of the theme. Inherited, so one
@@ -1933,7 +1933,7 @@ function withOutputHook(node: Node, el: React.ReactElement, always = false): Rea
  * of being painted over with white. Done here, where the surface colour is
  * known; a gradient or image surface is left as it is.
  */
-function translucent(node: Node, style: React.CSSProperties): React.CSSProperties {
+function translucent(node: Node, style: React.CSSProperties, t: Theme): React.CSSProperties {
   const tr = node.looks?.['']?.base.translucency
   if (!(typeof tr === 'number' && tr > 0)) return style
   const keep = `${Math.round((1 - Math.min(0.95, tr)) * 100)}%`
@@ -1941,6 +1941,10 @@ function translucent(node: Node, style: React.CSSProperties): React.CSSPropertie
   const out = { ...style }
   if (out.background !== undefined) out.background = mix(out.background) as string
   if (out.backgroundColor !== undefined) out.backgroundColor = mix(out.backgroundColor) as string
+  // Text made for a SOLID accent fill (dark on a light accent, or the
+  // reverse) loses its ground once the fill is mostly see-through: it takes
+  // the page's text colour instead, which reads over what shows through.
+  if (tr >= 0.3 && out.color === t.textOnAccent) out.color = t.textPrimary
   return out
 }
 
@@ -5341,7 +5345,7 @@ export function renderNode(ctx: RenderCtx, id: NodeId, key?: string | number): R
     return renderPreviewNode(node, flowChild, children, key, t, ctx)
   }
 
-  const authored = translucent(node, styleFor(node, flowChild, t, onGlass(ctx.doc, id)))
+  const authored = translucent(node, styleFor(node, flowChild, t, onGlass(ctx.doc, id)), t)
 
   // The atmosphere layer: grain / glass / aurora / spotlight / shimmer / glow
   // / tilt / chromatic, declared in render/effects.tsx and gated by target

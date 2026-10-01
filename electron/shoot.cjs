@@ -16,7 +16,7 @@ app.disableHardwareAcceleration()
 app.on('window-all-closed', () => {})
 app.whenReady().then(async () => {
   for (const s of shots) {
-    const win = new BrowserWindow({ show: false, width: s.width ?? 1240, height: s.height ?? 900, webPreferences: { offscreen: true } })
+    const win = new BrowserWindow({ show: false, width: s.width ?? 1240, height: s.height ?? 900, webPreferences: { offscreen: true, zoomFactor: s.zoom ?? 1 } })
     try {
       // A page that rewrites itself (document.write) reads as an aborted load,
       // so the load is awaited loosely and the page given time to settle.
@@ -26,7 +26,7 @@ app.whenReady().then(async () => {
       await sleep(700)
       if (s.full) {
         const h = await within(win.webContents.executeJavaScript('Math.ceil(document.documentElement.scrollHeight)'), 5000, 'height')
-        win.setContentSize(s.width ?? 1240, Math.min(h, 6000))
+        win.setContentSize(s.width ?? 1240, Math.min(Math.ceil(h * (s.zoom ?? 1)), 8000))
         await sleep(900)
       }
       const img = await within(win.webContents.capturePage(), 10000, 'capture')

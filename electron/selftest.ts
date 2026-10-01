@@ -4657,7 +4657,8 @@ export async function runSelfTest(): Promise<string> {
     check('a hostile look in a file is repaired and reported', loaded.doc?.nodes[btn]?.looks === undefined && loaded.issues.some((i) => i.message.includes('ink')) && loaded.issues.some((i) => i.message.includes('no part "bogus"')), loaded.issues.map((i) => i.message).join(' | '))
 
     // Every built-in style compiles to something real.
-    check('every built-in style compiles and survives the sanitiser', BUILTIN_STYLES.every((x) => cleanLookSet(x.set).set !== null && compileLook(x.set.base, DEFAULT_LIGHT, shade).decls.length > 0))
+    check('every built-in style compiles and survives the sanitiser (Flat is "no look")', BUILTIN_STYLES.every((x) => (x.id === 'flat' ? cleanLookSet(x.set).set === null : cleanLookSet(x.set).set !== null && compileLook(x.set.base, DEFAULT_LIGHT, shade).decls.length > 0)))
+    check('a base look with nothing to cast keeps the component\'s own shadow; a state can still clear it', !compileLook({ z: 0 }, DEFAULT_LIGHT, shade).decls.some((d) => d.startsWith('box-shadow')) && compileLook({ z: 0 }, DEFAULT_LIGHT, shade, true).decls.some((d) => d.startsWith('box-shadow:none')))
 
     // The editor's Play and the runtime draw the same layers.
     const host = document.createElement('div')
