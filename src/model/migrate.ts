@@ -9,7 +9,8 @@
  * field read is type-checked, and the validator runs on the result anyway.
  */
 
-import type { ListItem, NodeId } from './types'
+import type { ListItem, NodeId, PropValue } from './types'
+import { takeShorthand } from './grid'
 import { getComponent } from './registry'
 
 type RawNode = { id?: unknown; type?: unknown; props?: unknown; children?: unknown; lists?: unknown; [k: string]: unknown }
@@ -142,6 +143,21 @@ export function migrateNodes(nodes: Record<string, unknown>): MigrationIssue[] {
     const { options: _o, optionsSep: _s, ...rest } = props
     node.props = rest
     issues.push({ path: `$.nodes.${id}.props.options`, message: `options are now rows of the RadioGroup (${opts.length} converted)` })
+  }
+
+  // 0a. A DataGrid kept its columns as a delimited string of titles; they
+  //     become column DEFINITIONS, each typed from its data, and the old
+  //     "freeze first column" pins the first one.
+  for (const [id, node] of Object.entries(raw)) {
+    if (!node || typeof node !== 'object' || text(node.type) !== 'DataGrid') continue
+    const props = obj(node.props)
+    if (typeof props.columns !== 'string') continue
+    const lists = obj(node.lists)
+    const rest = { ...props } as Record<string, PropValue>
+    const cols = takeShorthand('DataGrid', rest)?.columns ?? []
+    if (!Array.isArray(lists.columns)) node.lists = { ...lists, columns: cols }
+    node.props = rest
+    issues.push({ path: `$.nodes.${id}.props.columns`, message: `columns are now column definitions (${cols.length} converted, typed from their data)` })
   }
 
   // 0b. Tabs kept a separate list of labels beside its panels, and the two

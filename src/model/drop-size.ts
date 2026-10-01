@@ -54,7 +54,7 @@ const SIZES: Record<string, { w?: number; h?: number }> = {
   Paragraph: { w: 360 },
   Quote: { w: 360 },
   Breadcrumbs: { w: 320 },
-  DataGrid: { w: 520 },
+  DataGrid: { w: 820 },
 }
 
 /**

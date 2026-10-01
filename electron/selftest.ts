@@ -2176,7 +2176,7 @@ export async function runSelfTest(): Promise<string> {
     check('a tooltip says what the component is for', grid.summary.length > 20)
     check('a tooltip says what it does', grid.behaviour.includes('sort') && grid.behaviour.includes('filter'))
     check('a tooltip names the properties worth setting',
-      grid.properties.some((p) => p.startsWith('columns')) && grid.properties.some((p) => p.startsWith('rows')),
+      grid.properties.some((p) => p.startsWith('title')) && grid.properties.some((p) => p.startsWith('rows')),
       grid.properties.join(' | '))
     check('a tooltip explains the list format trap', grid.caveats.some((c) => c.includes('cellSep')))
     check('a tooltip does not lead with a separator',
@@ -2984,6 +2984,8 @@ export async function runSelfTest(): Promise<string> {
         if (comp.name === 'Field') st.addComponent('Input', id, 0, 0)
         // Rows that only appear in a state: a current menu command.
         if (comp.name === 'Menu') st.commit({ op: 'setList', id, key: 'items', items: [{ label: 'Profile', icon: 'user', shortcut: '⌘P', active: true }, { label: 'Sign out', danger: true }] }, 'seed')
+        // A part that only exists in a state: the loading bars.
+        if (comp.name === 'DataGrid' && partName === 'skeleton') st.setProp(id, 'loadState', 'loading')
         const baseDoc = st.doc
         // The part must exist on the canvas before it is styled (the panel
         // points at it), and in the output once it is.
@@ -3361,7 +3363,11 @@ export async function runSelfTest(): Promise<string> {
       lp.join(' | '))
     check('lists survive save and load', JSON.stringify(validate(serialize(s58.doc)).doc?.nodes[tl].lists) === JSON.stringify(s58.doc.nodes[tl].lists))
 
-    // Every field of every list changes the output.
+    // Every field of every list changes the output. A field can matter only
+    // for SOME rows (a grid column's decimals mean nothing on a column of
+    // names), so it passes when changing it on ANY default row shows; a field
+    // whose plain-text change is not a valid value gets a real one here.
+    const LIST_ALT: Record<string, string | number> = { 'DataGrid.columns.tones': 'Active=danger' }
     const inert: string[] = []
     for (const comp of allComponents()) {
       for (const [key, ls] of Object.entries(comp.lists ?? {})) {
@@ -3369,13 +3375,18 @@ export async function runSelfTest(): Promise<string> {
           const st = new EditorStore()
           st.addComponent('Panel', null, 0, 0)
           const id = st.addComponent(comp.name, st.doc.root as string, 0, 0) as string
-          const base = { ...ls.default[0] }
-          const alt = ps.type === 'boolean' ? !base[field] : ps.type === 'enum' ? (ps.options ?? []).find((o) => o !== base[field]) ?? base[field] : field === 'icon' ? (base[field] ? '' : 'star') : `${String(base[field] ?? '')}Z`
-          st.commit({ op: 'setList', id, key, items: [base] }, 'a')
-          const before = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, st.doc.root as string))
-          st.commit({ op: 'setList', id, key, items: [{ ...base, [field]: alt as string | number | boolean }] }, 'b')
-          const after = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, st.doc.root as string))
-          if (before === after) inert.push(`${comp.name}.${key}.${field}`)
+          const draw = () => renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, st.doc.root as string))
+          const changes = ls.default.some((row, i) => {
+            const base = { ...row }
+            const alt =
+              LIST_ALT[`${comp.name}.${key}.${field}`] ??
+              (ps.type === 'boolean' ? !base[field] : ps.type === 'enum' ? (ps.options ?? []).find((o) => o !== base[field]) ?? base[field] : ps.type === 'number' ? Number(base[field] ?? 0) + 1 : field === 'icon' ? (base[field] ? '' : 'star') : `${String(base[field] ?? '')}Z`)
+            st.commit({ op: 'setList', id, key, items: ls.default.map((r) => ({ ...r })) }, 'a')
+            const before = draw()
+            st.commit({ op: 'setList', id, key, items: ls.default.map((r, j) => (j === i ? { ...base, [field]: alt as string | number | boolean } : { ...r })) }, 'b')
+            return before !== draw()
+          })
+          if (!changes) inert.push(`${comp.name}.${key}.${field}`)
         }
       }
     }
@@ -4376,6 +4387,92 @@ export async function runSelfTest(): Promise<string> {
     const was = s2.picking?.forLabel
     s2.endPick(R2.b)
     check('pick mode hands the picked node over and ends', was === 'What A shows' && picked === R2.b && s2.picking === null)
+  }
+
+  // --- 114. The DataGrid, built like a real one (render/datagrid.tsx) ---------
+  // Reported: "the headers look as if they're at the same level as the data,
+  // no sorting, no way to add detail". Columns are definitions now; every
+  // feature below is exercised in the real output with the real runtime.
+  {
+    installBehaviourRuntime()
+    const st = new EditorStore()
+    st.addComponent('Panel', null, 0, 0)
+    const g = st.addComponent('DataGrid', st.doc.root as string, 0, 0, { pageSize: 3 }) as string
+    const cols = itemsOf(st.doc.nodes[g]!, 'columns')
+    check('a dropped grid arrives with typed column definitions', cols.length === 7 && cols.map((c) => c.type).join() === 'person,tags,number,currency,progress,status,date', cols.map((c) => c.type).join())
+
+    // The shorthand every path accepts, typed from the data.
+    const sh = st.addComponent('DataGrid', st.doc.root as string, 0, 0, { columns: 'Who,Paid,Seats,When,State', rows: 'Ann|$1,200|4|2026-01-02|Active;Bo|$90|12|2026-03-04|Failed' }) as string
+    check('"columns" text becomes definitions, each typed from its data', itemsOf(st.doc.nodes[sh]!, 'columns').map((c) => c.type).join() === 'text,currency,number,date,status' && st.doc.nodes[sh]!.props.columns === undefined)
+
+    // An old file: columns as a string, a frozen first column.
+    const old = JSON.parse(serialize(st.doc)) as { nodes: Record<string, { props: Record<string, unknown>; lists?: unknown }> }
+    old.nodes[g].props = { ...old.nodes[g].props, columns: 'Name,Amount', columnsSep: 'comma', rows: 'a|10;b|2', freezeFirst: true }
+    delete old.nodes[g].lists
+    const loaded = validate(JSON.stringify(old))
+    const lc = itemsOf(loaded.doc!.nodes[g]!, 'columns')
+    check('an old grid opens with its columns converted and reported', lc.length === 2 && lc[0].pinned === true && lc[1].type === 'number' && loaded.issues.some((i) => i.message.includes('column definitions')), loaded.issues.map((i) => i.message).join(' | '))
+
+    const out = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, g))
+    check('the header is its own band, not a row like the data', /<th[^>]*style="[^"]*background:color-mix/.test(out))
+    check('money, dates and statuses are drawn as what they are', out.includes('$12,400') && out.includes('Nov 4, 2026') && out.includes('data-loom-tone="danger"'))
+    check('totals are computed for the first frame', out.includes('data-loom-total="sum"') && out.includes('$21,740'))
+    check('the first page only is shown before any script runs', (out.match(/data-loom-paged="1"/g) ?? []).length === 2)
+
+    const host = document.createElement('div')
+    host.style.cssText = 'position:absolute;left:-10000px;top:0;width:1000px'
+    host.innerHTML = out
+    document.body.appendChild(host)
+    const grid = host.querySelector<HTMLElement>('[data-loom-grid]')!
+    const shown = () => [...grid.querySelectorAll<HTMLElement>('[data-loom-row]')].filter((r) => r.style.display !== 'none').map((r) => r.querySelector('[data-loom-cell="0"]')?.getAttribute('data-loom-raw'))
+    const click = (el: Element | null) => el?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    click(grid.querySelector('[data-loom-page-step="1"]'))
+    check('Next shows the second page and says where it is', shown().length === 2 && grid.querySelector('[data-loom-page-label]')?.textContent === '4–5 of 5')
+    click(grid.querySelector('[data-loom-page-step="-1"]'))
+    click(grid.querySelector('th[data-loom-col="3"]'))
+    check('money sorts as numbers ($90 before $1,150), not as text', shown()[0] === 'Alan Turing' && shown()[1] === 'Grace Hopper', shown().join())
+    click(grid.querySelector('th[data-loom-col="6"]'))
+    check('dates sort as dates (Sep 29 before Oct 2)', shown()[0] === 'Edsger Dijkstra' && shown()[1] === 'Alan Turing', shown().join())
+    const input = grid.querySelector<HTMLInputElement>('[data-loom-filter]')!
+    input.value = 'team'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    check('search narrows the rows, the count and the totals together', shown().length === 2 && grid.querySelector('[data-loom-grid-count]')?.textContent === '2' && grid.querySelectorAll('[data-loom-sum]')[2]?.textContent === '$3,450')
+    input.value = 'zzz'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    check('no match says so, with a way out', getComputedStyle(grid.querySelector('[data-loom-nomatch]')!).display === 'table-row' && grid.querySelector('[data-loom-nomatch-text]')?.textContent === 'No rows match “zzz”')
+    click(grid.querySelector('[data-loom-grid-unfilter]'))
+    check('Clear search brings the rows back', shown().length === 3 && input.value === '')
+    const box = grid.querySelector<HTMLInputElement>('[data-loom-select]')!
+    box.checked = true
+    box.dispatchEvent(new Event('change', { bubbles: true }))
+    check('a ticked row is marked and the toolbar becomes the bulk bar', box.closest('tr')?.getAttribute('data-loom-picked') === '1' && getComputedStyle(grid.querySelector('[data-loom-bulk]')!).display === 'flex')
+    click(grid.querySelector('[data-loom-grid-clear]'))
+    check('clearing the selection restores the toolbar', grid.getAttribute('data-loom-selected') === '0')
+    const toggle = grid.querySelector<HTMLInputElement>('[data-loom-col-toggle="1"]')!
+    toggle.checked = false
+    toggle.dispatchEvent(new Event('change', { bubbles: true }))
+    check('the column picker hides a column, header and cells', grid.querySelector<HTMLElement>('th[data-loom-col="1"]')?.style.display === 'none' && grid.querySelector<HTMLElement>('td[data-loom-col="1"]')?.style.display === 'none')
+    let csv = ''
+    const realCreate = URL.createObjectURL
+    URL.createObjectURL = (b: Blob | MediaSource) => {
+      void (b as Blob).text().then((t) => (csv = t))
+      return 'blob:probe'
+    }
+    const realClick = HTMLAnchorElement.prototype.click
+    HTMLAnchorElement.prototype.click = function () {}
+    click(grid.querySelector('[data-loom-grid-csv]'))
+    await new Promise((r) => setTimeout(r, 30))
+    URL.createObjectURL = realCreate
+    HTMLAnchorElement.prototype.click = realClick
+    check('Export downloads the visible columns as CSV', csv.startsWith('Customer,Seats,MRR') && csv.includes('Ada Lovelace,310,12400'), csv.slice(0, 80))
+    host.remove()
+
+    for (const state of ['loading', 'empty', 'error'] as const) {
+      st.setProp(g, 'loadState', state)
+      const html = renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, g))
+      const ok = state === 'loading' ? html.includes('data-loom-shimmer') && html.includes('aria-busy="true"') : state === 'error' ? html.includes('Could not load this data') && html.includes('data-loom-action="retry"') : html.includes('Nothing to show yet')
+      check(`the ${state} state is designed, not blank`, ok)
+    }
   }
 
   // --- 112. Phase 1: overlays, the page under an export, tones ---------------

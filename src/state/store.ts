@@ -10,6 +10,7 @@
  * not a code path.
  */
 
+import { takeShorthand } from '../model/grid'
 import { buildStarter, getStarter } from '../model/starters'
 import { dropSize } from '../model/drop-size'
 import { apply, captureSubtree, duplicateSubtree, parentOf, reidentify } from '../model/ops'
@@ -317,10 +318,15 @@ export class EditorStore {
   /** A fresh node of `name`, schema defaults applied, not yet in the document. */
   private buildNode(name: string, x: number, y: number, overrides: Record<string, PropValue> = {}, opts: { flow?: boolean } = {}): Node {
     const built = instantiate(name)
+    const props: Record<string, PropValue> = { ...built.props, ...overrides, x, y }
+    // A grid's columns typed as text ("Name,Role,Amount") are the shorthand
+    // for its column definitions: read into the list, typed from the rows.
+    const lists = takeShorthand(name, props)
     return {
       id: `n${Math.random().toString(36).slice(2, 9)}`,
       type: name,
-      props: { ...built.props, ...overrides, x, y },
+      props,
+      ...(lists ? { lists } : {}),
       children: [],
       flow: opts.flow ?? built.flow,
       visible: true,

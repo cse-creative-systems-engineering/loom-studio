@@ -276,9 +276,14 @@ export function behaviourCss(): string {
     '[data-loom-b="disclosure"] [data-loom-caret]{transition:transform 120ms ease;display:inline-block}',
     '[data-loom-b="disclosure"][data-loom-open="1"] [data-loom-caret]{transform:rotate(90deg)}',
     // --- sortable column ---
+    // A sortable header SAYS it sorts before it is clicked: a faint pair of
+    // carets, brighter on hover, and only the live direction lit once sorted.
     '[data-loom-b="sort"]{cursor:pointer;user-select:none;transition:color 90ms ease}',
-    '[data-loom-b="sort"]:hover{color:var(--loom-accent,#5b8cff)}',
-    '[data-loom-b="sort"][data-loom-sort]::after{content:attr(data-loom-sort);margin-left:6px;opacity:.9}',
+    '[data-loom-b="sort"]:hover{color:var(--loom-text,inherit) !important}',
+    '[data-loom-sort-mark]{opacity:.3;transition:opacity 90ms ease}',
+    '[data-loom-b="sort"]:hover [data-loom-sort-mark]{opacity:.75}',
+    '[data-loom-sort="asc"] [data-loom-sort-mark],[data-loom-sort="desc"] [data-loom-sort-mark]{opacity:1}',
+    '[data-loom-sort="asc"] [data-loom-down],[data-loom-sort="desc"] [data-loom-up]{opacity:.22}',
     // --- pagination / progress dots / steps ---
     '[data-loom-b="page"][aria-current="page"]{background:var(--loom-on-bg,#ffffff14);color:var(--loom-accent,#5b8cff)}',
     '[data-loom-b="dot"]{transition:background 120ms ease}',
@@ -291,10 +296,25 @@ export function behaviourCss(): string {
     // --- data grid: selection drives the bulk bar, no framework involved ---
     '[data-loom-grid=""] [data-loom-bulk]{display:none}',
     '[data-loom-grid]:not([data-loom-selected="0"]) [data-loom-bulk]{display:flex !important}',
-    '[data-loom-grid] [data-loom-row]:hover{background:var(--loom-row-hover,rgba(127,140,170,0.08))}',
-    '[data-loom-grid] [data-loom-nomatch]{display:none}',
+    '[data-loom-grid] [data-loom-row]:hover{background:var(--loom-row-hover,rgba(127,140,170,0.08)) !important}',
+    '[data-loom-grid] [data-loom-row][data-loom-picked="1"]{background:var(--loom-grid-pick,rgba(91,140,255,0.12)) !important}',
+    '[data-loom-grid] [data-loom-row][data-loom-picked="1"]>td:first-child{box-shadow:inset 2px 0 0 var(--loom-accent,#5b8cff)}',
+    '[data-loom-grid][data-loom-status="ready"] [data-loom-nomatch]{display:none}',
     '[data-loom-grid][data-loom-visible="0"] [data-loom-nomatch]{display:table-row !important}',
     '[data-loom-grid] [data-loom-menu-panel][data-loom-open="1"]{display:flex !important}',
+    '[data-loom-grid] [role=menuitem]:hover,[data-loom-grid] [role=menuitem]:focus-visible,[data-loom-grid] [role=menuitemcheckbox]:hover{background:var(--loom-on-bg,#ffffff14);outline:none}',
+    '[data-loom-row-more]:hover,[data-loom-row-more][data-loom-on="1"]{background:var(--loom-on-bg,#ffffff14) !important;color:var(--loom-text,inherit) !important}',
+    '[data-loom-grid-toolbar] button:hover,[data-loom-grid-pager] button:not(:disabled):hover{border-color:var(--loom-border-strong,#ffffff33) !important;color:var(--loom-text,inherit) !important}',
+    '[data-loom-grid-pager] button:disabled{opacity:.4;cursor:default !important}',
+    '[data-loom-grid-link]:hover{text-decoration:underline !important}',
+    '[data-loom-float][popover]{position:fixed;margin:0;inset:auto}',
+    // Column resizing: a hit strip on each header's right edge, a line when it is live.
+    '[data-loom-col-resize]{position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:5}',
+    '[data-loom-col-resize]::after{content:"";position:absolute;left:3px;top:22%;bottom:22%;width:2px;border-radius:1px;background:var(--loom-accent,#5b8cff);opacity:0;transition:opacity 90ms ease}',
+    '[data-loom-col-resize]:hover::after,[data-loom-col-resize][data-loom-on="1"]::after{opacity:1}',
+    '@keyframes loom-shimmer{0%,100%{opacity:.5}50%{opacity:1}}',
+    '[data-loom-shimmer]{animation:loom-shimmer 1.4s ease-in-out infinite}',
+    '@media (prefers-reduced-motion:reduce){[data-loom-shimmer]{animation:none}}',
 
     // --- toast: a timer, and what it leaves behind ---
     // `duration` is a number of SECONDS and the runtime owns the clock; the
@@ -479,42 +499,298 @@ export function installBehaviour(): void {
     true,
   )
 
-  // --- grid selection and filtering -------------------------------------
-  // A grid's selection is real state, so the bulk bar appears because rows are
-  // checked. Counted onto the grid element, and CSS does the rest.
+  // --- data grid ---------------------------------------------------------
+  // One refresh decides what a grid shows: the rows the search matches, the
+  // page of them that is current, the count, the totals over every match and
+  // the no-match message. Sorting, searching, paging and column picking all
+  // change state and then call it, so no two of them can disagree.
+  const gridOf = (el: Element): HTMLElement | null => el.closest('[data-loom-grid]') as HTMLElement | null
+  const own = (grid: Element, sel: string): Element[] => q(sel, grid).filter((el) => el.closest('[data-loom-grid]') === grid)
+
+  /** Same rules as the renderer's `formatNumber`; the runtime travels alone. */
+  const formatTotal = (v: number, f: { type: string; currency: string; decimals: number }): string => {
+    const fixed = f.decimals >= 0 ? { minimumFractionDigits: f.decimals, maximumFractionDigits: f.decimals } : { maximumFractionDigits: 2 }
+    try {
+      if (f.type === 'currency') return new Intl.NumberFormat('en-US', { style: 'currency', currency: f.currency || 'USD', ...(f.decimals >= 0 ? fixed : {}) }).format(v)
+      const body = new Intl.NumberFormat('en-US', fixed).format(Math.abs(v))
+      if (f.type === 'percent') return (v < 0 ? '-' : '') + body + '%'
+      if (f.type === 'change') return (v > 0 ? '+' : v < 0 ? '−' : '') + body + '%'
+      return (v < 0 ? '-' : '') + body
+    } catch {
+      return String(Math.round(v * 100) / 100)
+    }
+  }
+
   const syncGridSelection = (): void => {
     q('[data-loom-grid]').forEach((grid) => {
       const id = grid.getAttribute('data-loom-grid')
       const boxes = q(`[data-loom-select="${id}"]`, grid)
-      const checked = boxes.filter((b) => (b as HTMLInputElement).checked)
-      grid.setAttribute('data-loom-selected', String(checked.length))
+      let picked = 0
+      boxes.forEach((b) => {
+        const on = (b as HTMLInputElement).checked
+        if (on) picked += 1
+        b.closest('[data-loom-row]')?.setAttribute('data-loom-picked', on ? '1' : '0')
+      })
+      grid.setAttribute('data-loom-selected', String(picked))
       const label = grid.querySelector('[data-loom-bulk-count]')
-      if (label) label.textContent = `${checked.length} selected`
+      if (label) label.textContent = `${picked} selected`
       const all = grid.querySelector('[data-loom-select-all]') as HTMLInputElement | null
       if (all) {
-        all.checked = boxes.length > 0 && checked.length === boxes.length
-        all.indeterminate = checked.length > 0 && checked.length < boxes.length
+        all.checked = boxes.length > 0 && picked === boxes.length
+        all.indeterminate = picked > 0 && picked < boxes.length
       }
     })
   }
 
-  const applyFilter = (input: HTMLInputElement): void => {
-    const id = input.getAttribute('data-loom-filter')
-    if (!id) return
-    const grid = document.querySelector(`[data-loom-grid="${id}"]`)
-    if (!grid) return
-    const term = input.value.trim().toLowerCase()
-    let shown = 0
-    q('[data-loom-row]', grid).forEach((row: Element) => {
-      // filterText keeps the searchable text to the DATA cells, so a control
-      // in the row (a checkbox, a menu button) cannot accidentally match.
-      const text = (row.getAttribute('data-loom-filter-text') ?? row.textContent ?? '').toLowerCase()
-      const hit = term === '' || text.includes(term)
-      row.setAttribute('data-loom-hidden', hit ? '0' : '1')
-      if (row instanceof HTMLElement) row.style.display = hit ? '' : 'none'
-      if (hit) shown += 1
+  /** Pinned columns stack at the left edge by their MEASURED widths. */
+  const layoutPins = (grid: Element): void => {
+    const head = own(grid, 'thead th')
+    if (!head.length) return
+    let left = 0
+    for (const th of head) {
+      const el = th as HTMLElement
+      const col = el.getAttribute('data-loom-col')
+      if (col === null) {
+        // The selection column: pinned with the rest when anything is pinned.
+        if (el.style.position === 'sticky' && el.style.left !== '') left = el.offsetWidth
+        continue
+      }
+      if (el.style.left === '' || el.style.display === 'none') continue
+      own(grid, `[data-loom-col="${col}"]`).forEach((c) => {
+        if (c instanceof HTMLElement && c.tagName !== 'COL') c.style.left = `${left}px`
+      })
+      left += el.offsetWidth
+    }
+  }
+
+  const refreshGrid = (grid: Element): void => {
+    const input = grid.querySelector('[data-loom-filter]') as HTMLInputElement | null
+    const term = (input?.value ?? '').trim().toLowerCase()
+    const rows = own(grid, '[data-loom-row]')
+    const matches = rows.filter((row) => term === '' || (row.getAttribute('data-loom-filter-text') ?? row.textContent ?? '').toLowerCase().includes(term))
+    const size = Number(grid.getAttribute('data-loom-page-size') ?? 0) || 0
+    const pages = size > 0 ? Math.max(1, Math.ceil(matches.length / size)) : 1
+    const page = Math.min(pages, Math.max(1, Number(grid.getAttribute('data-loom-page') ?? 1) || 1))
+    grid.setAttribute('data-loom-page', String(page))
+    const from = size > 0 ? (page - 1) * size : 0
+    const to = size > 0 ? from + size : matches.length
+    const live = new Set(matches.slice(from, to))
+    rows.forEach((row) => {
+      const on = live.has(row)
+      row.setAttribute('data-loom-hidden', matches.includes(row) ? '0' : '1')
+      if (row instanceof HTMLElement) row.style.display = on ? '' : 'none'
     })
-    grid.setAttribute('data-loom-visible', String(shown))
+    grid.setAttribute('data-loom-visible', String(matches.length))
+    const count = grid.querySelector('[data-loom-grid-count]')
+    if (count && grid.getAttribute('data-loom-status') === 'ready') count.textContent = String(matches.length)
+    const msg = grid.querySelector('[data-loom-nomatch-text]')
+    if (msg && rows.length > 0 && grid.getAttribute('data-loom-status') === 'ready') msg.textContent = term ? `No rows match “${input?.value.trim()}”` : 'No rows match your search'
+    const label = grid.querySelector('[data-loom-page-label]')
+    if (label) label.textContent = matches.length === 0 ? '0 of 0' : `${from + 1}–${Math.min(to, matches.length)} of ${matches.length}`
+    own(grid, '[data-loom-page-step]').forEach((b) => {
+      const step = Number(b.getAttribute('data-loom-page-step'))
+      ;(b as HTMLButtonElement).disabled = step < 0 ? page <= 1 : page >= pages
+    })
+    // Totals follow the search: a filtered grid totals what it shows.
+    own(grid, 'tfoot [data-loom-total]').forEach((td) => {
+      const col = td.getAttribute('data-loom-col')
+      const how = td.getAttribute('data-loom-total')
+      const out = td.querySelector('[data-loom-sum]')
+      if (!out || col === null) return
+      const cells = matches.map((r) => r.querySelector(`[data-loom-cell="${col}"]`)).filter(Boolean) as Element[]
+      if (how === 'count') {
+        out.textContent = String(cells.filter((c) => (c.getAttribute('data-loom-raw') ?? '') !== '').length)
+        return
+      }
+      const vals = cells.map((c) => Number(c.getAttribute('data-loom-v'))).filter((v, i) => cells[i].hasAttribute('data-loom-v') && Number.isFinite(v))
+      if (!vals.length) {
+        out.textContent = '—'
+        return
+      }
+      const v =
+        how === 'sum' ? vals.reduce((x, y) => x + y, 0) : how === 'average' ? vals.reduce((x, y) => x + y, 0) / vals.length : how === 'min' ? Math.min(...vals) : Math.max(...vals)
+      let fmt = { type: 'number', currency: 'USD', decimals: -1 }
+      try {
+        fmt = { ...fmt, ...JSON.parse(td.getAttribute('data-loom-fmt') ?? '{}') }
+      } catch {
+        // A hand-edited export: the plain number is still the right number.
+      }
+      out.textContent = formatTotal(v, fmt)
+    })
+    layoutPins(grid)
+  }
+
+  const applyFilter = (input: HTMLInputElement): void => {
+    const grid = gridOf(input)
+    if (!grid) return
+    grid.setAttribute('data-loom-page', '1')
+    refreshGrid(grid)
+  }
+
+  /** The grid as a CSV file: the visible columns, every matching row, in the current order. */
+  const exportCsv = (grid: Element): void => {
+    const cols = own(grid, 'thead th[data-loom-col]').filter((th) => (th as HTMLElement).style.display !== 'none')
+    const quote = (v: string): string => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
+    const lines = [cols.map((th) => quote((th.textContent ?? '').trim())).join(',')]
+    own(grid, '[data-loom-row]')
+      .filter((r) => r.getAttribute('data-loom-hidden') !== '1')
+      .forEach((r) => {
+        lines.push(cols.map((th) => quote(r.querySelector(`[data-loom-cell="${th.getAttribute('data-loom-col')}"]`)?.getAttribute('data-loom-raw') ?? '')).join(','))
+      })
+    const name = (grid.getAttribute('data-loom-title') || 'data').replace(/[^\w\- ]+/g, '').trim() || 'data'
+    try {
+      const url = URL.createObjectURL(new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${name}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch {
+      // No Blob URLs here (a locked-down viewer): the event still says what was asked.
+    }
+    fire(grid, 'export')
+  }
+
+  const showColumn = (grid: Element, col: string, on: boolean): void => {
+    own(grid, `[data-loom-col="${col}"]`).forEach((el) => {
+      if (el instanceof HTMLElement && el.tagName !== 'COL') el.style.display = on ? '' : 'none'
+    })
+    layoutPins(grid)
+    fire(grid, on ? 'column.show' : 'column.hide')
+  }
+
+  // Grid toolbar, pager and empty-state buttons.
+  document.addEventListener('click', (e) => {
+    const csv = closest(e, '[data-loom-grid-csv]')
+    if (csv && !csv.closest('[inert]')) {
+      const grid = gridOf(csv)
+      if (grid) exportCsv(grid)
+      return
+    }
+    const clear = closest(e, '[data-loom-grid-clear]')
+    if (clear) {
+      const grid = gridOf(clear)
+      if (grid) own(grid, '[data-loom-select],[data-loom-select-all]').forEach((b) => ((b as HTMLInputElement).checked = false))
+      syncGridSelection()
+      return
+    }
+    const unfilter = closest(e, '[data-loom-grid-unfilter]')
+    if (unfilter) {
+      const grid = gridOf(unfilter)
+      const input = grid?.querySelector('[data-loom-filter]') as HTMLInputElement | null
+      if (input) {
+        input.value = ''
+        applyFilter(input)
+        input.focus()
+      }
+      return
+    }
+    const step = closest(e, '[data-loom-page-step]')
+    if (step && !(step as HTMLButtonElement).disabled) {
+      const grid = gridOf(step)
+      if (!grid) return
+      grid.setAttribute('data-loom-page', String((Number(grid.getAttribute('data-loom-page')) || 1) + Number(step.getAttribute('data-loom-page-step'))))
+      refreshGrid(grid)
+      fire(grid, 'page')
+    }
+  })
+
+  // Column resizing: drag a header's right edge. The click that ends a drag
+  // is swallowed, so a resize never also sorts.
+  let resized = false
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      const handle = closest(e, '[data-loom-col-resize]')
+      if (!(handle instanceof HTMLElement) || handle.closest('[inert]')) return
+      const th = handle.closest('th') as HTMLElement | null
+      const grid = th ? gridOf(th) : null
+      if (!th || !grid) return
+      e.preventDefault()
+      e.stopPropagation()
+      const pe = e as PointerEvent
+      const startX = pe.clientX
+      const startW = th.offsetWidth
+      const col = handle.getAttribute('data-loom-col-resize') ?? ''
+      handle.setAttribute('data-loom-on', '1')
+      resized = false
+      const move = (m: PointerEvent): void => {
+        const w = Math.max(56, Math.round(startW + m.clientX - startX))
+        if (Math.abs(m.clientX - startX) > 2) resized = true
+        own(grid, `[data-loom-col="${col}"]`).forEach((el) => {
+          if (!(el instanceof HTMLElement)) return
+          el.style.width = `${w}px`
+          if (el.tagName === 'COL') return
+          el.style.minWidth = `${w}px`
+          el.style.maxWidth = `${w}px`
+          el.style.overflow = 'hidden'
+          el.style.textOverflow = 'ellipsis'
+        })
+        layoutPins(grid)
+      }
+      const up = (): void => {
+        handle.setAttribute('data-loom-on', '0')
+        document.removeEventListener('pointermove', move)
+        document.removeEventListener('pointerup', up)
+        if (resized) fire(th, 'column.resize')
+      }
+      document.addEventListener('pointermove', move)
+      document.addEventListener('pointerup', up)
+    },
+    true,
+  )
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (resized && closest(e, 'th')) {
+        resized = false
+        e.stopPropagation()
+        e.preventDefault()
+      }
+    },
+    true,
+  )
+
+  // A grid's menus (row actions, the column picker) float in the top layer in
+  // output, so the grid's own scrolling frame can never clip them.
+  const syncFloats = (): void => {
+    q('[data-loom-menu-panel][data-loom-float]').forEach((panel) => {
+      const open = panel.getAttribute('data-loom-open') === '1'
+      topLayer(panel, open)
+      if (!open || !panel.hasAttribute('popover') || !(panel instanceof HTMLElement)) return
+      const trigger = document.querySelector(`[data-loom-menu-trigger="${panel.getAttribute('data-loom-menu-panel')}"]`)
+      if (!trigger) return
+      const r = trigger.getBoundingClientRect()
+      const w = panel.offsetWidth
+      const h = panel.offsetHeight
+      panel.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w))}px`
+      panel.style.top = `${r.bottom + 4 + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`
+    })
+  }
+  document.addEventListener('scroll', (e) => {
+    const t = e.target as Element | null
+    if (!t || typeof t.closest !== 'function' || !t.closest('[data-loom-grid]')) return
+    q('[data-loom-float][data-loom-open="1"]').forEach((m) => m.setAttribute('data-loom-open', '0'))
+    syncFloats()
+  }, true)
+
+  q('[data-loom-grid]').forEach(refreshGrid)
+  if (typeof MutationObserver === 'function' && document.body) {
+    // A grid that arrives later (the editor re-rendering, a view switched in)
+    // gets its first refresh too, so its pins are measured.
+    new MutationObserver((records) => {
+      for (const r of records) {
+        for (let j = 0; j < r.addedNodes.length; j += 1) {
+          const node = r.addedNodes[j]
+          if (node.nodeType !== 1) continue
+          const el = node as Element
+          const grids = el.hasAttribute('data-loom-grid') ? [el] : q('[data-loom-grid]', el)
+          grids.forEach(refreshGrid)
+        }
+      }
+    }).observe(document.body, { childList: true, subtree: true })
   }
 
   document.addEventListener(
@@ -529,6 +805,11 @@ export function installBehaviour(): void {
           })
         }
         syncGridSelection()
+      }
+      if (el instanceof HTMLInputElement && el.hasAttribute('data-loom-col-toggle')) {
+        const grid = gridOf(el)
+        el.closest('[role=menuitemcheckbox]')?.setAttribute('aria-checked', el.checked ? 'true' : 'false')
+        if (grid) showColumn(grid, el.getAttribute('data-loom-col-toggle') ?? '', el.checked)
       }
     },
     true,
@@ -882,9 +1163,12 @@ export function installBehaviour(): void {
       const panel = document.querySelector(`[data-loom-menu-panel="${id}"]`)
       if (panel) {
         const open = panel.getAttribute('data-loom-open') === '1'
+        // One menu at a time: opening this one closes any other.
+        if (!open) q('[data-loom-menu-panel][data-loom-open="1"]').forEach((m) => m !== panel && m.setAttribute('data-loom-open', '0'))
         panel.setAttribute('data-loom-open', open ? '0' : '1')
         trigger.setAttribute('data-loom-on', open ? '0' : '1')
         trigger.setAttribute('aria-expanded', open ? 'false' : 'true')
+        syncFloats()
       }
       return
     }
@@ -894,6 +1178,14 @@ export function installBehaviour(): void {
         m.setAttribute('data-loom-on', '0')
         m.setAttribute('aria-expanded', 'false')
       })
+      syncFloats()
+    } else if (closest(e, '[data-loom-menu-panel] [role=menuitem]')) {
+      // Choosing a command closes its menu, as every menu does.
+      const panel = closest(e, '[data-loom-menu-panel]')
+      panel?.setAttribute('data-loom-open', '0')
+      const id = panel?.getAttribute('data-loom-menu-panel')
+      if (id) document.querySelector(`[data-loom-menu-trigger="${id}"]`)?.setAttribute('aria-expanded', 'false')
+      syncFloats()
     }
 
     const el = closest(e, '[data-loom-b]')
@@ -1076,17 +1368,27 @@ export function installBehaviour(): void {
         const rows = q('[data-loom-row]', body)
         // Read the cell BY COLUMN, not by child position: a row may carry a
         // selection checkbox and an actions cell, so child N is not column N.
-        const cellText = (row: Element): string =>
-          row.querySelector(`[data-loom-cell="${col}"]`)?.textContent?.trim() ?? ''
+        // The cell's sort KEY when it has one (a number, money, a date as a
+        // timestamp): "128,400" read as text sorted as 128, and "Oct 2" sorted
+        // after "Nov 4".
+        const cellOf = (row: Element): Element | null => row.querySelector(`[data-loom-cell="${col}"]`)
+        const keyOf = (row: Element): number | null => {
+          const v = cellOf(row)?.getAttribute('data-loom-v')
+          return v === null || v === undefined || v === '' ? null : Number(v)
+        }
+        const textOf = (row: Element): string => cellOf(row)?.getAttribute('data-loom-raw') ?? cellOf(row)?.textContent?.trim() ?? ''
         rows.sort((a, b) => {
-          const av = cellText(a)
-          const bv = cellText(b)
-          const an = parseFloat(av)
-          const bn = parseFloat(bv)
-          const cmp = !isNaN(an) && !isNaN(bn) ? an - bn : av.localeCompare(bv)
+          const ak = keyOf(a)
+          const bk = keyOf(b)
+          // Empty cells sort last in either direction.
+          if (ak === null && bk !== null && textOf(a) === '') return 1
+          if (bk === null && ak !== null && textOf(b) === '') return -1
+          const cmp = ak !== null && bk !== null ? ak - bk : textOf(a).localeCompare(textOf(b), undefined, { numeric: true, sensitivity: 'base' })
           return dir === 'asc' ? cmp : -cmp
         })
         rows.forEach((r) => body.appendChild(r))
+        const grid = gridOf(el)
+        if (grid) refreshGrid(grid)
       }
       fire(el, 'sort')
       return
@@ -1373,6 +1675,7 @@ export function installBehaviour(): void {
   document.addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key !== 'Escape') return
     q('[data-loom-menu-panel][data-loom-open="1"]').forEach((m) => m.setAttribute('data-loom-open', '0'))
+    syncFloats()
     q('[data-loom-scrim="1"]').forEach((s) => {
       const host = s.closest('[data-loom-reveal]')
       if (host instanceof HTMLElement) hide(host)
