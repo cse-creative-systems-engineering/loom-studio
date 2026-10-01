@@ -40,6 +40,7 @@ import { desktopBounds } from '../src/model/desktop-run'
 import { AiTurn, runTool, TOOLS } from '../src/ai/tools'
 import { addedTypes } from '../src/model/registry'
 import { itemsOf } from '../src/model/lists'
+import { CONTENT_STATE_TOOLS } from '../src/model/prop-vocab'
 import { unsupportedProps } from '../src/model/registry'
 import { THEME_NAMES } from '../src/render/theme'
 import { OUTPUT_FAMILY, fontFaceCss } from '../src/render/fonts'
@@ -2985,7 +2986,9 @@ export async function runSelfTest(): Promise<string> {
         // Rows that only appear in a state: a current menu command.
         if (comp.name === 'Menu') st.commit({ op: 'setList', id, key: 'items', items: [{ label: 'Profile', icon: 'user', shortcut: '⌘P', active: true }, { label: 'Sign out', danger: true }] }, 'seed')
         // A part that only exists in a state: the loading bars.
-        if (comp.name === 'DataGrid' && partName === 'skeleton') st.setProp(id, 'loadState', 'loading')
+        // Parts that only exist in a content state are probed in that state.
+        if ('loadState' in comp.props && (partName === 'skeleton' || partName === 'placeholder')) st.setProp(id, 'loadState', 'loading')
+        if ('loadState' in comp.props && comp.name !== 'DataGrid' && ['message', 'messageIcon', 'action'].includes(partName)) st.setProp(id, 'loadState', 'error')
         const baseDoc = st.doc
         // The part must exist on the canvas before it is styled (the panel
         // points at it), and in the output once it is.
@@ -4495,6 +4498,33 @@ export async function runSelfTest(): Promise<string> {
     check('an empty container says what it is on the canvas, never in the output', canvas.includes('data-loom-hint="Activity · drop components here"') && !out.includes('data-loom-hint'))
     const pageTag = /<div[^>]*data-loom-type="TabPanel"[^>]*>/.exec(canvas)?.[0] ?? ''
     check('a tab page fills its tab set', pageTag.includes('flex-grow:1'), pageTag.slice(0, 300))
+  }
+
+  // --- 116. Content states: loading, empty and failed are designed on every
+  // data-bearing tool, with one vocabulary (render/content-state.tsx).
+  {
+    const missing: string[] = []
+    const blank: string[] = []
+    for (const [tool, empty] of Object.entries(CONTENT_STATE_TOOLS)) {
+      const spec = getComponent(tool)!
+      if (!spec.props.loadState || !spec.props.emptyMessage || !spec.props.errorMessage || !spec.parts?.skeleton || !spec.parts?.message) missing.push(tool)
+      const st = new EditorStore()
+      st.addComponent('Panel', null, 0, 0)
+      const id = st.addComponent(tool, st.doc.root as string, 0, 0) as string
+      const draw = () => renderToStaticMarkup(renderNode({ doc: st.doc, selected: new Set(), mode: 'preview' }, id))
+      const ready = draw()
+      st.setProp(id, 'loadState', 'loading')
+      const loading = draw()
+      st.setProp(id, 'loadState', 'empty')
+      const emptyOut = draw()
+      st.setProp(id, 'loadState', 'error')
+      const error = draw()
+      if (loading === ready || !loading.includes('data-loom-shimmer') || !loading.includes('aria-busy="true"')) blank.push(`${tool} loading`)
+      if (!emptyOut.includes(empty)) blank.push(`${tool} empty`)
+      if (!error.includes('Could not load this data') || !error.includes('data-loom-action="retry"') || !error.includes('role="alert"')) blank.push(`${tool} error`)
+    }
+    check('every data-bearing tool carries the content states, one vocabulary', missing.length === 0, missing.join(', '))
+    check('each state is drawn: a skeleton, a message, a retry', blank.length === 0, blank.join(', '))
   }
 
   // --- 112. Phase 1: overlays, the page under an export, tones ---------------

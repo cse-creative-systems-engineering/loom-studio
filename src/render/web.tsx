@@ -23,6 +23,7 @@ import { FORCE_ATTR, hasStates } from './states'
 import { partAttrs } from './parts'
 import { itemsOf } from '../model/lists'
 import { DataGridView } from './datagrid'
+import { contentStateBody } from './content-state'
 import type { Document, InteractionState, Node, NodeId, PropValue } from '../model/types'
 
 export interface RenderCtx {
@@ -1981,6 +1982,9 @@ function renderPreviewBody(
   // canvas, like a leaf's; its child nodes stay live, so this is applied per
   // control rather than to the whole body.
   const canvasInert: { inert?: boolean } = ctx.mode === 'preview' ? {} : { inert: true }
+  // Loading, empty or failed: the tool's frame, with the state drawn in it.
+  const stateBody = contentStateBody({ node, style, reactKey: key, t, part, IconGlyph, inert: ctx.mode !== 'preview' })
+  if (stateBody) return stateBody
 
   switch (node.type) {
     case 'Button': {
