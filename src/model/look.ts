@@ -30,6 +30,10 @@ export const STROKE_STYLES = ['solid', 'dashed', 'dotted'] as const
 export const BEVEL_STYLES = ['raised', 'sunken', 'pillow'] as const
 export const EASINGS = ['smooth', 'snappy', 'spring', 'bouncy', 'linear'] as const
 export const CLICK_EFFECTS = ['ripple', 'sweep', 'pulse', 'sink'] as const
+/** The shape of a corner (CSS corner-shape; a browser without it draws round). */
+export const CORNER_SHAPES = ['round', 'squircle', 'bevel', 'notch', 'scoop', 'square'] as const
+/** Type lit by the scene light: raised off the surface, or cut into it. */
+export const TEXT_RELIEFS = ['none', 'emboss', 'engrave'] as const
 
 export interface LookFill {
   kind: (typeof FILL_KINDS)[number]
@@ -98,6 +102,12 @@ export interface Look {
   radius?: number
   /** Per corner, px: top-left, top-right, bottom-right, bottom-left. Wins over `radius`. */
   corners?: [number, number, number, number]
+  /** How a corner is shaped: round, squircle (smooth), bevel (chamfer), notch, scoop, square. */
+  cornerShape?: (typeof CORNER_SHAPES)[number]
+  /** Text lit by the scene light. */
+  textRelief?: (typeof TEXT_RELIEFS)[number]
+  /** A glow around the letters. */
+  textGlow?: { color: string; size: number }
   trace?: LookTrace
   opacity?: number
   scale?: number
@@ -222,7 +232,7 @@ export function cleanLook(raw: unknown, where = 'look'): { look: Look; dropped: 
   const o = obj(raw)
   if (!o) return { look: {}, dropped: raw === undefined ? [] : [`${where} (not an object)`] }
   const look: Look = {}
-  const known = new Set(['translucency', 'z', 'fills', 'strokes', 'glows', 'bevel', 'inset', 'sheen', 'noise', 'blur', 'backdrop', 'radius', 'corners', 'trace', 'opacity', 'scale', 'lift', 'brightness', 'ink', 'edge'])
+  const known = new Set(['cornerShape', 'textRelief', 'textGlow', 'translucency', 'z', 'fills', 'strokes', 'glows', 'bevel', 'inset', 'sheen', 'noise', 'blur', 'backdrop', 'radius', 'corners', 'trace', 'opacity', 'scale', 'lift', 'brightness', 'ink', 'edge'])
   for (const k of Object.keys(o)) if (!known.has(k)) dropped.push(`${where}.${k} (unknown)`)
   const scalar: Array<[keyof Look, RangeKey]> = [
     ['translucency', 'unit'], ['z', 'z'], ['inset', 'inset'], ['sheen', 'sheen'], ['noise', 'noise'], ['blur', 'blur'], ['backdrop', 'backdrop'],
@@ -260,6 +270,20 @@ export function cleanLook(raw: unknown, where = 'look'): { look: Look; dropped: 
   if (glows) look.glows = glows
   const b = obj(o.bevel)
   if (b) look.bevel = { size: num(b.size, 'bevelSize') ?? 2, strength: num(b.strength, 'bevelStrength') ?? 0.5, style: pick(b.style, BEVEL_STYLES, 'raised') }
+  if (o.cornerShape !== undefined) {
+    if ((CORNER_SHAPES as readonly string[]).includes(o.cornerShape as string)) look.cornerShape = o.cornerShape as Look['cornerShape']
+    else dropped.push(`${where}.cornerShape (not a corner shape)`)
+  }
+  if (o.textRelief !== undefined) {
+    if ((TEXT_RELIEFS as readonly string[]).includes(o.textRelief as string)) look.textRelief = o.textRelief as Look['textRelief']
+    else dropped.push(`${where}.textRelief (not a relief)`)
+  }
+  const tg = obj(o.textGlow)
+  if (tg) {
+    const c = color(tg.color)
+    if (c) look.textGlow = { color: c, size: num(tg.size, 'glowSize') ?? 8 }
+    else dropped.push(`${where}.textGlow (needs a valid colour)`)
+  }
   const tr = obj(o.trace)
   if (tr) {
     const c = color(tr.color)
@@ -410,6 +434,18 @@ export const BUILTIN_STYLES: readonly LookStyle[] = [
     label: 'Traced',
     hint: 'A light that runs around the edge',
     set: { base: { strokes: [{ color: 'var(--loom-border-strong)', width: 1, position: 'inside', style: 'solid', opacity: 1 }], trace: { color: ACCENT, width: 2, speed: 3, arc: 0.22 } }, states: { hover: { trace: { color: ACCENT, width: 2, speed: 1.4, arc: 0.3 } } } },
+  },
+  {
+    id: 'squircle',
+    label: 'Squircle',
+    hint: 'Smooth, continuous corners, softly raised',
+    set: { base: { radius: 22, cornerShape: 'squircle', z: 6, bevel: { size: 1, strength: 0.4, style: 'raised' } }, states: { hover: { z: 10 }, pressed: { z: 2, scale: 0.985 } }, motion: { duration: 200, easing: 'spring' } },
+  },
+  {
+    id: 'chamfer',
+    label: 'Chamfer',
+    hint: 'Cut corners and a lit inner edge',
+    set: { base: { radius: 12, cornerShape: 'bevel', z: 4, strokes: [{ color: ACCENT, width: 1.5, position: 'inside', style: 'solid', opacity: 0.9 }], glows: [{ color: ACCENT, size: 10, strength: 0.25, inner: true }] }, states: { hover: { glows: [{ color: ACCENT, size: 14, strength: 0.45, inner: true }, { color: ACCENT, size: 14, strength: 0.35, inner: false }] }, pressed: { z: 1 } }, click: ['pulse'], motion: { duration: 160, easing: 'snappy' } },
   },
   {
     id: 'ripple',

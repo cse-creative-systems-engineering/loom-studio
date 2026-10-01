@@ -27,6 +27,8 @@ import {
   BLENDS,
   BUILTIN_STYLES,
   CLICK_EFFECTS,
+  CORNER_SHAPES,
+  TEXT_RELIEFS,
   DEFAULT_LIGHT,
   EASINGS,
   FILL_KINDS,
@@ -575,8 +577,11 @@ export function AppearancePanel({ s, node, editing, onEditing }: { s: EditorStor
         })}
       </Section>
 
-      <Section title="Shape" open={current.radius !== undefined || current.corners !== undefined}>
+      <Section title="Shape" open={current.radius !== undefined || current.corners !== undefined || current.cornerShape !== undefined}>
         {num('radius', 'Corners', [0, 64], 1, 'px')}
+        <Row label="Corner shape" set={current.cornerShape !== undefined} onClear={() => clear('cornerShape')} title="Squircle is a smooth, continuous curve; bevel cuts the corner; notch and scoop cut it inward">
+          <Choice label="Corner shape" value={current.cornerShape ?? effective.cornerShape} options={CORNER_SHAPES} onChange={(v) => setField('cornerShape', v, 'Corner shape')} />
+        </Row>
         <Row label="Each corner" set={current.corners !== undefined} onClear={() => clear('corners')}>
           <span className="ap-corners">
             {(['↖', '↗', '↘', '↙'] as const).map((g, k) => {
@@ -590,6 +595,20 @@ export function AppearancePanel({ s, node, editing, onEditing }: { s: EditorStor
             })}
           </span>
         </Row>
+      </Section>
+
+      <Section title="Type" open={current.textRelief !== undefined || current.textGlow !== undefined}>
+        <Row label="Relief" set={current.textRelief !== undefined} onClear={() => clear('textRelief')} title="Letters raised off the surface or cut into it, lit by the scene light">
+          <Choice label="Text relief" value={current.textRelief ?? effective.textRelief} options={TEXT_RELIEFS} onChange={(v) => setField('textRelief', v, 'Text relief')} />
+        </Row>
+        <Row label="Text glow" set={current.textGlow !== undefined} onClear={() => clear('textGlow')}>
+          <Color label="Text glow colour" value={(current.textGlow ?? effective.textGlow)?.color} onChange={(v) => setField('textGlow', { color: v, size: (current.textGlow ?? effective.textGlow)?.size ?? 8 }, 'Text glow')} />
+        </Row>
+        {(current.textGlow ?? effective.textGlow) && (
+          <Row label="Glow size" set={false}>
+            <Slider label="Text glow size" value={(current.textGlow ?? effective.textGlow)!.size} range={RANGES.glowSize} step={1} unit="px" onChange={(v) => setField('textGlow', { ...(current.textGlow ?? effective.textGlow)!, size: v }, 'Text glow size')} />
+          </Row>
+        )}
       </Section>
 
       <Section title="Texture & glass" open={['noise', 'blur', 'backdrop', 'translucency'].some((k) => current[k as keyof Look] !== undefined)}>

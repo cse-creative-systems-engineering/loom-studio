@@ -31,7 +31,9 @@ import { resolveTheme, type Theme } from './theme'
 import { OUTPUT_HOOK, cssString } from './responsive'
 import { partSelector } from './parts'
 import { FORCE_ATTR } from './states'
-import { bevelShadows, elevationShadows, insetShadows, lightOf, liftTint, shadeFor, sheenLayer, type Shade } from './light'
+import { bevelShadows, elevationShadows, insetShadows, lightOf, liftTint, shadeFor, shadowDir, sheenLayer, type Shade } from './light'
+
+const r1 = (n: number) => Math.round(n * 10) / 10
 
 /** True when a node carries any look. */
 export function hasLook(node: Node): boolean {
@@ -186,6 +188,18 @@ export function compileLook(l: Look, light: SceneLight, shade: Shade, isState = 
   // --- shape, tone and transform -------------------------------------------
   const r = radiusCss(l)
   if (r) d.push(`border-radius:${r}`)
+  if (l.cornerShape) d.push(`corner-shape:${l.cornerShape}`)
+  // --- type, lit by the same light ------------------------------------------
+  if (l.textRelief !== undefined || l.textGlow !== undefined) {
+    const ts: string[] = []
+    const sd = shadowDir(light)
+    const hi = `rgb(${shade.light} / ${shade.dark ? 0.18 : 0.7})`
+    const lo = `rgb(${shade.shadow} / ${shade.dark ? 0.7 : 0.35})`
+    if (l.textRelief === 'emboss') ts.push(`${r1(-sd.x)}px ${r1(-sd.y)}px 0 ${hi}`, `${r1(sd.x)}px ${r1(sd.y)}px 1px ${lo}`)
+    if (l.textRelief === 'engrave') ts.push(`${r1(sd.x)}px ${r1(sd.y)}px 0 ${hi}`, `${r1(-sd.x)}px ${r1(-sd.y)}px 1px ${lo}`)
+    if (l.textGlow) ts.push(`0 0 ${l.textGlow.size}px ${l.textGlow.color}`, `0 0 ${Math.max(1, Math.round(l.textGlow.size / 3))}px ${l.textGlow.color}`)
+    d.push(`text-shadow:${ts.length ? ts.join(',') : 'none'}`)
+  }
   if (l.ink) d.push(`color:${l.ink}`)
   if (l.edge) d.push(`border-color:${l.edge}`)
   if (l.opacity !== undefined) d.push(`opacity:${l.opacity}`)
@@ -237,7 +251,7 @@ function stateOf(sel: string, state: LookState): string[] {
   }
 }
 
-const TRANSITIONED = ['box-shadow', 'background-color', 'color', 'border-color', 'outline-color', 'opacity', 'scale', 'translate', 'filter', 'backdrop-filter', 'border-radius']
+const TRANSITIONED = ['text-shadow', 'box-shadow', 'background-color', 'color', 'border-color', 'outline-color', 'opacity', 'scale', 'translate', 'filter', 'backdrop-filter', 'border-radius']
 
 /* ------------------------------------------------------------- the sheet -- */
 
