@@ -22,6 +22,7 @@
     "probe:preview": "npm run build && electron dist/main/preview-probe.cjs",
     "probe:drag": "npm run build && node electron/cdp-drag.mjs",
     "probe:login": "npm run build && node electron/login-probe.mjs",
+    "probe:web-assistant": "npm run build && node electron/web-assistant-probe.mjs",
     "probe:react": "npm run build && node electron/react-export-probe.mjs"
   },
   "devDependencies": {

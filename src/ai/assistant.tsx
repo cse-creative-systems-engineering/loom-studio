@@ -12,6 +12,7 @@
 import React from 'react'
 import type { EditorStore } from '../state/store'
 import { aiTurn } from './editor-bridge'
+import { AI_AVAILABLE_EVENT } from './web-agent'
 
 interface Provider {
   id: string
@@ -19,6 +20,8 @@ interface Provider {
   found: string | null
   signedIn: boolean
   subscription?: boolean
+  /** How the menu names the account it runs on, when the provider says. */
+  accountNote?: string
   apiKey: 'env' | 'saved' | null
   models: Array<{ id: string; label: string }>
   ready: boolean
@@ -126,6 +129,13 @@ export function Assistant({ s }: { s: EditorStore }) {
   // (two IPC channels), so they are claimed by the pending send, not dropped.
   const sending = React.useRef(false)
   const threadRef = React.useRef<HTMLDivElement | null>(null)
+  // Bumped when a host connects Claude after load (the web preview).
+  const [aiGen, setAiGen] = React.useState(0)
+  React.useEffect(() => {
+    const on = () => setAiGen((g) => g + 1)
+    window.addEventListener(AI_AVAILABLE_EVENT, on)
+    return () => window.removeEventListener(AI_AVAILABLE_EVENT, on)
+  }, [])
 
   const refresh = React.useCallback(() => {
     void api()
@@ -140,11 +150,11 @@ export function Assistant({ s }: { s: EditorStore }) {
         })
       })
   }, [])
-  React.useEffect(refresh, [refresh])
+  React.useEffect(refresh, [refresh, aiGen])
 
   React.useEffect(
     () =>
-      api()?.onLogin((ev) => {
+      api()?.onLogin?.((ev) => {
         if (ev.kind === 'url') setLogin((l) => (l ? { ...l, page: true } : l))
         if (ev.kind === 'done') {
           setLogin(null)
@@ -153,7 +163,7 @@ export function Assistant({ s }: { s: EditorStore }) {
           if (ev.ok) refresh()
         }
       }),
-    [refresh],
+    [refresh, aiGen],
   )
 
   // Events for the running turn: steps, text, and the end of the turn.
@@ -186,7 +196,7 @@ export function Assistant({ s }: { s: EditorStore }) {
           setRunId(null)
         }
       }),
-    [s],
+    [s, aiGen],
   )
 
   React.useEffect(() => {
@@ -391,7 +401,7 @@ export function Assistant({ s }: { s: EditorStore }) {
                 <div key={p.id} className="as-menu-group">
                   <div className="as-menu-head">
                     {p.label}
-                    <span className="dim">{p.ready ? (p.subscription ? 'your subscription' : p.signedIn ? 'signed in' : p.apiKey === 'env' ? 'API key (env)' : 'API key') : 'not ready'}</span>
+                    <span className="dim">{p.ready ? (p.accountNote ?? (p.subscription ? 'your subscription' : p.signedIn ? 'signed in' : p.apiKey === 'env' ? 'API key (env)' : 'API key')) : 'not ready'}</span>
                   </div>
                   {p.models.map((m) => (
                     <button
