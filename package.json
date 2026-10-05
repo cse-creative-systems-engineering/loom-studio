@@ -10,6 +10,7 @@
     "build:renderer": "vite build",
     "build:main": "esbuild electron/main.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/main.cjs && esbuild electron/mcp-bridge.ts --bundle --platform=node --format=cjs --outfile=dist/main/mcp-bridge.cjs && esbuild electron/preload.cts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/preload.cjs && esbuild electron/verify.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/verify.cjs && esbuild electron/selftest.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/selftest.cjs && esbuild electron/embed-bundle.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/embed-bundle.cjs && esbuild electron/snapshot.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/snapshot.cjs && esbuild electron/probe.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/probe.cjs && esbuild electron/layout-probe.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/layout-probe.cjs && esbuild electron/preview-probe.ts --bundle --loader:.woff2=dataurl --platform=node --external:electron --format=cjs --outfile=dist/main/preview-probe.cjs",
     "build": "npm run build:main && npm run embed:bundle && npm run build:renderer",
+    "package": "npm run build:main && npm run build:renderer && electron-builder --publish never",
     "embed:bundle": "electron dist/main/embed-bundle.cjs",
     "test:bundle": "npm run build && electron dist/main/selftest.cjs",
     "start": "npm run build && electron .",
@@ -27,6 +28,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"
@@ -39,5 +41,53 @@
   "allowScripts": {
     "esbuild@0.28.2": true
   },
-  "description": "Loom — Studio: a desktop UI builder whose components actually work."
+  "description": "Loom — Studio: a desktop UI builder whose components actually work.",
+  "build": {
+    "appId": "io.github.cse-creative-systems-engineering.loom",
+    "productName": "Loom",
+    "artifactName": "Loom-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "package.json",
+      "dist/main/main.cjs",
+      "dist/main/preload.cjs",
+      "dist/main/mcp-bridge.cjs",
+      "dist/renderer/**/*",
+      "!node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    }
+  }
 }

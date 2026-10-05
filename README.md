@@ -28,6 +28,12 @@ npm start          # build + launch the app
 npm run verify     # ~1,130 checks in a real renderer
 ```
 
+No toolchain? Every merge to `master` builds a Windows installer and a macOS
+`.dmg`: open the latest [Installers run](https://github.com/cse-creative-systems-engineering/loom-studio/actions/workflows/installers.yml)
+and download from **Artifacts**. They are unsigned for now, so Windows asks
+once (**More info → Run anyway**) and macOS needs **right-click → Open** the
+first time. `npm run package` builds the same thing locally into `release/`.
+
 ## The idea
 
 Most UI builders let you lay out pixels and hand you a picture. Loom treats a
