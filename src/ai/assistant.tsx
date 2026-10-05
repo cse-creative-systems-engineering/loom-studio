@@ -31,11 +31,18 @@ type Event =
   | { kind: 'tool'; name: string; input: unknown }
   | { kind: 'done'; text: string; sessionId: string | null; error?: string }
 
+type LoginEvent = { kind: 'url'; url: string } | { kind: 'done'; ok: boolean; error?: string }
+
 interface Api {
   providers: () => Promise<Provider[]>
   send: (req: { provider: string; model: string; prompt: string; sessionId: string | null }) => Promise<{ runId?: string; error?: string }>
   cancel: () => Promise<boolean>
   saveKey: (provider: string, key: string | null) => Promise<{ ok: boolean; error?: string }>
+  login: (provider: string) => Promise<{ ok?: boolean; error?: string }>
+  loginCode: (code: string) => Promise<boolean>
+  loginOpen: () => Promise<boolean>
+  loginCancel: () => Promise<boolean>
+  onLogin: (cb: (event: LoginEvent) => void) => () => void
   onEvent: (cb: (runId: string, event: Event) => void) => () => void
 }
 
@@ -109,6 +116,10 @@ export function Assistant({ s }: { s: EditorStore }) {
   const [keyFor, setKeyFor] = React.useState<string | null>(null)
   const [keyDraft, setKeyDraft] = React.useState('')
   const [keyError, setKeyError] = React.useState('')
+  // Sign in with Claude: null when idle; `page` once the CLI printed its URL.
+  const [login, setLogin] = React.useState<{ page: boolean; codeSent: boolean } | null>(null)
+  const [loginCode, setLoginCode] = React.useState('')
+  const [loginError, setLoginError] = React.useState('')
   const session = React.useRef<string | null>(null)
   const runRef = React.useRef<string | null>(null)
   // A send is in flight: its first events can arrive before its run id does
@@ -130,6 +141,20 @@ export function Assistant({ s }: { s: EditorStore }) {
       })
   }, [])
   React.useEffect(refresh, [refresh])
+
+  React.useEffect(
+    () =>
+      api()?.onLogin((ev) => {
+        if (ev.kind === 'url') setLogin((l) => (l ? { ...l, page: true } : l))
+        if (ev.kind === 'done') {
+          setLogin(null)
+          setLoginCode('')
+          setLoginError(ev.ok ? '' : (ev.error ?? 'Sign-in did not finish.'))
+          if (ev.ok) refresh()
+        }
+      }),
+    [refresh],
+  )
 
   // Events for the running turn: steps, text, and the end of the turn.
   React.useEffect(
@@ -226,6 +251,24 @@ export function Assistant({ s }: { s: EditorStore }) {
     } else setKeyError(r?.error ?? 'Could not save the key.')
   }
 
+  const signIn = async (provider: string) => {
+    setLoginError('')
+    setLogin({ page: false, codeSent: false })
+    const r = await api()?.login(provider)
+    if (!r?.ok) {
+      setLogin(null)
+      setLoginError(r?.error ?? 'Could not start sign-in.')
+    }
+  }
+
+  const sendLoginCode = async () => {
+    if (!loginCode.trim()) return
+    if (await api()?.loginCode(loginCode)) {
+      setLoginCode('')
+      setLogin((l) => (l ? { ...l, codeSent: true } : l))
+    } else setLoginError('That code could not be sent. Copy it again from the sign-in page.')
+  }
+
   // While the agent builds, the conversation folds to one live line so the
   // canvas it is building on stays in view; "Show" opens it anyway.
   const last = messages[messages.length - 1]
@@ -286,6 +329,11 @@ export function Assistant({ s }: { s: EditorStore }) {
             <div key={p.id} className="as-setup-row">
               <span>{p.label}</span>
               <span className="dim">{p.hint}</span>
+              {p.id === 'claude' && p.found && !login && (
+                <button type="button" className="mini primary" onClick={() => void signIn(p.id)}>
+                  Sign in with Claude
+                </button>
+              )}
               {p.found && (
                 <button type="button" className="mini" onClick={() => setKeyFor(p.id)}>
                   Paste API key
@@ -293,6 +341,26 @@ export function Assistant({ s }: { s: EditorStore }) {
               )}
             </div>
           ))}
+          {login && (
+            <div className="as-login" role="status" aria-live="polite">
+              <span>{login.codeSent ? 'Checking the code…' : 'Finish signing in in your browser.'}</span>
+              {login.page && (
+                <button type="button" className="mini" onClick={() => void api()?.loginOpen()}>
+                  Open sign-in page
+                </button>
+              )}
+              <div className="as-key">
+                <input type="text" placeholder="If the page shows a code, paste it here" value={loginCode} onChange={(e) => setLoginCode(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void sendLoginCode() }} aria-label="Sign-in code" autoComplete="off" spellCheck={false} />
+                <button type="button" className="mini" onClick={() => void sendLoginCode()} disabled={!loginCode.trim()}>
+                  Submit
+                </button>
+                <button type="button" className="mini" onClick={() => void api()?.loginCancel()}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          {loginError && <span className="as-error">{loginError}</span>}
           {keyFor && (
             <div className="as-key">
               <input type="password" placeholder={`${keyFor === 'claude' ? 'Anthropic' : 'OpenAI'} API key`} value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} aria-label="API key" />

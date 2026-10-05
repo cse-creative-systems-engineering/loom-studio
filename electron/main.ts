@@ -9,7 +9,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { desktopBounds, type RunTarget } from '../src/model/desktop-run'
 import { startAiSocket, type AiSocket } from './ai-socket'
-import { detectProviders, providerAuth, saveKey, type ProviderInfo } from './ai-providers'
+import { detectProviders, providerAuth, saveKey, startClaudeLogin, type LoginHandle, type ProviderInfo } from './ai-providers'
 import { runAgent, type AgentEvent } from './ai-runner'
 import crypto from 'node:crypto'
 import path from 'node:path'
@@ -468,6 +468,33 @@ app.whenReady().then(() => {
     if (provider !== 'claude' && provider !== 'codex') return { ok: false, error: 'unknown provider' }
     return saveKey(provider, typeof key === 'string' ? key : null)
   })
+  // Sign in with Claude: the CLI's own browser login, one at a time.
+  let login: LoginHandle | null = null
+  ipcMain.handle('ai:login', async (e, provider: string) => {
+    if (!fromEditor(e)) return { error: 'forbidden' }
+    if (provider !== 'claude') return { error: 'unknown provider' }
+    if (login) return { ok: true }
+    const info = (await detectProviders()).find((p) => p.id === 'claude')
+    if (!info?.command) return { error: info?.hint ?? 'Claude Code is not installed.' }
+    login = startClaudeLogin(info.command, (ev) => {
+      if (ev.kind === 'done') login = null
+      editorWin?.webContents.send('ai:login-event', ev)
+    })
+    return { ok: true }
+  })
+  ipcMain.handle('ai:login-code', (e, code: string) => (fromEditor(e) && typeof code === 'string' ? (login?.submitCode(code) ?? false) : false))
+  // Opens the URL the CLI printed, never one the page supplies.
+  ipcMain.handle('ai:login-open', (e) => {
+    const url = (fromEditor(e) ? login?.url() : null) ?? ''
+    if (isExternalUrlAllowed(url)) void shell.openExternal(url)
+    return !!url
+  })
+  ipcMain.handle('ai:login-cancel', (e) => {
+    if (!fromEditor(e)) return false
+    login?.cancel()
+    return true
+  })
+  app.on('will-quit', () => login?.cancel())
   let current: { id: string; cancel: () => void } | null = null
   ipcMain.handle('ai:send', async (e, req: { provider: string; model: string; prompt: string; sessionId: string | null }) => {
     if (!fromEditor(e)) return { error: 'forbidden' }

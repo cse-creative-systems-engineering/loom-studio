@@ -11,12 +11,14 @@
  * (the Claude app ships Claude Code; the ChatGPT app ships Codex). An API key
  * comes from the environment (ANTHROPIC_API_KEY / OPENAI_API_KEY) or one the
  * user pasted into Loom, kept encrypted by the OS keychain (safeStorage).
+ * Not signed in: Loom runs the CLI's own login (`claude auth login`), which
+ * signs in through the browser, so credentials never pass through Loom.
  */
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { app, safeStorage } from 'electron'
 
 export type ProviderId = 'claude' | 'codex'
@@ -207,9 +209,108 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
         : {
             hint: !command
               ? `Install ${id === 'claude' ? 'Claude Code (npm i -g @anthropic-ai/claude-code)' : 'Codex (npm i -g @openai/codex)'}.`
-              : `Sign in with \`${id === 'claude' ? 'claude auth login' : 'codex login'}\` in a terminal, or paste an API key.`,
+              : id === 'claude'
+                ? 'Sign in with your Claude account, or paste an API key.'
+                : 'Sign in with `codex login` in a terminal, or paste an API key.',
           }),
     })
   }
   return out
+}
+
+/* ---------- sign in (the CLI's own login) ---------- */
+
+export type LoginEvent =
+  /** The sign-in page, for when the CLI could not open the browser itself. */
+  | { kind: 'url'; url: string }
+  | { kind: 'done'; ok: boolean; error?: string }
+
+export interface LoginHandle {
+  /** The sign-in page the CLI printed, once it has. */
+  url: () => string | null
+  /** The code the sign-in page shows, when the CLI asks for one. */
+  submitCode: (code: string) => boolean
+  cancel: () => void
+}
+
+/** Only the vendor's own pages are ever opened or shown. */
+const LOGIN_HOSTS = ['claude.com', 'claude.ai', 'anthropic.com']
+const LOGIN_TIMEOUT_MS = 10 * 60 * 1000
+
+/** The first https sign-in URL on an Anthropic host in `text`, or null. */
+export function loginUrlIn(text: string): string | null {
+  for (const m of text.matchAll(/https:\/\/[^\s"'<>]+/g)) {
+    try {
+      const u = new URL(m[0])
+      if (u.protocol === 'https:' && LOGIN_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith('.' + h))) return u.toString()
+    } catch {
+      // not a URL
+    }
+  }
+  return null
+}
+
+/**
+ * Run `claude auth login` (subscription sign-in). The CLI opens the browser
+ * and, when the page hands back a code instead of finishing on its own, reads
+ * it from stdin. Loom only relays the page's URL and that code; the token is
+ * stored by the CLI, where `auth status` and every agent turn find it.
+ */
+export function startClaudeLogin(command: string, on: (ev: LoginEvent) => void): LoginHandle {
+  let url: string | null = null
+  let finished = false
+  let seen = ''
+  const finish = (ev: Extract<LoginEvent, { kind: 'done' }>) => {
+    if (finished) return
+    finished = true
+    clearTimeout(timer)
+    on(ev)
+  }
+  const child = spawn(command, ['auth', 'login', '--claudeai'], { env: withoutKey('claude'), stdio: ['pipe', 'pipe', 'pipe'] })
+  let errors = ''
+  const read = (chunk: Buffer) => {
+    seen = (seen + chunk.toString('utf8')).slice(-8000)
+    if (url) return
+    url = loginUrlIn(seen)
+    if (url) on({ kind: 'url', url })
+  }
+  child.stdout.on('data', read)
+  child.stderr.on('data', (chunk: Buffer) => {
+    errors = (errors + chunk.toString('utf8')).slice(-4000)
+    read(chunk)
+  })
+  child.stdin.on('error', () => {
+    // The CLI exited before reading; its exit reports the outcome.
+  })
+  child.on('error', (e) => finish({ kind: 'done', ok: false, error: `Could not start Claude Code: ${e.message}` }))
+  child.on('close', (code) => {
+    if (code === 0) return finish({ kind: 'done', ok: true })
+    // The CLI's own reason, without its prompt or the sign-in URL.
+    const lastLine = (text: string) =>
+      text
+        .split('\n')
+        .map((l) => l.replace(/^.*paste code here if prompted\s*>\s*/i, '').trim())
+        .filter((l) => l && !l.includes('https://'))
+        .pop()
+    const last = lastLine(errors) ?? lastLine(seen)
+    finish({ kind: 'done', ok: false, error: last ? last.slice(0, 200) : 'Sign-in did not finish.' })
+  })
+  const timer = setTimeout(() => {
+    child.kill()
+    finish({ kind: 'done', ok: false, error: 'Sign-in timed out. Try again.' })
+  }, LOGIN_TIMEOUT_MS)
+  return {
+    url: () => url,
+    submitCode: (code) => {
+      const c = code.trim()
+      if (finished || !c || c.length > 2000 || /[\r\n]/.test(c)) return false
+      child.stdin.write(c + '\n')
+      return true
+    },
+    cancel: () => {
+      if (finished) return
+      child.kill()
+      finish({ kind: 'done', ok: false, error: 'Sign-in cancelled.' })
+    },
+  }
 }

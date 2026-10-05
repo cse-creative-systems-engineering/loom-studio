@@ -126,6 +126,16 @@ contextBridge.exposeInMainWorld('loomAi', {
   send: (req: unknown) => ipcRenderer.invoke('ai:send', req),
   cancel: () => ipcRenderer.invoke('ai:cancel'),
   saveKey: (provider: string, key: string | null) => ipcRenderer.invoke('ai:save-key', provider, key),
+  /** Sign in with the provider's own browser login (Claude). */
+  login: (provider: string) => ipcRenderer.invoke('ai:login', provider),
+  loginCode: (code: string) => ipcRenderer.invoke('ai:login-code', code),
+  loginOpen: () => ipcRenderer.invoke('ai:login-open'),
+  loginCancel: () => ipcRenderer.invoke('ai:login-cancel'),
+  onLogin: (cb: (event: unknown) => void) => {
+    const h = (_e: unknown, event: unknown) => cb(event)
+    ipcRenderer.on('ai:login-event', h)
+    return () => ipcRenderer.removeListener('ai:login-event', h)
+  },
   onEvent: (cb: (runId: string, event: unknown) => void) => {
     const h = (_e: unknown, runId: string, event: unknown) => cb(runId, event)
     ipcRenderer.on('ai:event', h)
