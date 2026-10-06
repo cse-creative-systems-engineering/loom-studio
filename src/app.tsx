@@ -27,6 +27,8 @@ import { starterGlyph, toolGlyph } from './tool-icons'
 import { PreviewStage } from './preview'
 import { ToolCard, type CardTarget } from './tool-card'
 import { installAiBridge } from './ai/editor-bridge'
+import { installWebClaudeHook } from './ai/web-agent'
+import { installBuildReveal } from './ai/reveal'
 import { Assistant } from './ai/assistant'
 import { StatesPanel, ColorInput } from './states-inspector'
 import { PartsPanel } from './parts-inspector'
@@ -309,6 +311,8 @@ export function App() {
 
   // AI agents reach the live document through this (src/ai/editor-bridge.ts).
   React.useEffect(() => installAiBridge(s), [s])
+  React.useEffect(() => installWebClaudeHook(s), [s])
+  React.useEffect(() => installBuildReveal(s, () => document.querySelector<HTMLElement>('.canvas-wrap .surface')), [s])
 
   // Autosave: a crash should cost the user nothing.
   React.useEffect(() => {

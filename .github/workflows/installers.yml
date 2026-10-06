@@ -1,0 +1,74 @@
+# Installers: a Windows .exe and macOS .dmg (Apple silicon + Intel) built
+# from every merge to master, so Loom can be tried without a toolchain.
+# Download them from the run's "Artifacts" section.
+#
+# Unsigned on purpose (no certificates yet): Windows SmartScreen asks once
+# ("More info" -> "Run anyway"); macOS needs right-click -> Open the first time.
+name: Installers
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/installers.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            platform: --win
+            files: release/*.exe
+          - name: macOS
+            os: macos-latest
+            platform: --mac
+            files: release/*.dmg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # `npm run package` skips `embed:bundle` on purpose: CI has no Atelier
+      # zip, and that step would overwrite the committed bundle with null.
+      - run: npm run package -- ${{ matrix.platform }}
+        env:
+          # No signing certificate: don't search the keychain for one.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      # Apple silicon refuses to launch an app with a broken signature
+      # ("damaged"); prove the ad-hoc signature holds before shipping it.
+      - name: Verify app signatures
+        if: runner.os == 'macOS'
+        run: |
+          for app in release/mac*/Loom.app; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Loom-${{ matrix.name }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 30

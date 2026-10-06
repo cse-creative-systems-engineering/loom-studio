@@ -12,6 +12,8 @@
 import React from 'react'
 import type { EditorStore } from '../state/store'
 import { aiTurn } from './editor-bridge'
+import { AI_AVAILABLE_EVENT } from './web-agent'
+import { AI_STOPPED_EVENT } from './reveal'
 
 interface Provider {
   id: string
@@ -19,6 +21,8 @@ interface Provider {
   found: string | null
   signedIn: boolean
   subscription?: boolean
+  /** How the menu names the account it runs on, when the provider says. */
+  accountNote?: string
   apiKey: 'env' | 'saved' | null
   models: Array<{ id: string; label: string }>
   ready: boolean
@@ -31,11 +35,18 @@ type Event =
   | { kind: 'tool'; name: string; input: unknown }
   | { kind: 'done'; text: string; sessionId: string | null; error?: string }
 
+type LoginEvent = { kind: 'url'; url: string } | { kind: 'done'; ok: boolean; error?: string }
+
 interface Api {
   providers: () => Promise<Provider[]>
   send: (req: { provider: string; model: string; prompt: string; sessionId: string | null }) => Promise<{ runId?: string; error?: string }>
   cancel: () => Promise<boolean>
   saveKey: (provider: string, key: string | null) => Promise<{ ok: boolean; error?: string }>
+  login: (provider: string) => Promise<{ ok?: boolean; error?: string }>
+  loginCode: (code: string) => Promise<boolean>
+  loginOpen: () => Promise<boolean>
+  loginCancel: () => Promise<boolean>
+  onLogin: (cb: (event: LoginEvent) => void) => () => void
   onEvent: (cb: (runId: string, event: Event) => void) => () => void
 }
 
@@ -91,6 +102,12 @@ function stepLabel(name: string, input: unknown): string {
 }
 
 /** What the agent should know about the editor right now, with the message. */
+/** Stop the agent; what it built is shown at once so the person can edit it. */
+function stop() {
+  window.dispatchEvent(new Event(AI_STOPPED_EVENT))
+  void api()?.cancel()
+}
+
 function context(s: EditorStore): string {
   const sel = s.selection.map((id) => `${id} (${s.doc.nodes[id]?.type ?? '?'})`)
   return sel.length ? `\n\n[Selected in the editor: ${sel.join(', ')}]` : ''
@@ -109,12 +126,23 @@ export function Assistant({ s }: { s: EditorStore }) {
   const [keyFor, setKeyFor] = React.useState<string | null>(null)
   const [keyDraft, setKeyDraft] = React.useState('')
   const [keyError, setKeyError] = React.useState('')
+  // Sign in with Claude: null when idle; `page` once the CLI printed its URL.
+  const [login, setLogin] = React.useState<{ page: boolean; codeSent: boolean } | null>(null)
+  const [loginCode, setLoginCode] = React.useState('')
+  const [loginError, setLoginError] = React.useState('')
   const session = React.useRef<string | null>(null)
   const runRef = React.useRef<string | null>(null)
   // A send is in flight: its first events can arrive before its run id does
   // (two IPC channels), so they are claimed by the pending send, not dropped.
   const sending = React.useRef(false)
   const threadRef = React.useRef<HTMLDivElement | null>(null)
+  // Bumped when a host connects Claude after load (the web preview).
+  const [aiGen, setAiGen] = React.useState(0)
+  React.useEffect(() => {
+    const on = () => setAiGen((g) => g + 1)
+    window.addEventListener(AI_AVAILABLE_EVENT, on)
+    return () => window.removeEventListener(AI_AVAILABLE_EVENT, on)
+  }, [])
 
   const refresh = React.useCallback(() => {
     void api()
@@ -129,7 +157,21 @@ export function Assistant({ s }: { s: EditorStore }) {
         })
       })
   }, [])
-  React.useEffect(refresh, [refresh])
+  React.useEffect(refresh, [refresh, aiGen])
+
+  React.useEffect(
+    () =>
+      api()?.onLogin?.((ev) => {
+        if (ev.kind === 'url') setLogin((l) => (l ? { ...l, page: true } : l))
+        if (ev.kind === 'done') {
+          setLogin(null)
+          setLoginCode('')
+          setLoginError(ev.ok ? '' : (ev.error ?? 'Sign-in did not finish.'))
+          if (ev.ok) refresh()
+        }
+      }),
+    [refresh, aiGen],
+  )
 
   // Events for the running turn: steps, text, and the end of the turn.
   React.useEffect(
@@ -161,7 +203,7 @@ export function Assistant({ s }: { s: EditorStore }) {
           setRunId(null)
         }
       }),
-    [s],
+    [s, aiGen],
   )
 
   React.useEffect(() => {
@@ -171,7 +213,7 @@ export function Assistant({ s }: { s: EditorStore }) {
   // Undo/redo while the agent works stops it (the store ends the turn).
   React.useEffect(() => {
     const t = aiTurn(s)
-    t.onInterrupt = () => void api()?.cancel()
+    t.onInterrupt = stop
     return () => {
       t.onInterrupt = null
     }
@@ -224,6 +266,24 @@ export function Assistant({ s }: { s: EditorStore }) {
       setKeyError('')
       refresh()
     } else setKeyError(r?.error ?? 'Could not save the key.')
+  }
+
+  const signIn = async (provider: string) => {
+    setLoginError('')
+    setLogin({ page: false, codeSent: false })
+    const r = await api()?.login(provider)
+    if (!r?.ok) {
+      setLogin(null)
+      setLoginError(r?.error ?? 'Could not start sign-in.')
+    }
+  }
+
+  const sendLoginCode = async () => {
+    if (!loginCode.trim()) return
+    if (await api()?.loginCode(loginCode)) {
+      setLoginCode('')
+      setLogin((l) => (l ? { ...l, codeSent: true } : l))
+    } else setLoginError('That code could not be sent. Copy it again from the sign-in page.')
   }
 
   // While the agent builds, the conversation folds to one live line so the
@@ -286,6 +346,11 @@ export function Assistant({ s }: { s: EditorStore }) {
             <div key={p.id} className="as-setup-row">
               <span>{p.label}</span>
               <span className="dim">{p.hint}</span>
+              {p.id === 'claude' && p.found && !login && (
+                <button type="button" className="mini primary" onClick={() => void signIn(p.id)}>
+                  Sign in with Claude
+                </button>
+              )}
               {p.found && (
                 <button type="button" className="mini" onClick={() => setKeyFor(p.id)}>
                   Paste API key
@@ -293,6 +358,26 @@ export function Assistant({ s }: { s: EditorStore }) {
               )}
             </div>
           ))}
+          {login && (
+            <div className="as-login" role="status" aria-live="polite">
+              <span>{login.codeSent ? 'Checking the code…' : 'Finish signing in in your browser.'}</span>
+              {login.page && (
+                <button type="button" className="mini" onClick={() => void api()?.loginOpen()}>
+                  Open sign-in page
+                </button>
+              )}
+              <div className="as-key">
+                <input type="text" placeholder="If the page shows a code, paste it here" value={loginCode} onChange={(e) => setLoginCode(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void sendLoginCode() }} aria-label="Sign-in code" autoComplete="off" spellCheck={false} />
+                <button type="button" className="mini" onClick={() => void sendLoginCode()} disabled={!loginCode.trim()}>
+                  Submit
+                </button>
+                <button type="button" className="mini" onClick={() => void api()?.loginCancel()}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          {loginError && <span className="as-error">{loginError}</span>}
           {keyFor && (
             <div className="as-key">
               <input type="password" placeholder={`${keyFor === 'claude' ? 'Anthropic' : 'OpenAI'} API key`} value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} aria-label="API key" />
@@ -323,7 +408,7 @@ export function Assistant({ s }: { s: EditorStore }) {
                 <div key={p.id} className="as-menu-group">
                   <div className="as-menu-head">
                     {p.label}
-                    <span className="dim">{p.ready ? (p.subscription ? 'your subscription' : p.signedIn ? 'signed in' : p.apiKey === 'env' ? 'API key (env)' : 'API key') : 'not ready'}</span>
+                    <span className="dim">{p.ready ? (p.accountNote ?? (p.subscription ? 'your subscription' : p.signedIn ? 'signed in' : p.apiKey === 'env' ? 'API key (env)' : 'API key')) : 'not ready'}</span>
                   </div>
                   {p.models.map((m) => (
                     <button
@@ -372,7 +457,7 @@ export function Assistant({ s }: { s: EditorStore }) {
           </button>
         )}
         {runId ? (
-          <button type="button" className="as-send stop" onClick={() => void api()?.cancel()} title="Stop">
+          <button type="button" className="as-send stop" onClick={stop} title="Stop">
             Stop
           </button>
         ) : (

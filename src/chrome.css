@@ -635,7 +635,11 @@
 .as-step.more { color: var(--ink-2); }
 
 .as-setup { display: grid; gap: 6px; padding: 10px 12px; background: rgba(20, 22, 28, 0.92); border: 1px solid var(--line-2); border-radius: 12px; font: 12px var(--font); color: var(--ink); }
-.as-setup-row { display: grid; grid-template-columns: 110px 1fr auto; gap: 8px; align-items: center; }
+.as-setup-row { display: grid; grid-template-columns: 110px 1fr; grid-auto-flow: column; grid-auto-columns: auto; gap: 8px; align-items: center; }
+.as-setup .mini.primary { color: #fff; background: var(--accent); }
+.as-setup .mini.primary:hover:not(:disabled) { color: #fff; background: var(--accent); filter: brightness(1.1); }
+.as-login { display: grid; gap: 6px; padding-top: 4px; border-top: 1px solid var(--line-2); }
+.as-login > .mini { justify-self: start; }
 .as-setup .dim { color: var(--ink-3); font-size: 11px; }
 .as-key { display: flex; gap: 6px; align-items: center; }
 .as-key input { flex: 1; height: 26px; padding: 0 8px; background: var(--well); border: 1px solid transparent; border-radius: 6px; color: var(--ink); }
@@ -721,3 +725,22 @@
 .win-btn.close:hover { background: #d6433b; color: #fff; }
 .win-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .titlebar .tb-right:not(:has(.win-controls)) { padding-right: 8px; }
+
+/* The Assistant building: each piece is traced as it lands (src/ai/reveal.ts). */
+.ai-reveal-layer { position: fixed; pointer-events: none; z-index: 40; overflow: hidden; }
+.ai-reveal-box {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 85%, white);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent), 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent), inset 0 0 14px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.ai-reveal-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 24px;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--accent) 30%, transparent) 70%, color-mix(in srgb, var(--accent) 70%, white) 96%, transparent);
+  opacity: 0.55;
+}
