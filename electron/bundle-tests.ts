@@ -1,23 +1,17 @@
 /**
- * Round-trip tests against Shane's REAL Atelier bundle.
- *
- * The bundle at ~/Downloads/atelier-ai-bundle.zip is the actual interchange
- * contract, so this imports it rather than a synthetic fixture. If the bundle
- * is absent the checks skip loudly rather than pass vacuously.
+ * Token bundles, effects, snap and z-order: the units and their rendered output.
  */
 
-import { importDsl, exportDsl, TYPE_ALIAS } from '../src/model/dsl'
-import { resolveBundle, fromAtelierColors, toBundle, toCssVariables } from '../src/render/tokens'
+import { resolveBundle, toBundle, toCssVariables, type TokenBundle } from '../src/render/tokens'
 import { normalizeEffects, applyEffects, DEFAULT_EFFECTS } from '../src/render/effects'
 import { getTheme } from '../src/render/theme'
 import { snapMove, artboardAnchors, type SnapBox } from '../src/model/snap'
 import { clampZ } from '../src/model/ops'
-import { ATELIER_BUNDLE } from '../src/model/atelier-bundle.generated'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { renderNode } from '../src/render/web'
 import { EditorStore } from '../src/state/store'
 import '../src/model/toolbox'
-import { getComponent, instantiate } from '../src/model/registry'
+import { instantiate } from '../src/model/registry'
 
 /**
  * Fixtures used to inherit an auto-created root Panel. Documents are rootless
@@ -55,17 +49,7 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
 
   /* ---- tokens ---------------------------------------------------- */
 
-  const atelierColors = {
-    background: '#0A0A0B',
-    foreground: '#0A0A0B',
-    primary: '#7C3AED',
-    accent: '#06B6D4',
-    muted: 'rgba(10,10,11,0.5)',
-  }
-  const b = fromAtelierColors(atelierColors)
-  ok('atelier colors map to a bundle', b.colors?.bg === '#0A0A0B' && b.colors?.accent === '#7C3AED')
-  ok('atelier muted maps to textMuted', b.colors?.textMuted === 'rgba(10,10,11,0.5)')
-
+  const b: TokenBundle = { colors: { bg: '#0A0A0B', accent: '#7C3AED' } }
   const t1 = resolveBundle('midnight', b)
   ok('bundle overrides bg', t1.bg === '#0A0A0B', t1.bg)
   ok('bundle overrides accent', t1.accent === '#7C3AED', t1.accent)
@@ -425,97 +409,6 @@ export async function bundleTests(): Promise<Array<{ name: string; pass: boolean
     const two = r(h(EffectsPanel, { effects: ne({ ...DE, glass: true, aurora: true }), onChange: () => {}, onCommit: () => {} }))
     ok('inspector counts two active effects', two.includes('2 on'))
     ok('inspector offers a reset', two.includes('Reset all effects'))
-  }
-
-  /* ---- the real bundle ------------------------------------------- */
-
-  if (ATELIER_BUNDLE) {
-    let parsed: unknown = null
-    try {
-      parsed = JSON.parse(ATELIER_BUNDLE)
-    } catch (e) {
-      ok('atelier bundle parses', false, String(e))
-    }
-    if (parsed) {
-      const imp = importDsl(parsed)
-      // Guard BEFORE dereferencing: a null doc is a finding to report, not a
-      // reason to throw and lose the rest of the report.
-      if (!imp.doc) {
-        ok('atelier bundle imports', false, `importDsl returned null: ${imp.issues.join('; ')}`)
-      } else {
-        const doc = imp.doc
-        const count = Object.keys(doc.nodes).length - 1
-        ok('atelier bundle imports', true)
-        ok('atelier bundle yields 8 elements', count === 8, `got ${count}`)
-        ok('atelier artboard imported', doc.meta.artboard?.w === 1200 && doc.meta.artboard?.h === 800,
-          JSON.stringify(doc.meta.artboard))
-        ok('atelier snap grid imported', doc.meta.snapGrid === 4)
-        // Remapping is the adapter WORKING, not a failure: Atelier's type names
-        // differ from Loom's by design. What must hold is that every element
-        // resolved to a REAL component rather than falling back to Panel.
-        ok('every atelier type resolved to a real component',
-          Object.values(doc.nodes).every((n) => getComponent(n.type) !== undefined),
-          Object.values(doc.nodes).filter((n) => !getComponent(n.type)).map((n) => n.type).join(','))
-        // The failure worth catching is a type MISSING FROM THE ALIAS TABLE
-        // entirely, which lands on the importer's default. A type that maps to
-        // Card because it genuinely is a card is correct, not a fallthrough.
-        const atelierTypes = (parsed as Array<{ type: string }>).map((e) => e.type)
-        const missing = atelierTypes.filter((t) => !(t in TYPE_ALIAS))
-        ok('every atelier type is explicitly mapped, none falls through',
-          missing.length === 0, `unmapped: ${missing.join(',')}`)
-        ok('remap report accounts for all 8 elements',
-          imp.remapped.length > 0 && imp.remapped.reduce((a, r) => a + r.count, 0) === 8,
-          imp.remapped.map((r) => `${r.from}->${r.to}`).join(','))
-        // The meaningful check: 8 distinct SEMANTIC roles, not 8 identical
-        // fallbacks. Two cards legitimately collapse to Card.
-        const resolved = Object.values(doc.nodes).filter((n) => n.id !== doc.root).map((n) => n.type)
-        ok('atelier 8 types resolve to >=4 distinct components',
-          new Set(resolved).size >= 4,
-          [...new Set(resolved)].join(','))
-        ok('atelier element count preserved', resolved.length === 8, `${resolved.length}`)
-        ok('import is issue-free', imp.issues.length === 0, imp.issues.join('; '))
-
-        const nonEmpty = Object.values(doc.nodes).filter((n) => n.id !== doc.root)
-        ok('every imported element carries geometry',
-          nonEmpty.every((n) => typeof n.props.x === 'number' && typeof n.props.y === 'number'),
-          `${nonEmpty.filter((n) => typeof n.props.x !== 'number').length} missing x`)
-        ok('every imported element carries its schema defaults',
-          nonEmpty.every((n) => Object.keys(getComponent(n.type)?.props ?? {}).length > 0 &&
-            Object.keys(n.props).length > 0),
-          `${nonEmpty.filter((n) => Object.keys(n.props).length === 0).length} with no props`)
-        ok('effects survive the import',
-          nonEmpty.some((n) => n.effects && Object.keys(n.effects).length > 5))
-
-        // Export back out and re-import: the contract must be stable.
-        // The importer's wrapper Panel is a real node now (documents are
-        // rootless, so the root is user-owned and must survive export), so the
-        // count is the 8 imported elements PLUS that root.
-        const expectCount = 9
-        const back = exportDsl(doc)
-        ok('export includes the user-owned root', back.elements?.length === expectCount, `${back.elements?.length}`)
-        const reimport = importDsl(back)
-        ok('export -> import round trip is valid', reimport.doc !== null, reimport.issues.join('; '))
-        const reCount = reimport.doc ? Object.keys(reimport.doc.nodes).length - 1 : 0
-        ok('round trip preserves element count', reCount === expectCount, `got ${reCount}`)
-
-        // Coordinates are checked on the EXPORT, not after a re-import: the
-        // re-import legitimately adds a fresh wrapper root for the flat
-        // foreign format, so comparing node-for-node across the round trip
-        // compares different sets. What must hold is that no coordinate is
-        // lost on the way out — including the user-owned root's.
-        const srcXs = Object.values(doc.nodes)
-          .map((n) => Number(n.props.x) || 0)
-          .sort((a, b) => a - b)
-          .join(',')
-        const expXs = (back.elements ?? [])
-          .map((e) => Number((e.absolute as { x?: number } | undefined)?.x) || 0)
-          .sort((a, b) => a - b)
-          .join(',')
-        ok('export preserves every coordinate', srcXs === expXs, `${srcXs} vs ${expXs}`)
-      }
-    }
-  } else {
-    out.push({ name: 'atelier bundle present', pass: false, detail: 'bundle not found at ~/Downloads' })
   }
 
   return out

@@ -11,14 +11,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-/** Written by the build itself (embed:bundle), so it can postdate the outputs. */
-const GENERATED = new Set([path.join('src', 'model', 'atelier-bundle.generated.ts')])
-
 function newestIn(root, dir, accept, best = { file: '', ms: 0 }) {
   for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
     const rel = path.join(dir, entry.name)
     if (entry.isDirectory()) newestIn(root, rel, accept, best)
-    else if (accept(rel) && !GENERATED.has(rel)) {
+    else if (accept(rel)) {
       const ms = fs.statSync(path.join(root, rel)).mtimeMs
       if (ms > best.ms) Object.assign(best, { file: rel, ms })
     }

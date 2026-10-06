@@ -2,17 +2,13 @@
 
 Status: in progress. This file is the source of truth for what "done" means.
 
-## Decision: the Atelier bundle is the interchange contract
+## Decision: Atelier is archived
 
-Shane's `atelier-ai-bundle.zip` ships a token system + `component-dsl.json` +
-4 working export targets. That DSL is a **superset of Loom's `Document`**. So
-instead of porting Atelier's guts into Loom, Loom speaks its format:
-
-- `component-dsl.json` — the interchange format (import + export)
-- `tokens/*.json` — a theme is a token bundle, not a hard-coded name
-- `ai/*-prompt.txt` — grounding for the assistant
-
-The effects port stays, but becomes **token-driven** rather than hard-coded.
+Atelier was Shane's first attempt. Loom kept the ideas worth keeping (snap
+guides, the effects defaults, token bundles as data) and dropped the rest:
+the Atelier DSL importer/exporter, the embedded `component-dsl.json` and the
+`embed:bundle` build step are gone (see git history before
+`claude/drop-atelier-bundle` to recover them).
 
 ## Phases
 
@@ -21,7 +17,7 @@ The effects port stays, but becomes **token-driven** rather than hard-coded.
 | 1 | Foundations: scene tree, named ops, schema registry, transient manipulation | done |
 | 2 | Editor core: canvas, toolbox, inspector, resize, context menu, drop-into-container, lock, duplicate, reorder, delete/nudge keys | done |
 | 3 | Output quality: themes, effects layer, component quality | done — effects live in both render paths |
-| 4 | Interchange: Atelier DSL import/export, token bundles | done — round-trips the real bundle |
+| 4 | Token bundles (theme as data) | done — Atelier DSL interchange archived |
 | 5 | Desktop backend: native widget compiler | pending |
 | 6 | AI assistant over the op set | pending |
 | 7 | Adversarial review rounds until clean | pending |
@@ -50,13 +46,13 @@ The effects port stays, but becomes **token-driven** rather than hard-coded.
   currently has to come from Shane or from DOM/computed-style probes.
   `electron/effect-specimens.ts` generates the specimen page for when capture
   works again.
-- **Effects are not yet exposed in the inspector.** They are stored per node,
-  imported/exported through the DSL, and rendered — but there is no UI to
+- **Effects are not yet exposed in the inspector.** They are stored per node
+  and rendered — but there is no UI to
   toggle them. Until there is, a user cannot reach the feature.
 - **`magnet` is a transform input, not a prop.** It has no on/off flag, so
   nothing can enable it. Deliberate for now; noted so it does not get
   mistaken for a working feature.
 - **The desktop backend does not exist.** The registry has capability gating
   (`DESKTOP_CAPABILITIES`) but no native emitter.
-- **No AI assistant surface.** The ops and the Atelier prompt packs are ready
-  to be grounded on; nothing consumes them yet.
+- **No AI assistant surface.** The ops are ready to be grounded on;
+  nothing consumes them yet.

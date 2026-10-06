@@ -129,30 +129,6 @@ export function effectsFromBundle(bundle: TokenBundle = {}): EffectValues {
   return normalizeEffects(raw)
 }
 
-/**
- * Convert Atelier's `tokens/colors.json` shape into a Loom bundle.
- *
- * Atelier's file is `{background, foreground, primary, accent, muted, palette}`;
- * `foreground` in that file is the *ink* colour, not a literal foreground role,
- * and can be darker than the background (it is a design palette, not a theme).
- */
-export function fromAtelierColors(raw: unknown): TokenBundle {
-  const c = (raw ?? {}) as {
-    background?: string
-    foreground?: string
-    primary?: string
-    accent?: string
-    muted?: string
-  }
-  const out: TokenBundle = { colors: {} }
-  if (c.background) out.colors!.bg = c.background
-  if (c.foreground) out.colors!.textPrimary = c.foreground
-  if (c.primary) out.colors!.accent = c.primary
-  if (c.accent) out.colors!.accentHover = c.accent
-  if (c.muted) out.colors!.textMuted = c.muted
-  return out
-}
-
 /** Serialise a live theme back into a bundle, so an edit can be saved. */
 export function toBundle(t: Theme, name?: string): TokenBundle {
   return {

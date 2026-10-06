@@ -146,6 +146,3 @@ Commercial use is not permitted under this license.
 
 Versions published before 30 September 2026 were released under the MIT
 License, and copies obtained under those terms keep them.
-
-Includes an embedded `Atelier` component DSL, which is the author's earlier
-design-system work and ships as a fixture for the importer.
