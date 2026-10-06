@@ -42,6 +42,10 @@ export interface WebClaude {
 
 export const WEB_PROVIDER = 'claude-web'
 
+/** Told to Claude after the designer pressed Stop, with the request it was working on. */
+export const STOPPED_NOTE =
+  '[The designer pressed Stop partway through this request. Whatever you had built stays on the canvas, and they may have changed, added or removed things since. When they ask you to continue, call get_document first and carry on from what is there now.]'
+
 /** Host limits on what one tool may carry. */
 const MAX_DESCRIPTION = 1000
 const MAX_RESULT = 30000
@@ -182,8 +186,10 @@ export function webAssistantApi(store: EditorStore, claude: WebClaude) {
         },
         (e: { code?: unknown; text?: unknown }) => {
           running = null
-          // A failed turn is kept as asked, so the next message has the context.
-          sessions.set(sessionId, [...history, { role: 'user', content: req.prompt }])
+          // A failed turn is kept as asked, so the next message has the context;
+          // a stopped one says so, since its work stays on the canvas.
+          const asked = e?.code === 'cancelled' ? `${req.prompt}\n\n${STOPPED_NOTE}` : req.prompt
+          sessions.set(sessionId, [...history, { role: 'user', content: asked }])
           emit(runId, { kind: 'done', text: typeof e?.text === 'string' ? e.text : '', sessionId, error: webErrorText(e?.code) })
         },
       )

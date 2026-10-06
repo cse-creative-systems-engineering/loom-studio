@@ -11,6 +11,9 @@
  *    turn is ONE undo step.
  * 5. A follow-up carries the conversation (the host's Claude keeps none).
  * 6. A refused call says why. 7. Stop stops.
+ * 8. Watching it build: what the Assistant adds is revealed piece by piece in
+ *    build order (a person's own edit is not); Stop shows everything at once,
+ *    and "continue" tells Claude it was stopped and to re-read the canvas.
  *
  * Self-contained: its own Electron (a bare window, no preload), user data and
  * debug port. Usage: `npm run probe:web-assistant`. Needs X.
@@ -84,7 +87,12 @@ const FAKE_CLAUDE = `(() => {
       const tool = (name) => opts.tools.find((t) => t.name === name)
       const run = (async () => {
         if (prompt.startsWith('deny')) throw { code: 'not_granted', message: 'declined' }
-        if (prompt.startsWith('slow')) { opts.onText('Working on it'); await stopped }
+        if (prompt.startsWith('slow')) {
+          const doc = await tool('get_document').execute({})
+          await tool('add_starter').execute({ starter: 'dashboard', parent_id: doc.root.id })
+          opts.onText('Working on it')
+          await stopped
+        }
         if (prompt.startsWith('bad tool')) {
           let err = ''
           try { await tool('set_props').execute({ id: 'nope', props: {} }) } catch (e) { err = String(e.message) }
@@ -160,9 +168,31 @@ app.whenReady().then(() => {
   const chip = await evaluate(ws, ui.chip)
   step('Claude is the chosen assistant', /^Claude/.test(chip), chip)
 
+  // Record every animation the canvas starts: which node, and its delay.
+  await evaluate(ws, `(() => {
+    const rec = window.__reveals = []
+    const orig = Element.prototype.animate
+    Element.prototype.animate = function (k, o) {
+      rec.push({ id: this.getAttribute('data-loom-id'), trace: this.classList.contains('ai-reveal-box'), delay: (o && o.delay) || 0 })
+      return orig.call(this, k, o)
+    }
+    return true
+  })()`)
   const history0 = await evaluate(ws, 'window.__loomStore.history.length')
   await evaluate(ws, say('Build me a dashboard'))
   await waitFor(() => evaluate(ws, ui.idle), 10000, 'turn done')
+  await sleep(150)
+  const reveal = await evaluate(ws, `(() => {
+    const s = window.__loomStore, order = []
+    const walk = (id) => { order.push(id); s.doc.nodes[id].children.forEach(walk) }
+    walk(s.doc.root)
+    const byId = new Map(window.__reveals.filter((r) => r.id).map((r) => [r.id, r.delay]))
+    const delays = order.map((id) => byId.get(id))
+    return { nodes: order.length, revealed: delays.filter((d) => d !== undefined).length, delays, traces: window.__reveals.filter((r) => r.trace).length }
+  })()`)
+  step('it builds visibly: every new piece is revealed', reveal.revealed === reveal.nodes && reveal.nodes > 5, `${reveal.revealed}/${reveal.nodes}`)
+  step('in build order, a container before what it holds', reveal.delays[0] === 0 && reveal.delays.every((d, i) => i === 0 || d >= reveal.delays[i - 1]) && reveal.delays[reveal.delays.length - 1] > 0, reveal.delays.join(','))
+  step('each piece is traced as it lands', reveal.traces > 0 && reveal.traces <= reveal.nodes, `${reveal.traces} traces`)
   const reply = await evaluate(ws, ui.lastAgent)
   const fake = await evaluate(ws, `(() => { const c = window.__fakeClaude; return { ...c, calls: c.calls.map((x) => ({ tier: x.tier, tools: x.tools, turns: x.turns })) } })()`)
   const first = fake.calls[0]
@@ -180,6 +210,11 @@ app.whenReady().then(() => {
   step('the whole turn is one undo step', history1 === history0 + 1 && empty, `${history0} -> ${history1}`)
   await evaluate(ws, 'window.__loomStore.redo()')
 
+  await evaluate(ws, 'window.__reveals.length = 0')
+  await evaluate(ws, `window.__loomStore.addComponent('Button', window.__loomStore.doc.root, 0, 0)`)
+  await sleep(150)
+  step('a person\'s own edit appears at once, not revealed', (await evaluate(ws, 'window.__reveals.length')) === 0)
+
   await evaluate(ws, say('bad tool please'))
   await waitFor(() => evaluate(ws, ui.idle), 10000, 'turn 2 done')
   const fake2 = await evaluate(ws, `({ n: window.__fakeClaude.calls.length, turns: window.__fakeClaude.calls[1]?.turns, toolError: window.__fakeClaude.toolError })`)
@@ -194,10 +229,21 @@ app.whenReady().then(() => {
 
   await evaluate(ws, say('slow one'))
   await waitFor(() => evaluate(ws, `!!document.querySelector('.as-send.stop')`), 5000, 'running')
+  await sleep(120)
+  const revealing = `document.getAnimations().filter((a) => (a.playState === 'running' || a.pending) && a.effect?.target?.closest?.('[data-loom-id], .ai-reveal-box')).length`
+  const midway = await evaluate(ws, revealing)
   await evaluate(ws, `document.querySelector('.as-send.stop').click()`)
   await waitFor(() => evaluate(ws, ui.idle), 5000, 'stopped')
   const stopped = await evaluate(ws, ui.lastAgent)
   step('Stop stops', stopped?.error === 'Stopped.', JSON.stringify(stopped))
+  const after = await evaluate(ws, revealing)
+  step('Stop shows everything built so far, at once', midway > 0 && after === 0, `${midway} revealing -> ${after}`)
+
+  await evaluate(ws, say('continue'))
+  await waitFor(() => evaluate(ws, ui.idle), 10000, 'continued')
+  const resumed = await evaluate(ws, `window.__fakeClaude.calls[window.__fakeClaude.calls.length - 1].turns`)
+  const stoppedTurn = resumed.find((t) => t.role === 'user' && t.content.startsWith('slow one'))
+  step('"continue" tells Claude it was stopped and to re-read the canvas', /pressed Stop/.test(stoppedTurn?.content ?? '') && /get_document/.test(stoppedTurn?.content ?? '') && resumed[resumed.length - 1].content.startsWith('continue'))
 
   ws.close()
 } catch (e) {

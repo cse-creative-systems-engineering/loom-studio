@@ -13,6 +13,7 @@ import React from 'react'
 import type { EditorStore } from '../state/store'
 import { aiTurn } from './editor-bridge'
 import { AI_AVAILABLE_EVENT } from './web-agent'
+import { AI_STOPPED_EVENT } from './reveal'
 
 interface Provider {
   id: string
@@ -101,6 +102,12 @@ function stepLabel(name: string, input: unknown): string {
 }
 
 /** What the agent should know about the editor right now, with the message. */
+/** Stop the agent; what it built is shown at once so the person can edit it. */
+function stop() {
+  window.dispatchEvent(new Event(AI_STOPPED_EVENT))
+  void api()?.cancel()
+}
+
 function context(s: EditorStore): string {
   const sel = s.selection.map((id) => `${id} (${s.doc.nodes[id]?.type ?? '?'})`)
   return sel.length ? `\n\n[Selected in the editor: ${sel.join(', ')}]` : ''
@@ -206,7 +213,7 @@ export function Assistant({ s }: { s: EditorStore }) {
   // Undo/redo while the agent works stops it (the store ends the turn).
   React.useEffect(() => {
     const t = aiTurn(s)
-    t.onInterrupt = () => void api()?.cancel()
+    t.onInterrupt = stop
     return () => {
       t.onInterrupt = null
     }
@@ -450,7 +457,7 @@ export function Assistant({ s }: { s: EditorStore }) {
           </button>
         )}
         {runId ? (
-          <button type="button" className="as-send stop" onClick={() => void api()?.cancel()} title="Stop">
+          <button type="button" className="as-send stop" onClick={stop} title="Stop">
             Stop
           </button>
         ) : (
